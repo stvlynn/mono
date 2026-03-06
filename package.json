@@ -1,0 +1,22 @@
+{
+  "name": "mono-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.6.2",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "shx rm -rf packages/*/dist .turbo node_modules",
+    "dev": "tsx packages/cli/src/bin.ts",
+    "start": "tsx packages/cli/src/bin.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.12",
+    "shx": "^0.3.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "composite": true
+  },
+  "references": [
+    { "path": "../shared" },
+    { "path": "../config" },
+    { "path": "../pi-tui" },
+    { "path": "../agent-core" }
+  ],
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

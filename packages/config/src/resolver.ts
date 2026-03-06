@@ -1,0 +1,342 @@
+import type {
+  MonoGlobalConfig,
+  MonoConfigSummary,
+  MonoProfileConfig,
+  MonoProjectConfig,
+  MonoSecretsConfig,
+  ResolvedMonoConfig,
+  UnifiedModel
+} from "@mono/shared";
+import { readJsonFile } from "@mono/shared";
+import {
+  createDefaultGlobalConfig,
+  createFallbackModel,
+  getBuiltinModels,
+  modelToProfile,
+  profileToModel,
+  resolveBaseURL
+} from "./defaults.js";
+import { MonoConfigStore } from "./store.js";
+
+export interface ResolveConfigOptions {
+  cwd?: string;
+  modelSelection?: string;
+  profileSelection?: string;
+  baseURLOverride?: string;
+}
+
+export interface ProfileRecord {
+  name: string;
+  profile: MonoProfileConfig;
+  source: ResolvedMonoConfig["source"]["profile"];
+}
+
+interface ResolverConfigSources {
+  globalConfig?: MonoGlobalConfig;
+  legacyAgentsGlobalConfig?: MonoGlobalConfig;
+  legacyProfiles?: Record<string, MonoProfileConfig>;
+  legacyAgentsProjectConfig?: MonoProjectConfig;
+}
+
+export async function listProfiles(cwd = process.cwd()): Promise<ProfileRecord[]> {
+  const store = new MonoConfigStore(cwd);
+  const sources = await loadResolverSources(store);
+  const profilesSource = resolveProfileMap(sources);
+  const source = resolveProfileMapSource(sources);
+
+  return Object.entries(profilesSource)
+    .map(([name, profile]) => ({ name, profile, source }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Promise<ResolvedMonoConfig> {
+  const cwd = options.cwd ?? process.cwd();
+  const store = new MonoConfigStore(cwd);
+  const sources = await loadResolverSources(store);
+  const effectiveGlobal = resolveEffectiveGlobalConfig(sources);
+  const projectConfig = (await store.readProjectConfig()) ?? sources.legacyAgentsProjectConfig ?? await loadLegacyProjectConfig(store, sources.legacyProfiles);
+  const secrets = (await store.readSecrets()) ?? await readJsonFile<MonoSecretsConfig>(store.paths.legacyGlobalSecretsPath);
+
+  const envProfile = process.env.MONO_PROFILE;
+  const envModel = process.env.MONO_MODEL;
+  const envBaseURL = process.env.MONO_BASE_URL;
+  const directApiKey = process.env.MONO_API_KEY;
+
+  const requestedProfile = options.profileSelection ?? envProfile ?? projectConfig?.profile ?? effectiveGlobal.mono.defaultProfile;
+  const requestedModel = options.modelSelection ?? envModel;
+
+  let source = resolveSelectedProfileSource({
+    requestedProfile,
+    cliProfileSelection: options.profileSelection,
+    envProfile,
+    projectConfig,
+    sources
+  });
+
+  let model: UnifiedModel;
+  let profileName = requestedProfile || "default";
+  const profile = requestedProfile ? effectiveGlobal.mono.profiles[requestedProfile] : undefined;
+
+  if (requestedModel) {
+    model = selectionToModel(requestedModel, options.baseURLOverride ?? envBaseURL ?? projectConfig?.baseURL);
+    profileName = requestedProfile || `${model.provider}/${model.modelId}`;
+    source = options.modelSelection ? "cli" : envModel ? "env" : source;
+  } else if (profile) {
+    model = profileToModel(applyProjectOverride(profile, projectConfig, options.baseURLOverride ?? envBaseURL));
+  } else {
+    const builtin = getBuiltinModels()[0];
+    model = {
+      ...builtin,
+      baseURL: options.baseURLOverride ?? envBaseURL ?? builtin.baseURL
+    };
+    profileName = "default";
+  }
+
+  const apiKey = directApiKey
+    ?? (profile?.apiKeyRef ? resolveApiKeyRef(profile.apiKeyRef, secrets) : undefined)
+    ?? (projectConfig?.apiKeyRef ? resolveApiKeyRef(projectConfig.apiKeyRef, secrets) : undefined)
+    ?? (projectConfig?.apiKeyEnv && looksLikeInlineApiKey(projectConfig.apiKeyEnv) ? projectConfig.apiKeyEnv : undefined)
+    ?? (profile?.apiKeyEnv && looksLikeInlineApiKey(profile.apiKeyEnv) ? profile.apiKeyEnv : undefined)
+    ?? (projectConfig?.apiKeyEnv ? process.env[projectConfig.apiKeyEnv] : undefined)
+    ?? (profile?.apiKeyEnv ? process.env[profile.apiKeyEnv] : undefined)
+    ?? (model.apiKeyEnv ? process.env[model.apiKeyEnv] : undefined);
+
+  const apiKeySource: ResolvedMonoConfig["source"]["apiKey"] = directApiKey
+    ? "env"
+    : profile?.apiKeyRef || projectConfig?.apiKeyRef
+      ? apiKey ? "local-secrets" : "none"
+      : looksLikeInlineApiKey(projectConfig?.apiKeyEnv) || looksLikeInlineApiKey(profile?.apiKeyEnv)
+        ? apiKey ? "config-inline" : "none"
+      : profile?.apiKeyEnv || projectConfig?.apiKeyEnv || model.apiKeyEnv
+        ? apiKey ? "provider-env" : "none"
+        : "none";
+
+  return {
+    profileName,
+    model: {
+      ...model,
+      apiKey,
+      baseURL: options.baseURLOverride ?? envBaseURL ?? model.baseURL
+    },
+    apiKey,
+    source: {
+      profile: source,
+      apiKey: apiKeySource
+    }
+  };
+}
+
+export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoConfigSummary> {
+  const store = new MonoConfigStore(cwd);
+  const sources = await loadResolverSources(store);
+  const resolved = await resolveMonoConfig({ cwd });
+  return {
+    configDir: store.paths.globalDir,
+    globalConfigPath: store.paths.globalConfigPath,
+    projectConfigPath: store.paths.projectConfigPath,
+    sessionsDir: store.paths.globalSessionsDir,
+    defaultProfile:
+      sources.globalConfig?.mono.defaultProfile
+      ?? sources.legacyAgentsGlobalConfig?.mono?.defaultProfile
+      ?? Object.keys(sources.legacyProfiles ?? {}).at(0),
+    resolvedProfile: resolved.profileName,
+    hasAnyProfiles:
+      Object.keys(resolveProfileMap(sources)).length > 0
+  };
+}
+
+async function loadResolverSources(store: MonoConfigStore): Promise<ResolverConfigSources> {
+  const legacyAgentsProjectConfig = await readJsonFile<{ version?: number; mono?: MonoProjectConfig } | MonoProjectConfig>(
+    store.paths.legacyProjectConfigPath
+  );
+
+  return {
+    globalConfig: await store.readGlobalConfig(),
+    legacyAgentsGlobalConfig: await readJsonFile<MonoGlobalConfig>(store.paths.legacyGlobalConfigPath),
+    legacyProfiles: await loadLegacyProfiles(store),
+    legacyAgentsProjectConfig: unwrapProjectConfig(legacyAgentsProjectConfig)
+  };
+}
+
+function resolveProfileMap(sources: ResolverConfigSources): Record<string, MonoProfileConfig> {
+  return (
+    sources.globalConfig?.mono.profiles
+    ?? sources.legacyAgentsGlobalConfig?.mono?.profiles
+    ?? sources.legacyProfiles
+    ?? createDefaultGlobalConfig().mono.profiles
+  );
+}
+
+function resolveProfileMapSource(sources: ResolverConfigSources): ResolvedMonoConfig["source"]["profile"] {
+  if (sources.globalConfig) {
+    return "global-mono";
+  }
+  if (sources.legacyAgentsGlobalConfig?.mono?.profiles) {
+    return "legacy-global-agents";
+  }
+  if (sources.legacyProfiles) {
+    return "legacy-global-mono-models";
+  }
+  return "builtin";
+}
+
+function resolveEffectiveGlobalConfig(sources: ResolverConfigSources): MonoGlobalConfig {
+  if (sources.globalConfig) {
+    return sources.globalConfig;
+  }
+  if (sources.legacyAgentsGlobalConfig) {
+    return sources.legacyAgentsGlobalConfig;
+  }
+
+  const defaultConfig = createDefaultGlobalConfig();
+  return {
+    ...defaultConfig,
+    mono: {
+      ...defaultConfig.mono,
+      profiles: sources.legacyProfiles ?? defaultConfig.mono.profiles,
+      defaultProfile: Object.keys(sources.legacyProfiles ?? {}).at(0) ?? defaultConfig.mono.defaultProfile
+    }
+  };
+}
+
+function resolveSelectedProfileSource(options: {
+  requestedProfile?: string;
+  cliProfileSelection?: string;
+  envProfile?: string;
+  projectConfig?: MonoProjectConfig;
+  sources: ResolverConfigSources;
+}): ResolvedMonoConfig["source"]["profile"] {
+  const { requestedProfile, cliProfileSelection, envProfile, projectConfig, sources } = options;
+
+  if (requestedProfile && cliProfileSelection === requestedProfile) {
+    return "cli";
+  }
+  if (requestedProfile && envProfile === requestedProfile) {
+    return "env";
+  }
+  if (requestedProfile && projectConfig?.profile === requestedProfile) {
+    if (sources.globalConfig) {
+      return "project-mono";
+    }
+    if (sources.legacyAgentsProjectConfig) {
+      return "legacy-project-agents";
+    }
+    return "legacy-project-mono-models";
+  }
+  if (requestedProfile && sources.globalConfig?.mono.profiles[requestedProfile]) {
+    return "global-mono";
+  }
+  if (requestedProfile && sources.legacyAgentsGlobalConfig?.mono?.profiles?.[requestedProfile]) {
+    return "legacy-global-agents";
+  }
+  if (requestedProfile && sources.legacyProfiles?.[requestedProfile]) {
+    return "legacy-global-mono-models";
+  }
+  return "builtin";
+}
+
+function selectionToModel(selection: string, baseURLOverride?: string): UnifiedModel {
+  if (selection.includes("/")) {
+    const [provider, ...rest] = selection.split("/");
+    return createFallbackModel(provider, rest.join("/"), baseURLOverride);
+  }
+
+  return createFallbackModel("openai", selection, baseURLOverride ?? resolveBaseURL("openai"));
+}
+
+function applyProjectOverride(profile: MonoProfileConfig, projectConfig: MonoProjectConfig | undefined, baseURLOverride?: string): MonoProfileConfig {
+  if (!projectConfig) {
+    return {
+      ...profile,
+      baseURL: baseURLOverride ?? profile.baseURL
+    };
+  }
+
+  return {
+    ...profile,
+    provider: projectConfig.provider ?? profile.provider,
+    modelId: projectConfig.modelId ?? profile.modelId,
+    baseURL: baseURLOverride ?? projectConfig.baseURL ?? profile.baseURL,
+    apiKeyRef: projectConfig.apiKeyRef ?? profile.apiKeyRef,
+    apiKeyEnv: projectConfig.apiKeyEnv ?? profile.apiKeyEnv
+  };
+}
+
+function resolveApiKeyRef(ref: string, secrets: MonoSecretsConfig | undefined): string | undefined {
+  if (!ref.startsWith("local:")) {
+    return undefined;
+  }
+  return secrets?.profiles[ref.slice("local:".length)]?.apiKey;
+}
+
+async function loadLegacyProfiles(store: MonoConfigStore): Promise<Record<string, MonoProfileConfig> | undefined> {
+  const raw = await readJsonFile<{ models?: UnifiedModel[] } | UnifiedModel[]>(store.paths.legacyMonoModelsPath);
+  const models = normalizeLegacyModels(raw);
+  if (models.length === 0) {
+    return undefined;
+  }
+
+  const profiles: Record<string, MonoProfileConfig> = {};
+  for (const [index, model] of models.entries()) {
+    const name = index === 0 ? "default" : `${model.provider}-${sanitizeModelId(model.modelId)}`;
+    profiles[name] = modelToProfile(model);
+  }
+  return profiles;
+}
+
+async function loadLegacyProjectConfig(
+  store: MonoConfigStore,
+  legacyProfiles: Record<string, MonoProfileConfig> | undefined
+): Promise<MonoProjectConfig | undefined> {
+  const raw = await readJsonFile<{ models?: UnifiedModel[] } | UnifiedModel[]>(store.paths.legacyProjectMonoModelsPath);
+  const models = normalizeLegacyModels(raw);
+  const first = models[0];
+  if (!first) {
+    return undefined;
+  }
+
+  const profile = Object.entries(legacyProfiles ?? {}).find(([, item]) =>
+    item.provider === first.provider && item.modelId === first.modelId
+  )?.[0];
+
+  return {
+    profile,
+    provider: first.provider,
+    modelId: first.modelId,
+    baseURL: first.baseURL,
+    apiKeyEnv: first.apiKeyEnv
+  };
+}
+
+function unwrapProjectConfig(
+  raw: { version?: number; mono?: MonoProjectConfig } | MonoProjectConfig | undefined
+): MonoProjectConfig | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  if ("mono" in raw && raw.mono !== undefined) {
+    return raw.mono;
+  }
+  return raw as MonoProjectConfig;
+}
+
+function normalizeLegacyModels(raw: { models?: UnifiedModel[] } | UnifiedModel[] | undefined): UnifiedModel[] {
+  if (!raw) {
+    return [];
+  }
+  return Array.isArray(raw) ? raw : raw.models ?? [];
+}
+
+function sanitizeModelId(modelId: string): string {
+  return modelId.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "model";
+}
+
+function looksLikeInlineApiKey(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  if (/^[A-Z_][A-Z0-9_]*$/.test(value)) {
+    return false;
+  }
+  return value.length >= 16;
+}

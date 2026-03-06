@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/config" },
+    { "path": "./packages/pi-tui" },
+    { "path": "./packages/llm" },
+    { "path": "./packages/tools" },
+    { "path": "./packages/session" },
+    { "path": "./packages/agent-core" },
+    { "path": "./packages/tui" },
+    { "path": "./packages/cli" }
+  ]
+}

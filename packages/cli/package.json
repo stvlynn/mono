@@ -1,0 +1,20 @@
+{
+  "name": "@mono/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "mono": "dist/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@mono/agent-core": "workspace:*",
+    "@mono/config": "workspace:*",
+    "@mono/llm": "workspace:*",
+    "@mono/shared": "workspace:*",
+    "@mono/tools": "workspace:*",
+    "@mono/tui": "workspace:*",
+    "commander": "^13.1.0"
+  }
+}

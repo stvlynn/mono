@@ -1,0 +1,14 @@
+{
+  "name": "@mono/tui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@mono/agent-core": "workspace:*",
+    "@mono/config": "workspace:*",
+    "@mono/pi-tui": "workspace:*",
+    "@mono/shared": "workspace:*"
+  }
+}

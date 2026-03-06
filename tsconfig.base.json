@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "lib": ["ES2022"],
+    "strict": true,
+    "declaration": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@mono/shared": ["packages/shared/src/index.ts"],
+      "@mono/config": ["packages/config/src/index.ts"],
+      "@mono/pi-tui": ["packages/pi-tui/src/index.ts"],
+      "@mono/llm": ["packages/llm/src/index.ts"],
+      "@mono/tools": ["packages/tools/src/index.ts"],
+      "@mono/session": ["packages/session/src/index.ts"],
+      "@mono/agent-core": ["packages/agent-core/src/index.ts"],
+      "@mono/tui": ["packages/tui/src/index.ts"],
+      "@mono/cli": ["packages/cli/src/index.ts"]
+    },
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"]
+  }
+}
