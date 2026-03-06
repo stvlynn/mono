@@ -8,6 +8,7 @@
   "dependencies": {
     "@mono/agent-core": "workspace:*",
     "@mono/config": "workspace:*",
+    "@mono/memory": "workspace:*",
     "@mono/pi-tui": "workspace:*",
     "@mono/shared": "workspace:*"
   }

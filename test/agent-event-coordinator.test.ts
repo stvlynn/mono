@@ -76,4 +76,34 @@ describe("AgentEventCoordinator", () => {
     expect(actions.setStreamingText).toHaveBeenCalledWith("");
     expect(actions.setStreamingThinking).toHaveBeenCalledWith("");
   });
+
+  it("updates task and compression statuses from runtime events", () => {
+    const { actions } = createActions();
+    const coordinator = new AgentEventCoordinator(actions);
+
+    coordinator.handle({
+      type: "task-start",
+      task: {
+        taskId: "task-1",
+        goal: "fix tests",
+        phase: "plan",
+        attempts: 0,
+        todos: [{ id: "execute", description: "Execute the required work", status: "in_progress" }],
+        verification: { mode: "strict", evidence: [] }
+      }
+    });
+    coordinator.handle({
+      type: "session-compressed",
+      result: {
+        summary: "summary",
+        preservedRecentMessages: 8,
+        replacedMessageCount: 4,
+        tokenEstimateBefore: 100,
+        tokenEstimateAfter: 40
+      }
+    });
+
+    expect(actions.setStatus).toHaveBeenCalledWith("Planning task: fix tests");
+    expect(actions.setStatus).toHaveBeenCalledWith("Compressed 4 messages into a session summary");
+  });
 });

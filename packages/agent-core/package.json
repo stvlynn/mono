@@ -8,6 +8,8 @@
   "dependencies": {
     "@mono/config": "workspace:*",
     "@mono/llm": "workspace:*",
+    "@mono/memory": "workspace:*",
+    "@mono/prompts": "workspace:*",
     "@mono/session": "workspace:*",
     "@mono/shared": "workspace:*",
     "@mono/tools": "workspace:*"

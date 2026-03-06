@@ -94,6 +94,62 @@ export interface MonoProjectConfig {
   baseURL?: string;
   apiKeyRef?: string;
   apiKeyEnv?: string;
+  memory?: Partial<MonoMemoryConfig>;
+}
+
+export interface MonoMemoryConfig {
+  enabled: boolean;
+  autoInject: boolean;
+  storePath: string;
+  latestRoots: number;
+  compactedLevelNum: number;
+  rawPairLevelNum: number;
+  compactedCapNum: number;
+  rawPairCapNum: number;
+  keywordSearchLimit: number;
+}
+
+export type VerificationMode = "none" | "light" | "strict";
+
+export interface TaskItem {
+  id: string;
+  description: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+}
+
+export type TaskPhase = "plan" | "execute" | "verify" | "summarize" | "done" | "blocked" | "incomplete" | "aborted";
+
+export interface VerificationState {
+  mode: VerificationMode;
+  passed?: boolean;
+  reason?: string;
+  evidence: string[];
+  lastCheckedAt?: number;
+}
+
+export interface TaskState {
+  taskId: string;
+  goal: string;
+  phase: TaskPhase;
+  todos: TaskItem[];
+  attempts: number;
+  verification: VerificationState;
+}
+
+export interface SessionCompressionResult {
+  summary: string;
+  preservedRecentMessages: number;
+  replacedMessageCount: number;
+  tokenEstimateBefore: number;
+  tokenEstimateAfter: number;
+}
+
+export interface TaskResult {
+  status: "done" | "blocked" | "aborted" | "incomplete";
+  summary: string;
+  turns: number;
+  verification?: VerificationState;
+  messages: ConversationMessage[];
 }
 
 export interface MonoGlobalConfig {
@@ -105,6 +161,7 @@ export interface MonoGlobalConfig {
       approvalMode?: "default" | "always-ask" | "auto-approve-safe";
       theme?: string;
     };
+    memory?: Partial<MonoMemoryConfig>;
   };
   projects?: Record<string, MonoProjectConfig>;
 }
@@ -117,6 +174,7 @@ export interface MonoSecretsConfig {
 export interface ResolvedMonoConfig {
   profileName: string;
   model: UnifiedModel;
+  memory: MonoMemoryConfig;
   apiKey?: string;
   source: {
     profile:
@@ -138,6 +196,7 @@ export interface MonoConfigSummary {
   globalConfigPath: string;
   projectConfigPath: string;
   sessionsDir: string;
+  memoryDir: string;
   defaultProfile?: string;
   resolvedProfile?: string;
   hasAnyProfiles: boolean;
@@ -206,6 +265,67 @@ export interface SessionNodeSummary {
   label: string;
 }
 
+export interface MemoryDetailedTraceUser {
+  type: "user";
+  text: string;
+}
+
+export interface MemoryDetailedTraceAssistant {
+  type: "assistant";
+  text?: string;
+  thinking?: string;
+}
+
+export interface MemoryDetailedTraceToolCall {
+  type: "tool_call";
+  toolName: string;
+  args: unknown;
+  toolCallId?: string;
+}
+
+export interface MemoryDetailedTraceToolResult {
+  type: "tool_result";
+  toolName: string;
+  output: string;
+  truncated?: boolean;
+}
+
+export type MemoryDetailedTrace =
+  | MemoryDetailedTraceUser
+  | MemoryDetailedTraceAssistant
+  | MemoryDetailedTraceToolCall
+  | MemoryDetailedTraceToolResult;
+
+export interface MemoryRecord {
+  id: string;
+  createdAt: number;
+  projectKey: string;
+  sessionId?: string;
+  branchHeadId?: string;
+  parents: string[];
+  children: string[];
+  referencedMemoryIds: string[];
+  input: string;
+  compacted: string[];
+  output: string;
+  detailed: MemoryDetailedTrace[];
+  tags: string[];
+  files: string[];
+  tools: string[];
+}
+
+export interface MemorySearchMatch {
+  id: string;
+  matchedLines: Array<{ line: number; text: string }>;
+}
+
+export interface MemoryRecallPlan {
+  rootIds: string[];
+  compactedIds: string[];
+  rawPairIds: string[];
+  selectedIds: string[];
+}
+
 export type SessionEntryType =
   | "metadata"
   | "user"
@@ -213,7 +333,12 @@ export type SessionEntryType =
   | "tool"
   | "branch"
   | "label"
-  | "compaction";
+  | "compaction"
+  | "task_state"
+  | "task_summary"
+  | "session_compression"
+  | "memory_reference"
+  | "memory_record";
 
 export interface SessionEntryBase<TType extends SessionEntryType, TPayload> {
   id: string;
@@ -230,6 +355,27 @@ export type ToolEntry = SessionEntryBase<"tool", ToolResultMessage>;
 export type BranchEntry = SessionEntryBase<"branch", { name?: string }>;
 export type LabelEntry = SessionEntryBase<"label", { label: string }>;
 export type CompactionEntry = SessionEntryBase<"compaction", { summary: string }>;
+export type TaskStateEntry = SessionEntryBase<"task_state", TaskState>;
+export type TaskSummaryEntry = SessionEntryBase<
+  "task_summary",
+  {
+    status: TaskResult["status"];
+    summary: string;
+    verification?: VerificationState;
+  }
+>;
+export type SessionCompressionEntry = SessionEntryBase<"session_compression", SessionCompressionResult>;
+export type MemoryReferenceEntry = SessionEntryBase<
+  "memory_reference",
+  {
+    memoryIds: string[];
+    compactedIds: string[];
+    rawPairIds: string[];
+    reason: "auto" | "manual";
+    query?: string;
+  }
+>;
+export type MemoryRecordEntry = SessionEntryBase<"memory_record", { memoryId: string }>;
 
 export type SessionEntry =
   | MetadataEntry
@@ -238,10 +384,24 @@ export type SessionEntry =
   | ToolEntry
   | BranchEntry
   | LabelEntry
-  | CompactionEntry;
+  | CompactionEntry
+  | TaskStateEntry
+  | TaskSummaryEntry
+  | SessionCompressionEntry
+  | MemoryReferenceEntry
+  | MemoryRecordEntry;
 
 export type RuntimeEvent =
   | { type: "run-start"; input: UserMessage }
+  | { type: "task-start"; task: TaskState }
+  | { type: "task-update"; task: TaskState }
+  | { type: "task-phase-change"; task: TaskState }
+  | { type: "task-verify-start"; task: TaskState }
+  | { type: "task-verify-result"; task: TaskState; passed: boolean; reason: string }
+  | { type: "task-summary"; result: TaskResult }
+  | { type: "session-compressed"; result: SessionCompressionResult }
+  | { type: "loop-detected"; reason: string; task: TaskState }
+  | { type: "memory-recalled"; plan: MemoryRecallPlan; reason: "auto" | "manual"; query?: string }
   | { type: "assistant-start" }
   | { type: "assistant-text-delta"; delta: string }
   | { type: "assistant-thinking-delta"; delta: string }
@@ -252,6 +412,7 @@ export type RuntimeEvent =
   | { type: "approval-request"; request: ApprovalRequest }
   | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }
   | { type: "message"; message: ConversationMessage }
+  | { type: "memory-persisted"; record: MemoryRecord }
   | { type: "run-aborted"; reason: "user" | "superseded" }
   | { type: "run-end"; messages: ConversationMessage[] }
   | { type: "error"; error: Error };

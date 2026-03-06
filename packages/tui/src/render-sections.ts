@@ -1,5 +1,5 @@
 import { padRight, wrapText } from "@mono/pi-tui";
-import type { ConversationMessage } from "@mono/shared";
+import type { ConversationMessage, TaskState } from "@mono/shared";
 import { ansi, formatMessage } from "./ui-format.js";
 import type { ModalState, ToolRun } from "./ui-types.js";
 
@@ -66,6 +66,43 @@ export function renderToolsSection(toolRuns: ToolRun[], width: number): string[]
   return lines;
 }
 
+export function renderTaskSection(task: TaskState | undefined, width: number): string[] {
+  if (!task) {
+    return [padRight(ansi.dim("  No active task."), width)];
+  }
+
+  const bodyWidth = Math.max(1, width - 2);
+  const lines: string[] = [
+    `  ${ansi.bold(`phase: ${task.phase}`)}`,
+    `  ${ansi.dim(`goal: ${task.goal}`)}`
+  ];
+
+  for (const todo of task.todos) {
+    const marker =
+      todo.status === "completed"
+        ? ansi.green("[x]")
+        : todo.status === "in_progress"
+          ? ansi.yellow("[>]")
+          : todo.status === "cancelled"
+            ? ansi.red("[-]")
+            : ansi.dim("[ ]");
+    for (const line of wrapText(`${marker} ${todo.description}`, bodyWidth)) {
+      lines.push(`  ${line}`);
+    }
+  }
+
+  if (task.verification.mode !== "none") {
+    const verificationLine = task.verification.passed
+      ? ansi.green(`verification: ${task.verification.reason ?? "passed"}`)
+      : ansi.dim(`verification: ${task.verification.reason ?? "pending"}`);
+    for (const line of wrapText(verificationLine, bodyWidth)) {
+      lines.push(`  ${line}`);
+    }
+  }
+
+  return lines.slice(-8);
+}
+
 export function renderEditorSection(options: EditorSectionOptions): string[] {
   const bodyWidth = Math.max(1, options.width - 2);
   const promptPrefix = "> ";
@@ -74,7 +111,7 @@ export function renderEditorSection(options: EditorSectionOptions): string[] {
   const after = options.inputValue.slice(options.cursor + (options.cursor < options.inputValue.length ? 1 : 0));
   const editorText = `${promptPrefix}${before}${ansi.inverse(current)}${after}`;
   const lines = wrapText(editorText, bodyWidth).map((line) => `  ${line}`);
-  lines.push(`  ${ansi.dim("/help /profile /model /auth /sessions /tree /quit | Ctrl+J newline | Ctrl+L profiles | Ctrl+R sessions")}`);
+  lines.push(`  ${ansi.dim("/help /profile /model /auth /sessions /memory /tree /quit | Ctrl+J newline | Ctrl+L profiles | Ctrl+R sessions")}`);
 
   if (options.slashPaletteVisible) {
     lines.push(`  ${ansi.dim("Commands")}`);
@@ -93,6 +130,7 @@ export function renderModal(modal: ModalState, width: number): string[] {
       padRight("  /model     Open model selector", width),
       padRight("  /auth      Show auth setup hint", width),
       padRight("  /sessions  Open session selector", width),
+      padRight("  /memory    Browse or search project memory", width),
       padRight("  /tree      Open session tree", width),
       padRight("  /quit      Exit mono", width),
       padRight(ansi.dim("  Enter/Esc close"), width)
@@ -124,6 +162,14 @@ export function renderModal(modal: ModalState, width: number): string[] {
       padRight(ansi.bold(modal.title), width),
       ...modal.list.render(width),
       padRight(ansi.dim(`  ${modal.hint}`), width)
+    ];
+  }
+
+  if (modal.type === "details") {
+    return [
+      padRight(ansi.bold(modal.title), width),
+      ...modal.lines.map((line) => padRight(`  ${line}`, width)),
+      padRight(ansi.dim("  Enter/Esc close"), width)
     ];
   }
 

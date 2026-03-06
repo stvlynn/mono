@@ -3,14 +3,19 @@ import { dirname, join } from "node:path";
 import {
   appendJsonLine,
   createId,
+  type MemoryRecallPlan,
   now,
   readJsonLines,
   type ConversationMessage,
+  type MemoryRecord,
   type SessionEntry,
   type SessionNodeSummary,
   type SessionEntryType,
   type SessionPointer,
   type SessionSummary,
+  type SessionCompressionResult,
+  type TaskResult,
+  type TaskState,
   type UnifiedModel
 } from "@mono/shared";
 import { getMonoConfigPaths } from "@mono/config";
@@ -51,7 +56,14 @@ export class SessionManager {
   async initialize(model: UnifiedModel): Promise<void> {
     const entries = await readJsonLines<SessionEntry>(this.filePath);
     if (entries.length > 0) {
-      this.headId = entries.at(-1)?.id;
+      if (this.headId) {
+        const hasRequestedHead = entries.some((entry) => entry.id === this.headId);
+        if (!hasRequestedHead) {
+          throw new Error(`Unknown branch head: ${this.headId}`);
+        }
+      } else {
+        this.headId = entries.at(-1)?.id;
+      }
       return;
     }
 
@@ -89,6 +101,83 @@ export class SessionManager {
       timestamp: now(),
       entryType: "branch",
       payload: { name }
+    };
+    this.headId = entry.id;
+    await appendJsonLine(this.filePath, entry);
+    return entry.id;
+  }
+
+  async appendMemoryReference(plan: MemoryRecallPlan, reason: "auto" | "manual", query?: string): Promise<string> {
+    const entry: SessionEntry = {
+      id: createId(),
+      parentId: this.headId,
+      timestamp: now(),
+      entryType: "memory_reference",
+      payload: {
+        memoryIds: plan.selectedIds,
+        compactedIds: plan.compactedIds,
+        rawPairIds: plan.rawPairIds,
+        reason,
+        query
+      }
+    };
+    this.headId = entry.id;
+    await appendJsonLine(this.filePath, entry);
+    return entry.id;
+  }
+
+  async appendMemoryRecord(record: MemoryRecord): Promise<string> {
+    const entry: SessionEntry = {
+      id: createId(),
+      parentId: this.headId,
+      timestamp: record.createdAt,
+      entryType: "memory_record",
+      payload: {
+        memoryId: record.id
+      }
+    };
+    this.headId = entry.id;
+    await appendJsonLine(this.filePath, entry);
+    return entry.id;
+  }
+
+  async appendTaskState(task: TaskState): Promise<string> {
+    const entry: SessionEntry = {
+      id: createId(),
+      parentId: this.headId,
+      timestamp: now(),
+      entryType: "task_state",
+      payload: task
+    };
+    this.headId = entry.id;
+    await appendJsonLine(this.filePath, entry);
+    return entry.id;
+  }
+
+  async appendTaskSummary(result: TaskResult): Promise<string> {
+    const entry: SessionEntry = {
+      id: createId(),
+      parentId: this.headId,
+      timestamp: now(),
+      entryType: "task_summary",
+      payload: {
+        status: result.status,
+        summary: result.summary,
+        verification: result.verification
+      }
+    };
+    this.headId = entry.id;
+    await appendJsonLine(this.filePath, entry);
+    return entry.id;
+  }
+
+  async appendSessionCompression(result: SessionCompressionResult): Promise<string> {
+    const entry: SessionEntry = {
+      id: createId(),
+      parentId: this.headId,
+      timestamp: now(),
+      entryType: "session_compression",
+      payload: result
     };
     this.headId = entry.id;
     await appendJsonLine(this.filePath, entry);
@@ -224,6 +313,22 @@ function summarizeEntry(entry: SessionEntry): string {
     return "assistant";
   }
 
+  if (entry.entryType === "task_state") {
+    const payload = entry.payload as TaskState;
+    const current = payload.todos.find((todo) => todo.status === "in_progress");
+    return `task ${payload.phase}: ${current?.description ?? payload.goal.slice(0, 60)}`;
+  }
+
+  if (entry.entryType === "task_summary") {
+    const payload = entry.payload as { status: TaskResult["status"]; summary: string };
+    return `summary [${payload.status}] ${payload.summary.slice(0, 80)}`;
+  }
+
+  if (entry.entryType === "session_compression") {
+    const payload = entry.payload as SessionCompressionResult;
+    return `compressed ${payload.replacedMessageCount} messages`;
+  }
+
   if (entry.entryType === "tool") {
     const payload = entry.payload as ConversationMessage;
     return payload.role === "tool" ? `tool result: ${payload.toolName}` : "tool";
@@ -235,6 +340,15 @@ function summarizeEntry(entry: SessionEntry): string {
 
   if (entry.entryType === "compaction") {
     return "compaction";
+  }
+
+  if (entry.entryType === "memory_reference") {
+    const payload = entry.payload as { memoryIds: string[]; reason: "auto" | "manual" };
+    return `memory ${payload.reason}: ${payload.memoryIds.length} recalled`;
+  }
+
+  if (entry.entryType === "memory_record") {
+    return `memory saved: ${(entry.payload as { memoryId: string }).memoryId}`;
   }
 
   return entry.entryType;

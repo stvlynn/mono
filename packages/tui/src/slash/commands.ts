@@ -50,6 +50,16 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
     executeMode: "open-selector"
   },
   {
+    name: "memory",
+    fullName: "/memory",
+    description: "Browse or search project memory",
+    usage: "/memory [query]",
+    aliases: ["mem"],
+    kind: "selector",
+    source: "builtin",
+    executeMode: "open-selector"
+  },
+  {
     name: "tree",
     fullName: "/tree",
     description: "Open session tree",

@@ -66,6 +66,7 @@ export class MonoConfigStore {
     await Promise.all([
       mkdir(this.paths.globalDir, { recursive: true }),
       mkdir(join(this.paths.globalDir, "local"), { recursive: true }),
+      mkdir(this.paths.globalMemoryDir, { recursive: true }),
       mkdir(this.paths.globalRulesDir, { recursive: true }),
       mkdir(this.paths.globalSkillsDir, { recursive: true }),
       mkdir(this.paths.globalSettingsDir, { recursive: true }),
@@ -73,6 +74,7 @@ export class MonoConfigStore {
       mkdir(this.paths.globalStateDir, { recursive: true }),
       mkdir(this.paths.globalSessionsDir, { recursive: true }),
       mkdir(this.paths.projectDir, { recursive: true }),
+      mkdir(this.paths.projectMemoryDir, { recursive: true }),
       mkdir(this.paths.projectRulesDir, { recursive: true }),
       mkdir(this.paths.projectSkillsDir, { recursive: true }),
       mkdir(this.paths.projectSettingsDir, { recursive: true })

@@ -8,6 +8,7 @@
   "references": [
     { "path": "../shared" },
     { "path": "../config" },
+    { "path": "../memory" },
     { "path": "../pi-tui" },
     { "path": "../agent-core" }
   ],

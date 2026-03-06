@@ -6,6 +6,7 @@ export type ModalState =
   | { type: "help" }
   | { type: "onboarding" }
   | { type: "approval"; request: ApprovalRequest }
+  | { type: "details"; title: string; lines: string[] }
   | { type: "select"; title: string; hint: string; list: SelectList };
 
 export interface ToolRun {

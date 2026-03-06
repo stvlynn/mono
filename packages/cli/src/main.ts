@@ -4,7 +4,7 @@ import { Command } from "commander";
 import { Agent } from "@mono/agent-core";
 import { MonoConfigStore, getMonoConfigSummary, listProfiles, resolveApiKeyEnv, resolveBaseURL, resolveMonoConfig } from "@mono/config";
 import { ModelRegistry } from "@mono/llm";
-import type { MonoGlobalConfig, MonoProjectConfig } from "@mono/shared";
+import type { MemoryRecord, MonoGlobalConfig, MonoProjectConfig } from "@mono/shared";
 
 async function promptApproval(): Promise<(reason: { toolName: string; reason: string; input: unknown }) => Promise<boolean>> {
   const rl = createInterface({ input, output });
@@ -33,13 +33,21 @@ async function runPrint(
   agent.subscribe((event) => {
     if (event.type === "assistant-text-delta") {
       process.stdout.write(event.delta);
+    } else if (event.type === "task-phase-change") {
+      process.stderr.write(`\n[task] phase=${event.task.phase}\n`);
+    } else if (event.type === "task-verify-result") {
+      process.stderr.write(`\n[verify] ${event.passed ? "passed" : "failed"} ${event.reason}\n`);
+    } else if (event.type === "session-compressed") {
+      process.stderr.write(`\n[session] compressed ${event.result.replacedMessageCount} messages\n`);
     } else if (event.type === "tool-start") {
       process.stderr.write(`\n[tool:${event.toolName}] start\n`);
     } else if (event.type === "tool-end") {
       process.stderr.write(`\n[tool:${event.toolName}] ${event.isError ? "error" : "done"}\n`);
+    } else if (event.type === "task-summary") {
+      process.stderr.write(`\n[task] ${event.result.summary}\n`);
     }
   });
-  await agent.prompt(promptText);
+  await agent.runTask(promptText);
   process.stdout.write("\n");
 }
 
@@ -163,6 +171,18 @@ function parseConfigValue(raw: string): unknown {
   } catch {
     return raw;
   }
+}
+
+function formatMemoryRecord(record: MemoryRecord): string {
+  const compacted = record.compacted.slice(0, 3).map((line) => `    - ${line}`).join("\n");
+  return [
+    `${record.id}  ${new Date(record.createdAt).toLocaleString()}`,
+    `  files: ${record.files.join(", ") || "<none>"}`,
+    `  tools: ${record.tools.join(", ") || "<none>"}`,
+    `  input: ${record.input}`,
+    `  output: ${record.output}`,
+    compacted ? `  compacted:\n${compacted}` : "  compacted: <none>"
+  ].join("\n");
 }
 
 export async function main(argv: string[]): Promise<void> {
@@ -384,6 +404,96 @@ export async function main(argv: string[]): Promise<void> {
         console.log("profiles:");
         for (const profile of profiles) {
           console.log(`  ${profile.name} -> ${profile.model.provider}/${profile.model.modelId}`);
+        }
+      }
+    });
+
+  const memory = program.command("memory").description("Inspect and manage project memory");
+
+  memory
+    .command("status")
+    .description("Show memory configuration and store status")
+    .action(async () => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const count = await agent.countMemories();
+      const records = await agent.listMemories(1);
+      const config = agent.getResolvedConfig();
+      output.write(`Enabled: ${config.memory.enabled}\n`);
+      output.write(`Auto inject: ${config.memory.autoInject}\n`);
+      output.write(`Store path: ${agent.getMemoryStorePath()}\n`);
+      output.write(`Records: ${count}\n`);
+      output.write(`Current session: ${agent.getSessionId()}\n`);
+      output.write(`Last memory: ${records[0]?.id ?? "<none>"}\n`);
+    });
+
+  memory
+    .command("list")
+    .description("List recent memory records")
+    .option("-n, --limit <limit>", "number of records to show", "10")
+    .action(async (options) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const records = await agent.listMemories(Number(options.limit));
+      if (records.length === 0) {
+        output.write("No memory records found.\n");
+        return;
+      }
+      for (const record of records) {
+        output.write(`${formatMemoryRecord(record)}\n`);
+      }
+    });
+
+  memory
+    .command("search")
+    .description("Search memory records by keyword")
+    .argument("<query>", "keyword query")
+    .action(async (query: string) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const matches = await agent.searchMemories(query);
+      if (matches.length === 0) {
+        output.write("No matching memory records.\n");
+        return;
+      }
+      for (const match of matches) {
+        output.write(`${match.id}\n`);
+        for (const line of match.matchedLines) {
+          output.write(`  [${line.line}] ${line.text}\n`);
+        }
+      }
+    });
+
+  memory
+    .command("show")
+    .description("Show one memory record")
+    .argument("<id>", "memory id")
+    .action(async (id: string) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const record = await agent.getMemoryRecord(id);
+      if (!record) {
+        throw new Error(`Memory record not found: ${id}`);
+      }
+      output.write(`${formatMemoryRecord(record)}\n`);
+      if (record.referencedMemoryIds.length > 0) {
+        output.write(`  referenced: ${record.referencedMemoryIds.join(", ")}\n`);
+      }
+    });
+
+  memory
+    .command("recall")
+    .description("Preview memory recall for the current session")
+    .argument("[query]", "optional keyword query")
+    .action(async (query?: string) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const plan = await agent.recallMemory(query);
+      output.write(`${JSON.stringify(plan, null, 2)}\n`);
+      if (plan.selectedIds.length > 0) {
+        const records = await Promise.all(plan.selectedIds.map((id) => agent.getMemoryRecord(id)));
+        for (const record of records.filter((item): item is MemoryRecord => item !== null)) {
+          output.write(`${formatMemoryRecord(record)}\n`);
         }
       }
     });

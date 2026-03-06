@@ -3,6 +3,8 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/config" },
+    { "path": "./packages/prompts" },
+    { "path": "./packages/memory" },
     { "path": "./packages/pi-tui" },
     { "path": "./packages/llm" },
     { "path": "./packages/tools" },

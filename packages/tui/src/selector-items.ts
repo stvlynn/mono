@@ -1,5 +1,5 @@
 import { truncateToWidth } from "@mono/pi-tui";
-import type { SessionNodeSummary, SessionSummary, UnifiedModel } from "@mono/shared";
+import type { MemoryRecord, SessionNodeSummary, SessionSummary, UnifiedModel } from "@mono/shared";
 import { formatTime } from "./ui-format.js";
 
 export interface SelectOptionItem {
@@ -33,5 +33,13 @@ export function createTreeItems(nodes: SessionNodeSummary[]): SelectOptionItem[]
     value: node.id,
     label: `[${node.entryType}] ${truncateToWidth(node.label, 60)}`,
     description: new Date(node.timestamp).toLocaleString()
+  }));
+}
+
+export function createMemoryItems(records: MemoryRecord[]): SelectOptionItem[] {
+  return records.map((record) => ({
+    value: record.id,
+    label: `${record.id}  ${truncateToWidth(record.input, 48)}`,
+    description: record.compacted[0] ?? record.output
   }));
 }

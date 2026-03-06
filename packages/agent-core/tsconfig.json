@@ -9,6 +9,8 @@
     { "path": "../shared" },
     { "path": "../config" },
     { "path": "../llm" },
+    { "path": "../memory" },
+    { "path": "../prompts" },
     { "path": "../tools" },
     { "path": "../session" }
   ],

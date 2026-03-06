@@ -26,6 +26,38 @@ export class AgentEventCoordinator {
         this.actions.setStreamingThinking("");
         this.actions.setStatus("Assistant is thinking...");
         break;
+      case "memory-recalled":
+        this.actions.setStatus(
+          `Recalled ${event.plan.selectedIds.length} memories (${event.plan.compactedIds.length} compacted, ${event.plan.rawPairIds.length} raw)`
+        );
+        break;
+      case "task-start":
+        this.actions.setRunning(true);
+        this.actions.setStatus(`Planning task: ${event.task.goal}`);
+        break;
+      case "task-update": {
+        const current = event.task.todos.find((todo) => todo.status === "in_progress");
+        this.actions.setStatus(current ? `${event.task.phase}: ${current.description}` : `Task phase: ${event.task.phase}`);
+        break;
+      }
+      case "task-phase-change":
+        this.actions.setStatus(`Task phase: ${event.task.phase}`);
+        break;
+      case "task-verify-start":
+        this.actions.setStatus("Verifying result...");
+        break;
+      case "task-verify-result":
+        this.actions.setStatus(event.passed ? "Verification passed" : `Verification failed: ${event.reason}`);
+        break;
+      case "task-summary":
+        this.actions.setStatus(event.result.summary);
+        break;
+      case "session-compressed":
+        this.actions.setStatus(`Compressed ${event.result.replacedMessageCount} messages into a session summary`);
+        break;
+      case "loop-detected":
+        this.actions.setStatus(`Loop detected: ${event.reason}`);
+        break;
       case "assistant-text-delta":
         this.actions.appendStreamingText(event.delta);
         this.actions.setStatus("Streaming response...");
@@ -70,6 +102,9 @@ export class AgentEventCoordinator {
         if (!event.approved && event.reason) {
           this.actions.setStatus(event.reason);
         }
+        break;
+      case "memory-persisted":
+        this.actions.setStatus(`Memory saved: ${event.record.id}`);
         break;
       case "message":
         this.actions.pushMessage(event.message);

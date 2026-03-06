@@ -9,6 +9,7 @@
     { "path": "../shared" },
     { "path": "../config" },
     { "path": "../llm" },
+    { "path": "../memory" },
     { "path": "../tools" },
     { "path": "../agent-core" },
     { "path": "../tui" }

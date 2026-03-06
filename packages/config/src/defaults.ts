@@ -1,4 +1,4 @@
-import type { MonoGlobalConfig, MonoProfileConfig, UnifiedModel } from "@mono/shared";
+import type { MonoGlobalConfig, MonoMemoryConfig, MonoProfileConfig, UnifiedModel } from "@mono/shared";
 
 const BUILTIN_MODELS: UnifiedModel[] = [
   {
@@ -66,9 +66,24 @@ export function createDefaultGlobalConfig(): MonoGlobalConfig {
       settings: {
         approvalMode: "default",
         theme: "system"
-      }
+      },
+      memory: createDefaultMemoryConfig()
     },
     projects: {}
+  };
+}
+
+export function createDefaultMemoryConfig(): MonoMemoryConfig {
+  return {
+    enabled: true,
+    autoInject: true,
+    storePath: ".mono/memories",
+    latestRoots: 4,
+    compactedLevelNum: 1,
+    rawPairLevelNum: 3,
+    compactedCapNum: 8,
+    rawPairCapNum: 8,
+    keywordSearchLimit: 6
   };
 }
 

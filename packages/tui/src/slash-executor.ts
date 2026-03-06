@@ -7,6 +7,7 @@ interface SlashCommandExecutorActions {
   openProfileSelector: (filter?: string) => Promise<void>;
   openModelSelector: (filter?: string) => Promise<void>;
   openSessionSelector: (filter?: string) => Promise<void>;
+  openMemorySelector: (filter?: string) => Promise<void>;
   openTreeView: (filter?: string) => Promise<void>;
   clearInput: () => void;
   setUnknownCommand: (commandName: string) => void;
@@ -59,6 +60,10 @@ export class SlashCommandExecutor {
         }
         this.actions.clearInput();
         await this.actions.openSessionSelector(filter);
+        return;
+      case "memory":
+        this.actions.clearInput();
+        await this.actions.openMemorySelector(filter);
         return;
       case "tree":
         if (this.actions.isRunning()) {

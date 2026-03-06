@@ -8,7 +8,7 @@ import { parseSlashInput, isSlashInput } from "./slash/parser.js";
 import { SlashCommandRegistry } from "./slash/registry.js";
 import type { ParsedSlashInput, SlashCommandDefinition, SlashCommandMatch } from "./slash/types.js";
 import { ansi, createSelectList, toSelectItems } from "./ui-format.js";
-import { renderConversationSection, renderEditorSection, renderModal, renderToolsSection } from "./render-sections.js";
+import { renderConversationSection, renderEditorSection, renderModal, renderTaskSection, renderToolsSection } from "./render-sections.js";
 import { createSelectorModal } from "./selector-modal.js";
 import { SelectorCoordinator } from "./selector-coordinator.js";
 import { buildSlashCommandLine, SlashCommandExecutor } from "./slash-executor.js";
@@ -56,6 +56,9 @@ class MonoInteractiveApp {
       setStatus: (status) => {
         this.status = status;
       },
+      openDetailsModal: (title, lines) => {
+        this.modal = { type: "details", title, lines };
+      },
       clearInput: () => {
         this.clearInput();
       },
@@ -79,6 +82,7 @@ class MonoInteractiveApp {
       openProfileSelector: async (filter) => this.selectorCoordinator.openProfileSelector(filter),
       openModelSelector: async (filter) => this.selectorCoordinator.openModelSelector(filter),
       openSessionSelector: async (filter) => this.selectorCoordinator.openSessionSelector(filter),
+      openMemorySelector: async (filter) => this.selectorCoordinator.openMemorySelector(filter),
       openTreeView: async (filter) => this.selectorCoordinator.openTreeView(filter),
       clearInput: () => {
         this.clearInput();
@@ -427,7 +431,7 @@ class MonoInteractiveApp {
   }
 
   private handlePassiveModalInput(key: string): boolean {
-    if (this.modal.type !== "help" && this.modal.type !== "onboarding") {
+    if (this.modal.type !== "help" && this.modal.type !== "onboarding" && this.modal.type !== "details") {
       return false;
     }
 
@@ -623,6 +627,7 @@ class MonoInteractiveApp {
     const header = `${ansi.bold(ansi.cyan("mono"))} ${ansi.dim(truncateToWidth(this.status, Math.max(1, width - 5)))}`;
     lines.push(padRight(header, width));
     lines.push(this.rule(width));
+    lines.push(...this.renderSection(width, "Task", this.renderTask(width)));
     lines.push(...this.renderSection(width, "Conversation", this.renderConversation(width)));
     lines.push(...this.renderSection(width, "Tools", this.renderTools(width)));
     lines.push(...this.renderSection(width, "Editor", this.renderEditor(width)));
@@ -630,8 +635,10 @@ class MonoInteractiveApp {
     const currentModel = this.initialized ? this.options.agent.getCurrentModel() : undefined;
     const currentProfile = this.initialized ? this.options.agent.getProfileName() : "<loading>";
     const currentSession = this.initialized ? this.options.agent.getSessionId().slice(0, 8) : "<pending>";
+    const currentTask = this.initialized ? this.options.agent.getCurrentTask() : undefined;
     const configPath = this.initialized ? this.options.agent.getConfigSummary().globalConfigPath : "~/.mono/config.json";
-    const footerText = `profile:${currentProfile}  model:${currentModel?.provider ?? "?"}/${currentModel?.modelId ?? "?"}  session:${currentSession}  config:${configPath}`;
+    const memoryPath = this.initialized ? this.options.agent.getMemoryStorePath() : ".mono/memories";
+    const footerText = `profile:${currentProfile}  model:${currentModel?.provider ?? "?"}/${currentModel?.modelId ?? "?"}  session:${currentSession}  task:${currentTask?.phase ?? "idle"}  memory:${memoryPath}  config:${configPath}`;
     lines.push(this.rule(width));
     lines.push(padRight(ansi.dim(truncateToWidth(footerText, width)), width));
     lines.push(padRight(ansi.dim(this.running ? "running" : "idle"), width));
@@ -659,6 +666,10 @@ class MonoInteractiveApp {
       streamingThinking: this.streamingThinking,
       width
     });
+  }
+
+  private renderTask(width: number): string[] {
+    return renderTaskSection(this.initialized ? this.options.agent.getCurrentTask() : undefined, width);
   }
 
   private renderTools(width: number): string[] {

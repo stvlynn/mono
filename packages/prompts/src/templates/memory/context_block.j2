@@ -1,0 +1,13 @@
+<MemoryContext>
+Compacted memories:
+{% for item in compacted_items %}
+- [{{ item.id }}] {{ item.text }}
+{% endfor %}
+{% if raw_pair_items and raw_pair_items.length %}
+Raw pairs:
+{% for item in raw_pair_items %}
+- [{{ item.id }}] Input: {{ item.input }}
+  Output: {{ item.output }}
+{% endfor %}
+{% endif %}
+</MemoryContext>

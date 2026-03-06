@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.6.2",
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node scripts/copy-workspace-assets.mjs",
     "clean": "shx rm -rf packages/*/dist .turbo node_modules",
     "dev": "tsx packages/cli/src/bin.ts",
     "start": "tsx packages/cli/src/bin.ts",

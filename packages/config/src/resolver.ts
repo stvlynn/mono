@@ -1,6 +1,7 @@
 import type {
   MonoGlobalConfig,
   MonoConfigSummary,
+  MonoMemoryConfig,
   MonoProfileConfig,
   MonoProjectConfig,
   MonoSecretsConfig,
@@ -10,6 +11,7 @@ import type {
 import { readJsonFile } from "@mono/shared";
 import {
   createDefaultGlobalConfig,
+  createDefaultMemoryConfig,
   createFallbackModel,
   getBuiltinModels,
   modelToProfile,
@@ -118,6 +120,11 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
       apiKey,
       baseURL: options.baseURLOverride ?? envBaseURL ?? model.baseURL
     },
+    memory: resolveMemoryConfig({
+      globalConfig: effectiveGlobal,
+      projectConfig,
+      store
+    }),
     apiKey,
     source: {
       profile: source,
@@ -135,6 +142,7 @@ export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoCon
     globalConfigPath: store.paths.globalConfigPath,
     projectConfigPath: store.paths.projectConfigPath,
     sessionsDir: store.paths.globalSessionsDir,
+    memoryDir: resolved.memory.storePath,
     defaultProfile:
       sources.globalConfig?.mono.defaultProfile
       ?? sources.legacyAgentsGlobalConfig?.mono?.defaultProfile
@@ -259,6 +267,23 @@ function applyProjectOverride(profile: MonoProfileConfig, projectConfig: MonoPro
     baseURL: baseURLOverride ?? projectConfig.baseURL ?? profile.baseURL,
     apiKeyRef: projectConfig.apiKeyRef ?? profile.apiKeyRef,
     apiKeyEnv: projectConfig.apiKeyEnv ?? profile.apiKeyEnv
+  };
+}
+
+function resolveMemoryConfig(options: {
+  globalConfig: MonoGlobalConfig;
+  projectConfig?: MonoProjectConfig;
+  store: MonoConfigStore;
+}): MonoMemoryConfig {
+  const { globalConfig, projectConfig, store } = options;
+  const defaults = createDefaultMemoryConfig();
+  return {
+    ...defaults,
+    ...globalConfig.mono.memory,
+    ...projectConfig?.memory,
+    storePath: projectConfig?.memory?.storePath
+      ?? globalConfig.mono.memory?.storePath
+      ?? store.paths.projectMemoryDir
   };
 }
 

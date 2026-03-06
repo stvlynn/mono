@@ -40,6 +40,7 @@ describe("SlashCommandExecutor", () => {
       openProfileSelector: vi.fn(async () => {}),
       openModelSelector: vi.fn(async () => {}),
       openSessionSelector: vi.fn(async () => {}),
+      openMemorySelector: vi.fn(async () => {}),
       openTreeView: vi.fn(async () => {}),
       clearInput: vi.fn(),
       setUnknownCommand: vi.fn(),
@@ -55,6 +56,29 @@ describe("SlashCommandExecutor", () => {
     expect(actions.exit).not.toHaveBeenCalled();
   });
 
+  it("dispatches memory selector commands without run blocking", async () => {
+    const actions = {
+      exit: vi.fn(),
+      openHelp: vi.fn(),
+      openOnboarding: vi.fn(),
+      openProfileSelector: vi.fn(async () => {}),
+      openModelSelector: vi.fn(async () => {}),
+      openSessionSelector: vi.fn(async () => {}),
+      openMemorySelector: vi.fn(async () => {}),
+      openTreeView: vi.fn(async () => {}),
+      clearInput: vi.fn(),
+      setUnknownCommand: vi.fn(),
+      isRunning: vi.fn(() => false),
+      setBlockedSwitchStatus: vi.fn()
+    };
+    const executor = new SlashCommandExecutor(actions);
+
+    await executor.execute(createCommand("memory"), createParsed("build"));
+
+    expect(actions.openMemorySelector).toHaveBeenCalledWith("build");
+    expect(actions.setBlockedSwitchStatus).not.toHaveBeenCalled();
+  });
+
   it("dispatches direct commands and unknown fallback", async () => {
     const actions = {
       exit: vi.fn(),
@@ -63,6 +87,7 @@ describe("SlashCommandExecutor", () => {
       openProfileSelector: vi.fn(async () => {}),
       openModelSelector: vi.fn(async () => {}),
       openSessionSelector: vi.fn(async () => {}),
+      openMemorySelector: vi.fn(async () => {}),
       openTreeView: vi.fn(async () => {}),
       clearInput: vi.fn(),
       setUnknownCommand: vi.fn(),
@@ -88,6 +113,7 @@ describe("SlashCommandExecutor", () => {
       openProfileSelector: vi.fn(async () => {}),
       openModelSelector: vi.fn(async () => {}),
       openSessionSelector: vi.fn(async () => {}),
+      openMemorySelector: vi.fn(async () => {}),
       openTreeView: vi.fn(async () => {}),
       clearInput: vi.fn(),
       setUnknownCommand: vi.fn(),

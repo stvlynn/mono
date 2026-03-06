@@ -1,7 +1,7 @@
 import type { Agent } from "@mono/agent-core";
 import type { SelectItem } from "@mono/pi-tui";
-import type { ConversationMessage, SessionNodeSummary, SessionSummary } from "@mono/shared";
-import { createModelItems, createProfileItems, createSessionItems, createTreeItems } from "./selector-items.js";
+import type { ConversationMessage, MemoryRecord, SessionNodeSummary, SessionSummary } from "@mono/shared";
+import { createMemoryItems, createModelItems, createProfileItems, createSessionItems, createTreeItems } from "./selector-items.js";
 
 interface SelectorModalOptions {
   title: string;
@@ -17,6 +17,7 @@ interface SelectorCoordinatorActions {
   openSelectorModal: (options: SelectorModalOptions) => void;
   closeModal: () => void;
   setStatus: (status: string) => void;
+  openDetailsModal: (title: string, lines: string[]) => void;
   clearInput: () => void;
   replaceMessages: (messages: ConversationMessage[]) => void;
   requestRender: () => void;
@@ -85,6 +86,22 @@ export class SelectorCoordinator {
     });
   }
 
+  async openMemorySelector(initialFilter?: string): Promise<void> {
+    const records = initialFilter
+      ? await this.resolveMemoryRecordsFromSearch(initialFilter)
+      : await this.agent.listMemories(12);
+
+    this.actions.openSelectorModal({
+      items: createMemoryItems(records),
+      title: initialFilter ? `Memory Search: ${initialFilter}` : "Memory",
+      hint: "Enter show, Esc close",
+      onSelect: (item) => {
+        void this.showMemoryRecord(item.value);
+      },
+      emptyMessage: "  No matching memory records"
+    });
+  }
+
   private defaultTreeIndex(nodes: SessionNodeSummary[]): number | undefined {
     return nodes.length > 0 ? nodes.length - 1 : undefined;
   }
@@ -137,6 +154,33 @@ export class SelectorCoordinator {
     }
   }
 
+  private async showMemoryRecord(id: string): Promise<void> {
+    try {
+      const record = await this.agent.getMemoryRecord(id);
+      if (!record) {
+        this.actions.setStatus(`Memory record not found: ${id}`);
+        this.actions.requestRender();
+        return;
+      }
+
+      this.actions.openDetailsModal(
+        `Memory ${record.id}`,
+        formatMemoryDetails(record)
+      );
+      this.actions.setStatus(`Opened memory ${record.id}`);
+      this.actions.clearInput();
+      this.actions.requestRender();
+    } catch (error) {
+      this.failSelection(error);
+    }
+  }
+
+  private async resolveMemoryRecordsFromSearch(query: string): Promise<MemoryRecord[]> {
+    const matches = await this.agent.searchMemories(query);
+    const records = await Promise.all(matches.map((match) => this.agent.getMemoryRecord(match.id)));
+    return records.filter((record): record is MemoryRecord => record !== null);
+  }
+
   private finalizeSelection(status: string): void {
     this.actions.closeModal();
     this.actions.setStatus(status);
@@ -147,4 +191,18 @@ export class SelectorCoordinator {
     this.actions.setStatus(error instanceof Error ? error.message : String(error));
     this.actions.requestRender();
   }
+}
+
+function formatMemoryDetails(record: MemoryRecord): string[] {
+  return [
+    `Created: ${new Date(record.createdAt).toLocaleString()}`,
+    `Files: ${record.files.join(", ") || "<none>"}`,
+    `Tools: ${record.tools.join(", ") || "<none>"}`,
+    `Parents: ${record.parents.join(", ") || "<none>"}`,
+    `Referenced: ${record.referencedMemoryIds.join(", ") || "<none>"}`,
+    `Input: ${record.input}`,
+    `Output: ${record.output}`,
+    "Compacted:",
+    ...(record.compacted.length > 0 ? record.compacted.map((line) => `- ${line}`) : ["- <none>"])
+  ];
 }

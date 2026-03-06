@@ -6,6 +6,7 @@ export interface MonoConfigPaths {
   globalConfigPath: string;
   globalSecretsPath: string;
   globalSessionsDir: string;
+  globalMemoryDir: string;
   globalRulesDir: string;
   globalSkillsDir: string;
   globalSettingsDir: string;
@@ -13,6 +14,7 @@ export interface MonoConfigPaths {
   globalStateDir: string;
   projectDir: string;
   projectConfigPath: string;
+  projectMemoryDir: string;
   projectRulesDir: string;
   projectSkillsDir: string;
   projectSettingsDir: string;
@@ -40,6 +42,7 @@ export function getMonoConfigPaths(cwd = process.cwd()): MonoConfigPaths {
     globalConfigPath: join(globalDir, "config.json"),
     globalSecretsPath: join(globalDir, "local", "secrets.json"),
     globalSessionsDir: join(globalDir, "sessions"),
+    globalMemoryDir: join(globalDir, "memories"),
     globalRulesDir: join(globalDir, "rules"),
     globalSkillsDir: join(globalDir, "skills"),
     globalSettingsDir: join(globalDir, "settings"),
@@ -47,6 +50,7 @@ export function getMonoConfigPaths(cwd = process.cwd()): MonoConfigPaths {
     globalStateDir: join(globalDir, "state"),
     projectDir,
     projectConfigPath: join(projectDir, "config.json"),
+    projectMemoryDir: join(projectDir, "memories"),
     projectRulesDir: join(projectDir, "rules"),
     projectSkillsDir: join(projectDir, "skills"),
     projectSettingsDir: join(projectDir, "settings"),

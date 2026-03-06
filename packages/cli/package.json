@@ -12,6 +12,7 @@
     "@mono/agent-core": "workspace:*",
     "@mono/config": "workspace:*",
     "@mono/llm": "workspace:*",
+    "@mono/memory": "workspace:*",
     "@mono/shared": "workspace:*",
     "@mono/tools": "workspace:*",
     "@mono/tui": "workspace:*",
