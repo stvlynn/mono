@@ -3,3 +3,6 @@ dist
 packages/*/dist
 .xagent
 *.log
+
+.agents
+.mono

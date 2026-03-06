@@ -36,8 +36,7 @@ export class AgentEventCoordinator {
         this.actions.setStatus(`Planning task: ${event.task.goal}`);
         break;
       case "task-update": {
-        const current = event.task.todos.find((todo) => todo.status === "in_progress");
-        this.actions.setStatus(current ? `${event.task.phase}: ${current.description}` : `Task phase: ${event.task.phase}`);
+        this.actions.setStatus(`Task phase: ${event.task.phase}`);
         break;
       }
       case "task-phase-change":

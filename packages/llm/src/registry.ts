@@ -128,6 +128,8 @@ function baseURLFor(provider: string): string {
   }
 
   switch (provider) {
+    case "moonshot":
+      return "https://api.moonshot.cn/v1";
     case "anthropic":
       return "https://api.anthropic.com/v1";
     case "openrouter":
@@ -144,6 +146,8 @@ function baseURLFor(provider: string): string {
 
 function apiKeyEnvFor(provider: string): string | undefined {
   switch (provider) {
+    case "moonshot":
+      return "MOONSHOT_API_KEY";
     case "anthropic":
       return "ANTHROPIC_API_KEY";
     case "openrouter":

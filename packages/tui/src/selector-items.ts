@@ -1,4 +1,9 @@
-import { truncateToWidth } from "@mono/pi-tui";
+function truncateToWidth(value: string, width: number): string {
+  if (value.length <= width) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, width - 1))}…`;
+}
 import type { MemoryRecord, SessionNodeSummary, SessionSummary, UnifiedModel } from "@mono/shared";
 import { formatTime } from "./ui-format.js";
 

@@ -138,6 +138,8 @@ export function resolveBaseURL(provider: string): string {
   }
 
   switch (provider) {
+    case "moonshot":
+      return "https://api.moonshot.cn/v1";
     case "anthropic":
       return "https://api.anthropic.com/v1";
     case "openrouter":
@@ -154,6 +156,8 @@ export function resolveBaseURL(provider: string): string {
 
 export function resolveApiKeyEnv(provider: string): string | undefined {
   switch (provider) {
+    case "moonshot":
+      return "MOONSHOT_API_KEY";
     case "anthropic":
       return "ANTHROPIC_API_KEY";
     case "openrouter":
@@ -170,6 +174,8 @@ export function resolveApiKeyEnv(provider: string): string | undefined {
 
 export function resolveProviderFactory(provider: string): UnifiedModel["providerFactory"] {
   switch (provider) {
+    case "moonshot":
+      return "custom";
     case "anthropic":
       return "anthropic";
     case "openrouter":

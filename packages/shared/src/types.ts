@@ -131,9 +131,24 @@ export interface TaskState {
   taskId: string;
   goal: string;
   phase: TaskPhase;
-  todos: TaskItem[];
   attempts: number;
   verification: VerificationState;
+  currentTodoMemoryId?: string;
+}
+
+export interface TaskTodoRecord {
+  id: string;
+  taskId: string;
+  sessionId: string;
+  branchHeadId?: string;
+  projectKey: string;
+  createdAt: number;
+  updatedAt: number;
+  goal: string;
+  todos: TaskItem[];
+  status: "active" | "completed" | "cancelled" | "blocked";
+  verificationMode: VerificationMode;
+  summary?: string;
 }
 
 export interface SessionCompressionResult {
@@ -145,6 +160,8 @@ export interface SessionCompressionResult {
 }
 
 export interface TaskResult {
+  taskId?: string;
+  todoMemoryId?: string;
   status: "done" | "blocked" | "aborted" | "incomplete";
   summary: string;
   turns: number;
@@ -335,6 +352,7 @@ export type SessionEntryType =
   | "label"
   | "compaction"
   | "task_state"
+  | "task_pointer"
   | "task_summary"
   | "session_compression"
   | "memory_reference"
@@ -356,9 +374,22 @@ export type BranchEntry = SessionEntryBase<"branch", { name?: string }>;
 export type LabelEntry = SessionEntryBase<"label", { label: string }>;
 export type CompactionEntry = SessionEntryBase<"compaction", { summary: string }>;
 export type TaskStateEntry = SessionEntryBase<"task_state", TaskState>;
+export type TaskPointerEntry = SessionEntryBase<
+  "task_pointer",
+  {
+    taskId: string;
+    todoMemoryId?: string;
+    goal: string;
+    phase: TaskPhase;
+    attempts: number;
+    verification: VerificationState;
+  }
+>;
 export type TaskSummaryEntry = SessionEntryBase<
   "task_summary",
   {
+    taskId: string;
+    todoMemoryId?: string;
     status: TaskResult["status"];
     summary: string;
     verification?: VerificationState;
@@ -386,6 +417,7 @@ export type SessionEntry =
   | LabelEntry
   | CompactionEntry
   | TaskStateEntry
+  | TaskPointerEntry
   | TaskSummaryEntry
   | SessionCompressionEntry
   | MemoryReferenceEntry
@@ -398,6 +430,8 @@ export type RuntimeEvent =
   | { type: "task-phase-change"; task: TaskState }
   | { type: "task-verify-start"; task: TaskState }
   | { type: "task-verify-result"; task: TaskState; passed: boolean; reason: string }
+  | { type: "task-todos-updated"; record: TaskTodoRecord }
+  | { type: "task-todos-cleared"; taskId: string }
   | { type: "task-summary"; result: TaskResult }
   | { type: "session-compressed"; result: SessionCompressionResult }
   | { type: "loop-detected"; reason: string; task: TaskState }

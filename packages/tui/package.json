@@ -10,6 +10,9 @@
     "@mono/config": "workspace:*",
     "@mono/memory": "workspace:*",
     "@mono/pi-tui": "workspace:*",
-    "@mono/shared": "workspace:*"
+    "@mono/shared": "workspace:*",
+    "ink": "^5.1.0",
+    "react": "^18.3.1",
+    "string-width": "^7.2.0"
   }
 }

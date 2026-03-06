@@ -1,4 +1,4 @@
-import type { SelectItem } from "@mono/pi-tui";
+import type { SelectItem } from "./legacy-compat.js";
 import { createSelectList } from "./ui-format.js";
 import type { ModalState } from "./ui-types.js";
 

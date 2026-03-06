@@ -109,20 +109,17 @@ describe("session manager", () => {
     expect(messages[0]?.role).toBe("user");
   });
 
-  it("records task state, compression, and task summary entries", async () => {
+  it("records task pointer, compression, and task summary entries", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
     const sessionsDir = join(cwd, ".sessions");
     const manager = new SessionManager({ cwd, sessionsDir, sessionId: "session-task" });
     await manager.initialize(model);
-    await manager.appendTaskState({
+    await manager.appendTaskPointer({
       taskId: "task-1",
+      todoMemoryId: "todo-1",
       goal: "fix failing tests",
       phase: "execute",
       attempts: 1,
-      todos: [
-        { id: "execute", description: "Execute the required work", status: "in_progress" },
-        { id: "verify", description: "Verify the result", status: "pending" }
-      ],
       verification: {
         mode: "strict",
         evidence: []
@@ -136,6 +133,8 @@ describe("session manager", () => {
       tokenEstimateAfter: 300
     });
     await manager.appendTaskSummary({
+      taskId: "task-1",
+      todoMemoryId: "todo-1",
       status: "done",
       summary: "Tests were fixed and verification passed.",
       turns: 2,
@@ -152,7 +151,7 @@ describe("session manager", () => {
     const entries = await manager.readEntries();
     const labels = await manager.listNodes();
 
-    expect(entries.some((entry) => entry.entryType === "task_state")).toBe(true);
+    expect(entries.some((entry) => entry.entryType === "task_pointer")).toBe(true);
     expect(entries.some((entry) => entry.entryType === "session_compression")).toBe(true);
     expect(entries.some((entry) => entry.entryType === "task_summary")).toBe(true);
     expect(labels.some((node) => node.label.includes("task execute"))).toBe(true);

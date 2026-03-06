@@ -3,6 +3,7 @@ export * from "./entities.js";
 export * from "./folder-store.js";
 export * from "./renderer.js";
 export * from "./store.js";
+export * from "./task-todo-store.js";
 export * from "./retrieval/by-keyword.js";
 export * from "./retrieval/by-session.js";
 export * from "./retrieval/utils.js";

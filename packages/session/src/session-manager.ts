@@ -16,6 +16,7 @@ import {
   type SessionCompressionResult,
   type TaskResult,
   type TaskState,
+  type VerificationState,
   type UnifiedModel
 } from "@mono/shared";
 import { getMonoConfigPaths } from "@mono/config";
@@ -154,6 +155,26 @@ export class SessionManager {
     return entry.id;
   }
 
+  async appendTaskPointer(pointer: {
+    taskId: string;
+    todoMemoryId?: string;
+    goal: string;
+    phase: TaskState["phase"];
+    attempts: number;
+    verification: VerificationState;
+  }): Promise<string> {
+    const entry: SessionEntry = {
+      id: createId(),
+      parentId: this.headId,
+      timestamp: now(),
+      entryType: "task_pointer",
+      payload: pointer
+    };
+    this.headId = entry.id;
+    await appendJsonLine(this.filePath, entry);
+    return entry.id;
+  }
+
   async appendTaskSummary(result: TaskResult): Promise<string> {
     const entry: SessionEntry = {
       id: createId(),
@@ -161,6 +182,8 @@ export class SessionManager {
       timestamp: now(),
       entryType: "task_summary",
       payload: {
+        taskId: result.taskId ?? "",
+        todoMemoryId: result.todoMemoryId,
         status: result.status,
         summary: result.summary,
         verification: result.verification
@@ -315,8 +338,17 @@ function summarizeEntry(entry: SessionEntry): string {
 
   if (entry.entryType === "task_state") {
     const payload = entry.payload as TaskState;
-    const current = payload.todos.find((todo) => todo.status === "in_progress");
-    return `task ${payload.phase}: ${current?.description ?? payload.goal.slice(0, 60)}`;
+    return `task ${payload.phase}: ${payload.goal.slice(0, 60)}`;
+  }
+
+  if (entry.entryType === "task_pointer") {
+    const payload = entry.payload as {
+      taskId: string;
+      todoMemoryId?: string;
+      goal: string;
+      phase: TaskState["phase"];
+    };
+    return `task ${payload.phase}: ${payload.goal.slice(0, 60)}`;
   }
 
   if (entry.entryType === "task_summary") {

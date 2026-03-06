@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createTaskTodoRecord } from "../packages/agent-core/src/memory-runtime.js";
 
 async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean }): Promise<string> {
   const configDir = join(rootDir, ".mono");
@@ -142,13 +143,29 @@ describe("Agent", () => {
     const agent = new Agent({ cwd });
     await agent.initialize();
 
-    const currentSession = (agent as { state: { session: InstanceType<typeof SessionManager> } }).state.session;
-    await currentSession.appendTaskState({
+    const internalState = (agent as {
+      state: {
+        session: InstanceType<typeof SessionManager>;
+        taskTodoStore: { upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void> };
+      };
+    }).state;
+    const currentSession = internalState.session;
+    const todoRecord = createTaskTodoRecord({
       taskId: "task-1",
+      goal: "fix issue",
+      sessionId: currentSession.sessionId,
+      branchHeadId: currentSession.getHeadId(),
+      cwd,
+      verificationMode: "strict",
+      todos: [{ id: "execute", description: "Execute the required work", status: "in_progress" }]
+    });
+    await internalState.taskTodoStore.upsert(todoRecord);
+    await currentSession.appendTaskPointer({
+      taskId: "task-1",
+      todoMemoryId: todoRecord.id,
       goal: "fix issue",
       phase: "execute",
       attempts: 1,
-      todos: [{ id: "execute", description: "Execute the required work", status: "in_progress" }],
       verification: { mode: "strict", evidence: [] }
     });
     (agent as { state: { currentTask?: { taskId: string } } }).state.currentTask = {
@@ -183,23 +200,54 @@ describe("Agent", () => {
     const { Agent } = await import("../packages/agent-core/src/agent.js");
     const agent = new Agent({ cwd });
     await agent.initialize();
-    const session = (agent as { state: { session: { appendTaskState: (task: unknown) => Promise<void>; appendBranch: (name?: string) => Promise<string> } } }).state.session;
+    const internalState = (agent as {
+      state: {
+        session: {
+          sessionId: string;
+          getHeadId: () => string | undefined;
+          appendTaskPointer: (pointer: unknown) => Promise<void>;
+          appendBranch: (name?: string) => Promise<string>;
+        };
+        taskTodoStore: { upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void> };
+      };
+    }).state;
+    const session = internalState.session;
 
-    await session.appendTaskState({
+    const mainTodo = createTaskTodoRecord({
       taskId: "task-main",
+      goal: "main branch task",
+      sessionId: session.sessionId,
+      branchHeadId: session.getHeadId(),
+      cwd,
+      verificationMode: "strict",
+      todos: [{ id: "execute", description: "Main task", status: "in_progress" }]
+    });
+    await internalState.taskTodoStore.upsert(mainTodo);
+    await session.appendTaskPointer({
+      taskId: "task-main",
+      todoMemoryId: mainTodo.id,
       goal: "main branch task",
       phase: "execute",
       attempts: 1,
-      todos: [{ id: "execute", description: "Main task", status: "in_progress" }],
       verification: { mode: "strict", evidence: [] }
     });
     const branchHeadId = await session.appendBranch("feature");
-    await session.appendTaskState({
+    const featureTodo = createTaskTodoRecord({
       taskId: "task-feature",
+      goal: "feature branch task",
+      sessionId: session.sessionId,
+      branchHeadId,
+      cwd,
+      verificationMode: "strict",
+      todos: [{ id: "verify", description: "Verify the result", status: "in_progress" }]
+    });
+    await internalState.taskTodoStore.upsert(featureTodo);
+    await session.appendTaskPointer({
+      taskId: "task-feature",
+      todoMemoryId: featureTodo.id,
       goal: "feature branch task",
       phase: "verify",
       attempts: 2,
-      todos: [{ id: "verify", description: "Verify the result", status: "in_progress" }],
       verification: { mode: "strict", evidence: [] }
     });
 

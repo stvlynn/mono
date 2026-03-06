@@ -1,4 +1,4 @@
-import { parseKey } from "@mono/pi-tui";
+import { parseKey } from "./legacy-compat.js";
 import type { ParsedSlashInput, SlashCommandDefinition } from "./slash/types.js";
 
 interface InputControllerActions {

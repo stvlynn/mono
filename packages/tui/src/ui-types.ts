@@ -1,5 +1,5 @@
 import type { ApprovalRequest } from "@mono/shared";
-import type { SelectList } from "@mono/pi-tui";
+import type { SelectList } from "./legacy-compat.js";
 
 export type ModalState =
   | { type: "none" }

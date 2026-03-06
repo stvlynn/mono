@@ -88,7 +88,6 @@ describe("AgentEventCoordinator", () => {
         goal: "fix tests",
         phase: "plan",
         attempts: 0,
-        todos: [{ id: "execute", description: "Execute the required work", status: "in_progress" }],
         verification: { mode: "strict", evidence: [] }
       }
     });

@@ -11,6 +11,7 @@ import {
   type SessionSummary,
   type TaskResult,
   type TaskState,
+  type TaskTodoRecord,
   type ThinkingLevel,
   type UnifiedModel,
   type UserMessage,
@@ -20,6 +21,7 @@ import { ModelRegistry, runConversation } from "@mono/llm";
 import {
   DeterministicMemoryCompactor,
   FolderMemoryStore,
+  FolderTaskTodoStore,
   buildMemoryRecordMetadata,
   createMemoryId,
   renderMemoryContext,
@@ -36,7 +38,9 @@ import {
   emptyRecallPlan,
   mergeRecallPlan,
   projectKeyFromCwd,
+  resolveTaskTodoStorePath,
   resolveMemoryStorePath,
+  createTaskTodoRecord,
   type RecallAccumulator
 } from "./memory-runtime.js";
 import { createDefaultSystemPrompt } from "./system-prompt.js";
@@ -51,6 +55,7 @@ import {
   shouldCompressMessages,
   updateTaskAfterTurn
 } from "./task-runtime.js";
+import { createWriteTodosTool } from "./task-todo-tool.js";
 
 interface TaskRunContext {
   runId: number;
@@ -60,6 +65,8 @@ interface TaskRunContext {
   userMessage: UserMessage;
   taskMessages: ConversationMessage[];
   recallAccumulator: RecallAccumulator;
+  taskTodoRecord: TaskTodoRecord | null;
+  taskTodosDirty: boolean;
 }
 
 export interface AgentOptions {
@@ -86,7 +93,9 @@ export interface AgentState {
   config: ResolvedMonoConfig;
   configSummary: MonoConfigSummary;
   memoryStore: MemoryStore;
+  taskTodoStore: FolderTaskTodoStore;
   currentTask?: TaskState;
+  currentTodoRecord?: TaskTodoRecord;
 }
 
 export class Agent {
@@ -144,6 +153,7 @@ export class Agent {
     await session.initialize(model);
     const messages = this.continueSession ? await session.loadMessages() : [];
     const memoryStore = new FolderMemoryStore(resolveMemoryStorePath(this.cwd, config.memory.storePath));
+    const taskTodoStore = new FolderTaskTodoStore(resolveTaskTodoStorePath(this.cwd, config.memory.storePath));
     this.state = {
       cwd: this.cwd,
       profileName: config.profileName,
@@ -153,8 +163,13 @@ export class Agent {
       session,
       config,
       configSummary,
-      memoryStore
+      memoryStore,
+      taskTodoStore
     };
+    this.state.currentTask = await this.loadCurrentTaskForHead(session);
+    this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
+      ? (await taskTodoStore.get(this.state.currentTask.currentTodoMemoryId)) ?? undefined
+      : undefined;
     this.initialized = true;
   }
 
@@ -186,6 +201,12 @@ export class Agent {
         maxTurns: this.maxTurns
       });
       task = this.applyVerificationOverride(task);
+      const existingTodoRecord = await this.state.taskTodoStore.get(task.taskId);
+      if (existingTodoRecord) {
+        task.currentTodoMemoryId = existingTodoRecord.id;
+      }
+      runContext.taskTodoRecord = existingTodoRecord;
+      this.state.currentTodoRecord = existingTodoRecord ?? undefined;
       await this.startTaskLifecycle(runContext.runId, runContext.session, task);
 
       let loopDetected = false;
@@ -203,6 +224,9 @@ export class Agent {
 
         const update = updateTaskAfterTurn({ task, turnMessages: newMessages });
         task = update.task;
+        if (runContext.taskTodoRecord) {
+          task.currentTodoMemoryId = runContext.taskTodoRecord.id;
+        }
         this.state.currentTask = task;
 
         if (update.verification) {
@@ -292,6 +316,7 @@ export class Agent {
     this.state.model = resolved.model;
     this.state.config = resolved;
     this.state.memoryStore = new FolderMemoryStore(resolveMemoryStorePath(this.cwd, resolved.memory.storePath));
+    this.state.taskTodoStore = new FolderTaskTodoStore(resolveTaskTodoStorePath(this.cwd, resolved.memory.storePath));
     this.state.configSummary = await this.registry.getConfigSummary();
     return resolved;
   }
@@ -361,6 +386,9 @@ export class Agent {
     this.state.session = session;
     this.state.messages = messages;
     this.state.currentTask = await this.loadCurrentTaskForHead(session, branchHeadId);
+    this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
+      ? (await this.state.taskTodoStore.get(this.state.currentTask.currentTodoMemoryId)) ?? undefined
+      : undefined;
     return messages;
   }
 
@@ -375,6 +403,9 @@ export class Agent {
     const messages = await this.state.session.checkout(branchHeadId);
     this.state.messages = messages;
     this.state.currentTask = await this.loadCurrentTaskForHead(this.state.session, branchHeadId);
+    this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
+      ? (await this.state.taskTodoStore.get(this.state.currentTask.currentTodoMemoryId)) ?? undefined
+      : undefined;
     return messages;
   }
 
@@ -400,6 +431,10 @@ export class Agent {
 
   getCurrentTask(): TaskState | undefined {
     return this.state.currentTask;
+  }
+
+  getCurrentTodoRecord(): TaskTodoRecord | undefined {
+    return this.state.currentTodoRecord;
   }
 
   getConfigSummary(): MonoConfigSummary {
@@ -567,7 +602,9 @@ export class Agent {
         timestamp: Date.now()
       },
       taskMessages: [],
-      recallAccumulator: createRecallAccumulator()
+      recallAccumulator: createRecallAccumulator(),
+      taskTodoRecord: null,
+      taskTodosDirty: false
     };
   }
 
@@ -590,7 +627,7 @@ export class Agent {
   private async publishTaskStart(runId: number, session: SessionManager, task: TaskState): Promise<void> {
     const plannedTask = advanceTaskPhase(task, "plan");
     this.state.currentTask = plannedTask;
-    await session.appendTaskState(plannedTask);
+    await this.appendTaskPointer(session, plannedTask);
     this.emitIfCurrent(runId, { type: "task-start", task: plannedTask });
   }
 
@@ -602,7 +639,7 @@ export class Agent {
   ): Promise<TaskState> {
     const nextTask = advanceTaskPhase(task, phase);
     this.state.currentTask = nextTask;
-    await session.appendTaskState(nextTask);
+    await this.appendTaskPointer(session, nextTask);
     this.emitIfCurrent(runId, { type: "task-phase-change", task: nextTask });
     this.emitIfCurrent(runId, { type: "task-update", task: nextTask });
     return nextTask;
@@ -611,7 +648,7 @@ export class Agent {
   private async blockTask(runId: number, session: SessionManager, task: TaskState): Promise<void> {
     const blockedTask = advanceTaskPhase(task, "blocked");
     this.state.currentTask = blockedTask;
-    await session.appendTaskState(blockedTask);
+    await this.appendTaskPointer(session, blockedTask);
     this.emitIfCurrent(runId, {
       type: "loop-detected",
       reason: "Repeated tool or assistant output detected.",
@@ -637,8 +674,14 @@ export class Agent {
 
   private async runTaskTurn(context: TaskRunContext, task: TaskState): Promise<ConversationMessage[]> {
     const memoryContext = await this.loadMemoryContextForTaskTurn(context);
-    const tools = this.createToolsForRun(context);
-    const turnPlan = buildTaskTurnPlan(task);
+    const todoRecord = await this.state.taskTodoStore.get(task.taskId);
+    context.taskTodoRecord = todoRecord;
+    this.state.currentTodoRecord = todoRecord ?? undefined;
+    if (todoRecord) {
+      task.currentTodoMemoryId = todoRecord.id;
+    }
+    const tools = this.createToolsForRun(context, task);
+    const turnPlan = buildTaskTurnPlan(task, todoRecord);
 
     if (turnPlan.phase === "verify") {
       this.emitIfCurrent(context.runId, { type: "task-verify-start", task });
@@ -647,7 +690,7 @@ export class Agent {
 
     const newMessages = await runConversation({
       model: context.model,
-      systemPrompt: createDefaultSystemPrompt(this.cwd, memoryContext, `${buildTaskContext(task)}\n${turnPlan.prompt}`),
+      systemPrompt: createDefaultSystemPrompt(this.cwd, memoryContext, `${buildTaskContext(task, todoRecord)}\n${turnPlan.prompt}`),
       messages: [...this.state.messages],
       tools,
       thinkingLevel: this.state.thinkingLevel,
@@ -676,13 +719,45 @@ export class Agent {
     return this.renderMemoryContext(recallPlan);
   }
 
-  private createToolsForRun(context: TaskRunContext) {
-    return createProtectedCodingTools(this.cwd, {
+  private createToolsForRun(context: TaskRunContext, task: TaskState) {
+    const protectedTools = createProtectedCodingTools(this.cwd, {
       sessionId: context.session.sessionId,
       requestApproval: (request) => this.requestApproval(request),
       emit: (event) => this.emitIfCurrent(context.runId, event),
       policy: new DefaultPermissionPolicy()
     });
+    const writeTodosTool = createWriteTodosTool({
+      cwd: this.cwd,
+      taskId: task.taskId,
+      goal: task.goal,
+      sessionId: context.session.sessionId,
+      branchHeadId: context.session.getHeadId(),
+      verificationMode: task.verification.mode,
+      store: this.state.taskTodoStore,
+      onUpdated: (record) => {
+        context.taskTodoRecord = record;
+        context.taskTodosDirty = true;
+        this.state.currentTodoRecord = record ?? undefined;
+        this.state.currentTask = {
+          ...(this.state.currentTask ?? task),
+          currentTodoMemoryId: record?.id
+        };
+        if (record) {
+          void context.session.appendTaskPointer({
+            taskId: task.taskId,
+            todoMemoryId: record.id,
+            goal: task.goal,
+            phase: this.state.currentTask?.phase ?? task.phase,
+            attempts: this.state.currentTask?.attempts ?? task.attempts,
+            verification: this.state.currentTask?.verification ?? task.verification
+          });
+          this.emitIfCurrent(context.runId, { type: "task-todos-updated", record });
+        } else {
+          this.emitIfCurrent(context.runId, { type: "task-todos-cleared", taskId: task.taskId });
+        }
+      }
+    });
+    return [writeTodosTool, ...protectedTools];
   }
 
   private async appendTurnMessages(context: TaskRunContext, newMessages: ConversationMessage[]): Promise<void> {
@@ -707,6 +782,8 @@ export class Agent {
           : "done";
 
     return {
+      taskId: task.taskId,
+      todoMemoryId: task.currentTodoMemoryId,
       status,
       summary: buildTaskSummary(task, messages, status),
       turns: task.attempts,
@@ -747,11 +824,49 @@ export class Agent {
             ? "incomplete"
             : "blocked";
     const finalTask = advanceTaskPhase(task, finalPhase);
+    if (this.state.currentTodoRecord) {
+      finalTask.currentTodoMemoryId = this.state.currentTodoRecord?.id;
+    }
     this.state.currentTask = finalTask;
-    await session.appendTaskState(finalTask);
+    await this.appendTaskPointer(session, finalTask);
+    if (this.state.currentTodoRecord) {
+      const updatedTodo = createTaskTodoRecord({
+        taskId: this.state.currentTodoRecord.taskId,
+        goal: this.state.currentTodoRecord.goal,
+        sessionId: this.state.currentTodoRecord.sessionId,
+        branchHeadId: this.state.currentTodoRecord.branchHeadId,
+        cwd: this.cwd,
+        verificationMode: this.state.currentTodoRecord.verificationMode,
+        existing: this.state.currentTodoRecord,
+        todos: this.state.currentTodoRecord.todos,
+        status:
+          result.status === "done"
+            ? "completed"
+            : result.status === "blocked"
+              ? "blocked"
+              : result.status === "aborted"
+                ? "cancelled"
+                : "active",
+        summary: result.summary
+      });
+      await this.state.taskTodoStore.upsert(updatedTodo);
+      this.state.currentTodoRecord = updatedTodo;
+      this.emitIfCurrent(runId, { type: "task-todos-updated", record: updatedTodo });
+    }
     await session.appendTaskSummary(result);
     this.emitIfCurrent(runId, { type: "task-update", task: finalTask });
     return finalTask;
+  }
+
+  private async appendTaskPointer(session: SessionManager, task: TaskState): Promise<void> {
+    await session.appendTaskPointer({
+      taskId: task.taskId,
+      todoMemoryId: task.currentTodoMemoryId,
+      goal: task.goal,
+      phase: task.phase,
+      attempts: task.attempts,
+      verification: task.verification
+    });
   }
 
   private async loadCurrentTaskForHead(session: SessionManager, branchHeadId?: string): Promise<TaskState | undefined> {
@@ -771,8 +886,55 @@ export class Agent {
 
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
-      if (entry && reachable.has(entry.id) && entry.entryType === "task_state") {
-        return entry.payload as TaskState;
+      if (!entry || !reachable.has(entry.id)) {
+        continue;
+      }
+      if (entry.entryType === "task_pointer") {
+        const payload = entry.payload as {
+          taskId: string;
+          todoMemoryId?: string;
+          goal: string;
+          phase: TaskState["phase"];
+          attempts: number;
+          verification: TaskState["verification"];
+        };
+        return {
+          taskId: payload.taskId,
+          goal: payload.goal,
+          phase: payload.phase,
+          attempts: payload.attempts,
+          verification: payload.verification,
+          currentTodoMemoryId: payload.todoMemoryId
+        };
+      }
+      if (entry.entryType === "task_state") {
+        const legacy = entry.payload as TaskState & { todos?: TaskTodoRecord["todos"] };
+        const nextTask: TaskState = {
+          taskId: legacy.taskId,
+          goal: legacy.goal,
+          phase: legacy.phase,
+          attempts: legacy.attempts,
+          verification: legacy.verification,
+          currentTodoMemoryId: legacy.currentTodoMemoryId
+        };
+        if (legacy.todos && legacy.todos.length > 0) {
+          const existing = await this.state.taskTodoStore.get(legacy.taskId);
+          if (!existing) {
+            const record = createTaskTodoRecord({
+              taskId: legacy.taskId,
+              goal: legacy.goal,
+              sessionId: session.sessionId,
+              branchHeadId,
+              cwd: this.cwd,
+              verificationMode: legacy.verification.mode,
+              todos: legacy.todos
+            });
+            await this.state.taskTodoStore.upsert(record);
+            nextTask.currentTodoMemoryId = record.id;
+            this.state.currentTodoRecord = record;
+          }
+        }
+        return nextTask;
       }
     }
 

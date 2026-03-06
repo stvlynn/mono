@@ -1,5 +1,5 @@
 import type { Agent } from "@mono/agent-core";
-import type { SelectItem } from "@mono/pi-tui";
+import type { SelectItem } from "./legacy-compat.js";
 import type { ConversationMessage, MemoryRecord, SessionNodeSummary, SessionSummary } from "@mono/shared";
 import { createMemoryItems, createModelItems, createProfileItems, createSessionItems, createTreeItems } from "./selector-items.js";
 

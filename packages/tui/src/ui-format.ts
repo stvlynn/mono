@@ -1,4 +1,4 @@
-import { SelectList, type SelectItem, type SelectListTheme } from "@mono/pi-tui";
+import { SelectList, type SelectItem, type SelectListTheme } from "./legacy-compat.js";
 import type { ConversationMessage, ToolExecutionUpdate } from "@mono/shared";
 import type { SlashCommandMatch } from "./slash/types.js";
 

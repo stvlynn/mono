@@ -22,7 +22,7 @@ const model: UnifiedModel = {
 };
 
 describe("task runtime", () => {
-  it("creates a task with execution and verification todos", () => {
+  it("creates a task shell without hard-coded todos", () => {
     const task = createTaskState({
       goal: "fix the failing test and verify it",
       model,
@@ -31,7 +31,7 @@ describe("task runtime", () => {
 
     expect(task.phase).toBe("plan");
     expect(task.verification.mode).toBe("strict");
-    expect(task.todos.map((todo) => todo.id)).toEqual(["understand-request", "execute", "verify", "summarize"]);
+    expect(task.currentTodoMemoryId).toBeUndefined();
   });
 
   it("moves from execute to verify and then to summarize with verification evidence", () => {
@@ -124,6 +124,9 @@ describe("task runtime", () => {
     expect(buildTaskContext(createTaskState({ goal: "summarize repository", model, existingMessages: [] }))).toContain(
       "<TaskContext>"
     );
+    expect(buildTaskContext(createTaskState({ goal: "summarize repository", model, existingMessages: [] }))).toContain(
+      "Todos: <none>"
+    );
   });
 
   it("builds a deterministic task summary from assistant output", () => {
@@ -151,7 +154,7 @@ describe("task runtime", () => {
     expect(buildTaskTurnPlan(task).phase).toBe("execute");
   });
 
-  it("restores the verify todo when verification mode is overridden from none to strict", () => {
+  it("overrides verification mode without relying on local todo state", () => {
     const task = createTaskState({
       goal: "explain the repository layout",
       model,
@@ -159,12 +162,10 @@ describe("task runtime", () => {
     });
 
     expect(task.verification.mode).toBe("none");
-    expect(task.todos.find((todo) => todo.id === "verify")?.status).toBe("cancelled");
 
     const overridden = applyVerificationMode(task, "strict");
 
     expect(overridden.verification.mode).toBe("strict");
-    expect(overridden.todos.find((todo) => todo.id === "verify")?.status).toBe("pending");
   });
 
   it("keeps incomplete as a distinct terminal phase", () => {
@@ -178,6 +179,6 @@ describe("task runtime", () => {
     );
 
     expect(task.phase).toBe("incomplete");
-    expect(task.todos.find((todo) => todo.id === "summarize")?.status).toBe("completed");
+    expect(task.verification.mode).toBe("strict");
   });
 });

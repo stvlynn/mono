@@ -78,5 +78,43 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
     kind: "action",
     source: "builtin",
     executeMode: "direct"
+  },
+  {
+    name: "settings",
+    fullName: "/settings",
+    description: "Open settings and shortcuts help",
+    usage: "/settings",
+    aliases: ["config"],
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "resume",
+    fullName: "/resume",
+    description: "Resume a previous session",
+    usage: "/resume [query]",
+    aliases: ["continue"],
+    kind: "selector",
+    source: "builtin",
+    executeMode: "open-selector"
+  },
+  {
+    name: "clear",
+    fullName: "/clear",
+    description: "Clear the current screen state",
+    usage: "/clear",
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "theme",
+    fullName: "/theme",
+    description: "Open theme preferences",
+    usage: "/theme",
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
   }
 ];

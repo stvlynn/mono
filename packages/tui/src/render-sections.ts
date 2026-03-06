@@ -1,4 +1,4 @@
-import { padRight, wrapText } from "@mono/pi-tui";
+import { padRight, wrapText } from "./legacy-compat.js";
 import type { ConversationMessage, TaskState } from "@mono/shared";
 import { ansi, formatMessage } from "./ui-format.js";
 import type { ModalState, ToolRun } from "./ui-types.js";
@@ -76,20 +76,6 @@ export function renderTaskSection(task: TaskState | undefined, width: number): s
     `  ${ansi.bold(`phase: ${task.phase}`)}`,
     `  ${ansi.dim(`goal: ${task.goal}`)}`
   ];
-
-  for (const todo of task.todos) {
-    const marker =
-      todo.status === "completed"
-        ? ansi.green("[x]")
-        : todo.status === "in_progress"
-          ? ansi.yellow("[>]")
-          : todo.status === "cancelled"
-            ? ansi.red("[-]")
-            : ansi.dim("[ ]");
-    for (const line of wrapText(`${marker} ${todo.description}`, bodyWidth)) {
-      lines.push(`  ${line}`);
-    }
-  }
 
   if (task.verification.mode !== "none") {
     const verificationLine = task.verification.passed

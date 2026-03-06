@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { resolve as resolvePath } from "node:path";
-import type { ConversationMessage, MemoryRecallPlan, MemoryRecord, UserMessage } from "@mono/shared";
+import { join, resolve as resolvePath } from "node:path";
+import type { ConversationMessage, MemoryRecallPlan, MemoryRecord, TaskTodoRecord, UserMessage } from "@mono/shared";
 
 export interface RecallAccumulator {
   rootIds: Set<string>;
@@ -54,8 +54,41 @@ export function resolveMemoryStorePath(cwd: string, configuredPath: string): str
   return resolvePath(cwd, configuredPath);
 }
 
+export function resolveTaskTodoStorePath(cwd: string, configuredPath: string): string {
+  return join(resolveMemoryStorePath(cwd, configuredPath), "tasks");
+}
+
 export function projectKeyFromCwd(cwd: string): string {
   return createHash("sha1").update(cwd).digest("hex").slice(0, 12);
+}
+
+export function createTaskTodoRecord(input: {
+  taskId: string;
+  goal: string;
+  sessionId: string;
+  branchHeadId?: string;
+  cwd: string;
+  verificationMode: TaskTodoRecord["verificationMode"];
+  existing?: TaskTodoRecord | null;
+  todos: TaskTodoRecord["todos"];
+  summary?: string;
+  status?: TaskTodoRecord["status"];
+}): TaskTodoRecord {
+  const now = Date.now();
+  return {
+    id: input.existing?.id ?? input.taskId,
+    taskId: input.taskId,
+    sessionId: input.sessionId,
+    branchHeadId: input.branchHeadId,
+    projectKey: projectKeyFromCwd(input.cwd),
+    createdAt: input.existing?.createdAt ?? now,
+    updatedAt: now,
+    goal: input.goal,
+    todos: input.todos,
+    status: input.status ?? input.existing?.status ?? "active",
+    verificationMode: input.verificationMode,
+    summary: input.summary ?? input.existing?.summary
+  };
 }
 
 export function buildDetailedTrace(userMessage: UserMessage, messages: ConversationMessage[]): MemoryRecord["detailed"] {

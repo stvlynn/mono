@@ -4,10 +4,10 @@ import type {
   ConversationMessage,
   RuntimeEvent,
   SessionCompressionResult,
-  TaskItem,
   TaskPhase,
   TaskResult,
   TaskState,
+  TaskTodoRecord,
   UnifiedModel,
   VerificationMode,
   VerificationState
@@ -38,18 +38,11 @@ export interface VerificationOutcome {
 
 export function createTaskState(options: TaskRuntimeOptions): TaskState {
   const verificationMode = inferVerificationMode(options.goal);
-  const todos: TaskItem[] = [
-    createTaskItem("understand-request", "Understand the goal and constraints", "completed"),
-    createTaskItem("execute", "Execute the required work", "in_progress"),
-    createTaskItem("verify", "Verify the result", verificationMode === "none" ? "cancelled" : "pending"),
-    createTaskItem("summarize", "Summarize the outcome", "pending")
-  ];
 
   return {
     taskId: createTaskId(options.goal),
     goal: options.goal,
     phase: "plan",
-    todos,
     attempts: 0,
     verification: {
       mode: verificationMode,
@@ -61,10 +54,6 @@ export function createTaskState(options: TaskRuntimeOptions): TaskState {
 export function applyVerificationMode(task: TaskState, mode: VerificationMode): TaskState {
   const next = cloneTask(task);
   next.verification.mode = mode;
-  const verifyTodo = next.todos.find((todo) => todo.id === "verify");
-  if (verifyTodo) {
-    verifyTodo.status = mode === "none" ? "cancelled" : verifyTodo.status === "cancelled" ? "pending" : verifyTodo.status;
-  }
   return next;
 }
 
@@ -72,40 +61,10 @@ export function advanceTaskPhase(task: TaskState, phase: TaskPhase): TaskState {
   const next = cloneTask(task);
   next.phase = phase;
 
-  if (phase === "execute") {
-    setTodoStatus(next.todos, "execute", "in_progress");
-  }
-
-  if (phase === "verify") {
-    setTodoStatus(next.todos, "execute", "completed");
-    setTodoStatus(next.todos, "verify", "in_progress");
-  }
-
-  if (phase === "summarize") {
-    if (next.verification.mode !== "none") {
-      setTodoStatus(next.todos, "verify", next.verification.passed ? "completed" : next.todos.find((todo) => todo.id === "verify")?.status ?? "completed");
-    }
-    setTodoStatus(next.todos, "summarize", "in_progress");
-  }
-
-  if (phase === "done" || phase === "blocked" || phase === "incomplete" || phase === "aborted") {
-    setTodoStatus(next.todos, "execute", "completed");
-    if (next.verification.mode !== "none" && next.verification.passed) {
-      setTodoStatus(next.todos, "verify", "completed");
-    }
-    if (phase === "blocked" && next.verification.mode !== "none" && next.todos.find((todo) => todo.id === "verify")?.status === "in_progress") {
-      setTodoStatus(next.todos, "verify", "cancelled");
-    }
-    if (phase === "incomplete" && next.verification.mode !== "none" && next.todos.find((todo) => todo.id === "verify")?.status === "in_progress") {
-      setTodoStatus(next.todos, "verify", "pending");
-    }
-    setTodoStatus(next.todos, "summarize", phase === "aborted" ? "cancelled" : "completed");
-  }
-
   return next;
 }
 
-export function buildTaskTurnPlan(task: TaskState): TurnRuntimePlan {
+export function buildTaskTurnPlan(task: TaskState, todoRecord?: TaskTodoRecord | null): TurnRuntimePlan {
   if (task.phase === "verify") {
     return {
       phase: "verify",
@@ -115,7 +74,8 @@ export function buildTaskTurnPlan(task: TaskState): TurnRuntimePlan {
         "Verify whether the requested work is complete.",
         "Prefer targeted checks over more edits.",
         "Use read or bash tools if you need evidence.",
-        "If verification fails, explain precisely what is still wrong."
+        "If verification fails, explain precisely what is still wrong.",
+        "If the current todo list is wrong or incomplete, update it with write_todos."
       ].join("\n")
     };
   }
@@ -125,8 +85,8 @@ export function buildTaskTurnPlan(task: TaskState): TurnRuntimePlan {
     prompt: [
       "You are in execution mode.",
       `Goal: ${task.goal}`,
-      currentTaskLine(task),
-      "Make progress on the active task item.",
+      currentTaskLine(todoRecord),
+      todoRecord ? "Make progress on the in_progress todo item." : "If the task is multi-step, create or refine a todo plan with write_todos before proceeding.",
       "If code or files changed, leave enough evidence for a later verification pass."
     ].join("\n")
   };
@@ -249,10 +209,8 @@ export function compressConversation(messages: ConversationMessage[], model: Uni
   };
 }
 
-export function buildTaskContext(task: TaskState): string {
-  const todoLines = task.todos
-    .map((todo) => `- [${todo.status}] ${todo.description}`)
-    .join("\n");
+export function buildTaskContext(task: TaskState, todoRecord?: TaskTodoRecord | null): string {
+  const todoLines = todoRecord?.todos.map((todo) => `- [${todo.status}] ${todo.description}`).join("\n") ?? "";
   const verificationLine =
     task.verification.mode === "none"
       ? "Verification: not required"
@@ -263,14 +221,14 @@ export function buildTaskContext(task: TaskState): string {
     `Phase: ${task.phase}`,
     `Attempts: ${task.attempts}`,
     verificationLine,
-    "Todos:",
-    todoLines,
+    ...(todoLines ? ["Todos:", todoLines] : ["Todos: <none>"]),
+    "Use write_todos to create or update the current task plan when needed.",
     "</TaskContext>"
   ].join("\n");
 }
 
-function currentTaskLine(task: TaskState): string {
-  const current = task.todos.find((todo) => todo.status === "in_progress");
+function currentTaskLine(todoRecord?: TaskTodoRecord | null): string {
+  const current = todoRecord?.todos.find((todo) => todo.status === "in_progress");
   return current ? `Current task: ${current.description}` : "Current task: progress the overall goal.";
 }
 
@@ -398,21 +356,9 @@ function createTaskId(goal: string): string {
   return createHash("sha1").update(`${Date.now()}:${goal}`).digest("hex").slice(0, 12);
 }
 
-function createTaskItem(id: string, description: string, status: TaskItem["status"]): TaskItem {
-  return { id, description, status };
-}
-
-function setTodoStatus(todos: TaskItem[], id: string, status: TaskItem["status"]): void {
-  const todo = todos.find((item) => item.id === id);
-  if (todo) {
-    todo.status = status;
-  }
-}
-
 function cloneTask(task: TaskState): TaskState {
   return {
     ...task,
-    todos: task.todos.map((todo) => ({ ...todo })),
     verification: {
       ...task.verification,
       evidence: [...task.verification.evidence]
