@@ -12,6 +12,7 @@ import { readJsonFile } from "@mono/shared";
 import {
   createDefaultGlobalConfig,
   createDefaultMemoryConfig,
+  createDefaultSeekDbConfig,
   createFallbackModel,
   getBuiltinModels,
   modelToProfile,
@@ -277,13 +278,87 @@ function resolveMemoryConfig(options: {
 }): MonoMemoryConfig {
   const { globalConfig, projectConfig, store } = options;
   const defaults = createDefaultMemoryConfig();
+  const globalMemory = globalConfig.mono.memory ?? {};
+  const projectMemory = projectConfig?.memory ?? {};
   return {
     ...defaults,
-    ...globalConfig.mono.memory,
-    ...projectConfig?.memory,
-    storePath: projectConfig?.memory?.storePath
-      ?? globalConfig.mono.memory?.storePath
-      ?? store.paths.projectMemoryDir
+    ...globalMemory,
+    ...projectMemory,
+    storePath: projectMemory.storePath ?? globalMemory.storePath ?? store.paths.projectMemoryDir,
+    retrievalBackend: projectMemory.retrievalBackend ?? globalMemory.retrievalBackend ?? defaults.retrievalBackend,
+    fallbackToLocalOnFailure:
+      projectMemory.fallbackToLocalOnFailure
+      ?? globalMemory.fallbackToLocalOnFailure
+      ?? defaults.fallbackToLocalOnFailure,
+    openViking: {
+      ...defaults.openViking,
+      ...globalMemory.openViking,
+      ...projectMemory.openViking,
+      url: process.env.OPENVIKING_URL ?? projectMemory.openViking?.url ?? globalMemory.openViking?.url ?? defaults.openViking.url,
+      agentId:
+        process.env.OPENVIKING_AGENT_ID
+        ?? projectMemory.openViking?.agentId
+        ?? globalMemory.openViking?.agentId
+        ?? defaults.openViking.agentId
+    },
+    seekDb: {
+      ...createDefaultSeekDbConfig(),
+      ...defaults.seekDb,
+      ...globalMemory.seekDb,
+      ...projectMemory.seekDb,
+      mode:
+        (process.env.MONO_SEEKDB_MODE === "python-embedded" || process.env.MONO_SEEKDB_MODE === "mysql"
+          ? process.env.MONO_SEEKDB_MODE
+          : undefined)
+        ?? projectMemory.seekDb?.mode
+        ?? globalMemory.seekDb?.mode
+        ?? defaults.seekDb.mode,
+      mysqlBinary:
+        process.env.MONO_SEEKDB_MYSQL_BINARY
+        ?? projectMemory.seekDb?.mysqlBinary
+        ?? globalMemory.seekDb?.mysqlBinary
+        ?? defaults.seekDb.mysqlBinary,
+      host:
+        process.env.MONO_SEEKDB_HOST
+        ?? projectMemory.seekDb?.host
+        ?? globalMemory.seekDb?.host
+        ?? defaults.seekDb.host,
+      port:
+        (process.env.MONO_SEEKDB_PORT ? Number(process.env.MONO_SEEKDB_PORT) : undefined)
+        ?? projectMemory.seekDb?.port
+        ?? globalMemory.seekDb?.port
+        ?? defaults.seekDb.port,
+      database:
+        process.env.MONO_SEEKDB_DATABASE
+        ?? projectMemory.seekDb?.database
+        ?? globalMemory.seekDb?.database
+        ?? defaults.seekDb.database,
+      user:
+        process.env.MONO_SEEKDB_USER
+        ?? projectMemory.seekDb?.user
+        ?? globalMemory.seekDb?.user
+        ?? defaults.seekDb.user,
+      passwordEnv:
+        process.env.MONO_SEEKDB_PASSWORD_ENV
+        ?? projectMemory.seekDb?.passwordEnv
+        ?? globalMemory.seekDb?.passwordEnv
+        ?? defaults.seekDb.passwordEnv,
+      pythonExecutable:
+        process.env.MONO_SEEKDB_PYTHON
+        ?? projectMemory.seekDb?.pythonExecutable
+        ?? globalMemory.seekDb?.pythonExecutable
+        ?? defaults.seekDb.pythonExecutable,
+      pythonModule:
+        process.env.MONO_SEEKDB_PYTHON_MODULE
+        ?? projectMemory.seekDb?.pythonModule
+        ?? globalMemory.seekDb?.pythonModule
+        ?? defaults.seekDb.pythonModule,
+      embeddedPath:
+        process.env.MONO_SEEKDB_EMBEDDED_PATH
+        ?? projectMemory.seekDb?.embeddedPath
+        ?? globalMemory.seekDb?.embeddedPath
+        ?? defaults.seekDb.embeddedPath
+    }
   };
 }
 

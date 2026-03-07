@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTaskTodoRecord } from "../packages/agent-core/src/memory-runtime.js";
+import type { MemoryRecord } from "../packages/shared/src/index.js";
 
-async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean }): Promise<string> {
+async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean; memory?: Record<string, unknown> }): Promise<string> {
   const configDir = join(rootDir, ".mono");
   await mkdir(configDir, { recursive: true });
   await writeFile(
@@ -33,13 +34,34 @@ async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: bo
           rawPairLevelNum: 3,
           compactedCapNum: 8,
           rawPairCapNum: 8,
-          keywordSearchLimit: 6
+          keywordSearchLimit: 6,
+          ...options?.memory
         }
       }
     }),
     "utf8"
   );
   return configDir;
+}
+
+function createMemoryRecord(overrides: Partial<MemoryRecord> & Pick<MemoryRecord, "id" | "createdAt" | "input" | "output" | "compacted">): MemoryRecord {
+  return {
+    id: overrides.id,
+    createdAt: overrides.createdAt,
+    projectKey: overrides.projectKey ?? "project",
+    sessionId: overrides.sessionId,
+    branchHeadId: overrides.branchHeadId,
+    parents: overrides.parents ?? [],
+    children: overrides.children ?? [],
+    referencedMemoryIds: overrides.referencedMemoryIds ?? [],
+    input: overrides.input,
+    compacted: overrides.compacted,
+    output: overrides.output,
+    detailed: overrides.detailed ?? [],
+    tags: overrides.tags ?? [],
+    files: overrides.files ?? [],
+    tools: overrides.tools ?? []
+  };
 }
 
 describe("Agent", () => {
@@ -54,7 +76,7 @@ describe("Agent", () => {
     await agent.initialize();
 
     const controller = new AbortController();
-    (agent as { activeRun?: { id: number; controller: AbortController } }).activeRun = {
+    (agent as unknown as { activeRun?: { id: number; controller: AbortController } }).activeRun = {
       id: 1,
       controller
     };
@@ -76,7 +98,7 @@ describe("Agent", () => {
     const agent = new Agent({ cwd });
     await agent.initialize();
 
-    (agent as { activeRun?: { id: number; controller: AbortController } }).activeRun = {
+    (agent as unknown as { activeRun?: { id: number; controller: AbortController } }).activeRun = {
       id: 1,
       controller: new AbortController()
     };
@@ -97,11 +119,11 @@ describe("Agent", () => {
     const agent = new Agent({ cwd });
     await agent.initialize();
 
-    await (agent as { persistTaskMemory: (context: unknown) => Promise<void> }).persistTaskMemory({
+    await (agent as unknown as { persistTaskMemory: (context: unknown) => Promise<void> }).persistTaskMemory({
       runId: 1,
       controller: new AbortController(),
-      session: (agent as { state: { session: unknown } }).state.session,
-      model: (agent as { state: { model: unknown } }).state.model,
+      session: (agent as unknown as { state: { session: unknown } }).state.session,
+      model: (agent as unknown as { state: { model: unknown } }).state.model,
       userMessage: {
         role: "user",
         content: "fix bug",
@@ -126,7 +148,7 @@ describe("Agent", () => {
     });
 
     expect(await agent.countMemories()).toBe(0);
-    const entries = await (agent as { state: { session: { readEntries: () => Promise<Array<{ entryType: string }>> } } }).state.session.readEntries();
+    const entries = await (agent as unknown as { state: { session: { readEntries: () => Promise<Array<{ entryType: string }>> } } }).state.session.readEntries();
     expect(entries.some((entry) => entry.entryType === "memory_record")).toBe(false);
 
     delete process.env.MONO_CONFIG_DIR;
@@ -143,9 +165,14 @@ describe("Agent", () => {
     const agent = new Agent({ cwd });
     await agent.initialize();
 
-    const internalState = (agent as {
+    const internalState = (agent as unknown as {
       state: {
-        session: InstanceType<typeof SessionManager>;
+        session: {
+          sessionId: string;
+          filePath: string;
+          getHeadId: () => string | undefined;
+          appendTaskPointer: (pointer: unknown) => Promise<string>;
+        };
         taskTodoStore: { upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void> };
       };
     }).state;
@@ -168,7 +195,7 @@ describe("Agent", () => {
       attempts: 1,
       verification: { mode: "strict", evidence: [] }
     });
-    (agent as { state: { currentTask?: { taskId: string } } }).state.currentTask = {
+    (agent as unknown as { state: { currentTask?: { taskId: string } } }).state.currentTask = {
       taskId: "task-1"
     } as never;
 
@@ -177,7 +204,7 @@ describe("Agent", () => {
       sessionsDir: SessionManager.rootDirFromSessionFile(currentSession.filePath),
       sessionId: "other-session"
     });
-    await otherSession.initialize((agent as { state: { model: unknown } }).state.model as never);
+    await otherSession.initialize((agent as unknown as { state: { model: unknown } }).state.model as never);
     await otherSession.appendMessage({
       role: "user",
       content: "plain session",
@@ -200,12 +227,12 @@ describe("Agent", () => {
     const { Agent } = await import("../packages/agent-core/src/agent.js");
     const agent = new Agent({ cwd });
     await agent.initialize();
-    const internalState = (agent as {
+    const internalState = (agent as unknown as {
       state: {
         session: {
           sessionId: string;
           getHeadId: () => string | undefined;
-          appendTaskPointer: (pointer: unknown) => Promise<void>;
+          appendTaskPointer: (pointer: unknown) => Promise<string>;
           appendBranch: (name?: string) => Promise<string>;
         };
         taskTodoStore: { upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void> };
@@ -254,6 +281,215 @@ describe("Agent", () => {
     await agent.switchBranch(branchHeadId);
 
     expect(agent.getCurrentTask()?.taskId).toBe("task-main");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("falls back to local auto-injected memory when the configured backend fails", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir, {
+      memory: {
+        retrievalBackend: "openviking",
+        fallbackToLocalOnFailure: true,
+        openViking: {
+          enabled: true,
+          url: "https://openviking.example"
+        }
+      }
+    });
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const internalState = (agent as unknown as {
+      state: {
+        session: { sessionId: string; getHeadId: () => string | undefined };
+        memoryStore: { append: (record: MemoryRecord) => Promise<void> };
+        model: unknown;
+      };
+      createConfiguredMemoryRetrievalProvider: () => Promise<unknown>;
+      loadMemoryContextForTaskTurn: (context: unknown) => Promise<string>;
+    });
+
+    await internalState.state.memoryStore.append(
+      createMemoryRecord({
+        id: "mem-local",
+        createdAt: Date.now(),
+        sessionId: internalState.state.session.sessionId,
+        branchHeadId: internalState.state.session.getHeadId(),
+        input: "inspect memory runtime",
+        output: "used local fallback",
+        compacted: ["Recovered from external retrieval failure"]
+      })
+    );
+
+    internalState.createConfiguredMemoryRetrievalProvider = async () => {
+      throw new Error("backend offline");
+    };
+
+    const context = {
+      runId: 1,
+      controller: new AbortController(),
+      session: internalState.state.session,
+      model: internalState.state.model,
+      userMessage: {
+        role: "user",
+        content: "inspect memory runtime",
+        timestamp: Date.now()
+      },
+      taskMessages: [],
+      recallAccumulator: {
+        rootIds: new Set<string>(),
+        compactedIds: new Set<string>(),
+        rawPairIds: new Set<string>(),
+        selectedIds: new Set<string>()
+      },
+      taskTodoRecord: null,
+      taskTodosDirty: false
+    };
+
+    const memoryContext = await internalState.loadMemoryContextForTaskTurn(context);
+
+    expect(memoryContext).toContain("mem-local");
+    expect(context.recallAccumulator.selectedIds.has("mem-local")).toBe(true);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("runs OpenViking shadow export only when shadowExport is enabled", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir, {
+      memory: {
+        openViking: {
+          enabled: true,
+          url: "https://openviking.example",
+          shadowExport: true
+        }
+      }
+    });
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const exported: string[] = [];
+    const internalAgent = agent as unknown as {
+      state: {
+        config: {
+          memory: {
+            openViking: { enabled: boolean; url?: string; shadowExport: boolean };
+            seekDb: { enabled: boolean };
+          };
+        };
+        session: unknown;
+      };
+      loadOpenVikingAdapterModule: () => Promise<unknown>;
+      syncConfiguredMemoryBackends: (record: MemoryRecord, session: unknown) => Promise<void>;
+    };
+
+    internalAgent.loadOpenVikingAdapterModule = async () => ({
+      OpenVikingShadowExporter: class {
+        async exportRecord(record: MemoryRecord): Promise<void> {
+          exported.push(record.id);
+        }
+      }
+    });
+
+    const record = createMemoryRecord({
+      id: "mem-shadow",
+      createdAt: Date.now(),
+      sessionId: "session-shadow",
+      input: "shadow this memory",
+      output: "shadow exported",
+      compacted: ["Shadow export ready"]
+    });
+
+    await internalAgent.syncConfiguredMemoryBackends(record, internalAgent.state.session);
+    expect(exported).toEqual(["mem-shadow"]);
+
+    internalAgent.state.config.memory.openViking.shadowExport = false;
+    exported.length = 0;
+    await internalAgent.syncConfiguredMemoryBackends(record, internalAgent.state.session);
+    expect(exported).toEqual([]);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("mirrors SeekDB sessions without exporting execution memory when mirrorSessionsOnly is enabled", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir, {
+      memory: {
+        seekDb: {
+          enabled: true,
+          mode: "mysql",
+          database: "mono_eval",
+          mirrorSessionsOnly: true
+        }
+      }
+    });
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const mirrored: string[] = [];
+    const exported: string[] = [];
+    const internalAgent = agent as unknown as {
+      state: {
+        config: {
+          memory: {
+            openViking: { enabled: boolean };
+            seekDb: {
+              enabled: boolean;
+              mode: "mysql" | "python-embedded";
+              database?: string;
+              mirrorSessionsOnly: boolean;
+            };
+          };
+        };
+        session: { sessionId: string; getHeadId: () => string | undefined; readEntries: () => Promise<unknown[]> };
+      };
+      loadSeekDbAdapterModule: () => Promise<unknown>;
+      syncConfiguredMemoryBackends: (record: MemoryRecord, session: unknown) => Promise<void>;
+    };
+
+    internalAgent.loadSeekDbAdapterModule = async () => ({
+      SeekDbSessionMirror: class {
+        async mirrorSession(input: { sessionId: string }): Promise<void> {
+          mirrored.push(input.sessionId);
+        }
+      },
+      SeekDbExecutionMemoryBackend: class {
+        async append(record: MemoryRecord): Promise<void> {
+          exported.push(record.id);
+        }
+      }
+    });
+
+    const record = createMemoryRecord({
+      id: "mem-seekdb",
+      createdAt: Date.now(),
+      sessionId: internalAgent.state.session.sessionId,
+      branchHeadId: internalAgent.state.session.getHeadId(),
+      input: "mirror this session",
+      output: "mirrored",
+      compacted: ["Session mirrored into SeekDB"]
+    });
+
+    await internalAgent.syncConfiguredMemoryBackends(record, internalAgent.state.session);
+    expect(mirrored).toEqual([internalAgent.state.session.sessionId]);
+    expect(exported).toEqual([]);
+
+    internalAgent.state.config.memory.seekDb.mirrorSessionsOnly = false;
+    await internalAgent.syncConfiguredMemoryBackends(record, internalAgent.state.session);
+    expect(exported).toEqual(["mem-seekdb"]);
 
     delete process.env.MONO_CONFIG_DIR;
   });

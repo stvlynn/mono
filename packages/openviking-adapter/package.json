@@ -1,0 +1,13 @@
+{
+  "name": "@mono/openviking-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@mono/memory": "workspace:*",
+    "@mono/prompts": "workspace:*",
+    "@mono/shared": "workspace:*"
+  }
+}

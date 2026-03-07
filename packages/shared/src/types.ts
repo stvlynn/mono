@@ -109,6 +109,37 @@ export interface MonoMemoryConfig {
   compactedCapNum: number;
   rawPairCapNum: number;
   keywordSearchLimit: number;
+  retrievalBackend: "local" | "openviking" | "seekdb";
+  fallbackToLocalOnFailure: boolean;
+  openViking: MonoOpenVikingConfig;
+  seekDb: MonoSeekDbConfig;
+}
+
+export interface MonoOpenVikingConfig {
+  enabled: boolean;
+  url?: string;
+  apiKeyEnv?: string;
+  agentId?: string;
+  timeoutMs: number;
+  targetUri: string;
+  useSessionSearch: boolean;
+  shadowExport: boolean;
+}
+
+export interface MonoSeekDbConfig {
+  enabled: boolean;
+  mode: "mysql" | "python-embedded";
+  timeoutMs: number;
+  mysqlBinary: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  passwordEnv?: string;
+  pythonExecutable?: string;
+  pythonModule?: string;
+  embeddedPath?: string;
+  mirrorSessionsOnly: boolean;
 }
 
 export type VerificationMode = "none" | "light" | "strict";

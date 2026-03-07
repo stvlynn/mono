@@ -52,3 +52,36 @@ During task execution, the agent may:
 
 - execution memory and task memory are filesystem-based, not vector-backed
 - todo records are overwritten, not versioned
+
+## SeekDB Evaluation Path
+
+`mono` now also has a SeekDB evaluation path for:
+
+- execution-memory persistence experiments
+- retrieval experiments
+- mirrored session search
+
+What it does not do today:
+
+- replace local execution memory as the default write path
+- replace task todo memory
+- replace local session replay
+
+See [`seekdb-integration.md`](./seekdb-integration.md) for the boundary and risk analysis.
+
+## OpenViking Evaluation Path
+
+`mono` now has an optional OpenViking adapter, but it is intentionally scoped as an evaluation layer.
+
+What it can do today:
+
+- compare local retrieval with OpenViking retrieval
+- shadow-export local execution-memory records into OpenViking extraction
+
+What it does not do today:
+
+- replace local execution memory as the default source of truth
+- replace task todo memory
+- replace session replay or branch semantics
+
+See [`openviking-integration.md`](./openviking-integration.md) for the boundary and risk analysis.

@@ -21,8 +21,12 @@ describe("prompt renderer", () => {
     const registry = new FileTemplateRegistry();
     expect(registry.exists("agent/system_prompt")).toBe(true);
     expect(existsSync(join(getTemplatesRoot(), "memory/context_block.j2"))).toBe(true);
+    expect(existsSync(join(getTemplatesRoot(), "memory/openviking_context_block.j2"))).toBe(true);
+    expect(existsSync(join(getTemplatesRoot(), "memory/seekdb_context_block.j2"))).toBe(true);
     expect(registry.exists("ui/waiting_tool_running")).toBe(true);
     expect(registry.list()).toContain("memory/compacted_step_tool_result");
+    expect(registry.list()).toContain("memory/openviking_context_block");
+    expect(registry.list()).toContain("memory/seekdb_context_block");
     expect(registry.list()).toContain("ui/waiting_assistant_reasoning");
   });
 
@@ -68,6 +72,35 @@ describe("templated memory rendering", () => {
     expect(output).toContain("<MemoryContext>");
     expect(output).toContain("[mem-a] Read package.json");
     expect(output).toContain("</MemoryContext>");
+  });
+
+  it("renders the OpenViking memory context block", () => {
+    const renderer = new NunjucksPromptRenderer();
+    const output = renderer.render("memory/openviking_context_block", {
+      memories: [{ uri: "viking://memory/one", abstract: "Execution memory", score_text: "0.900" }],
+      resources: [{ uri: "viking://resource/readme", abstract: "README resource", score_text: "0.450" }],
+      skills: [{ uri: "viking://skill/repo-scan", abstract: "Repo scan skill", score_text: "0.220" }]
+    });
+
+    expect(output).toContain("<MemoryContext source=\"openviking\">");
+    expect(output).toContain("Memories:");
+    expect(output).toContain("Resources:");
+    expect(output).toContain("Skills:");
+    expect(output).toContain("viking://memory/one");
+  });
+
+  it("renders the SeekDB memory context block", () => {
+    const renderer = new NunjucksPromptRenderer();
+    const output = renderer.render("memory/seekdb_context_block", {
+      memories: [{ id: "mem-1", summary: "Execution memory summary" }],
+      session_entries: [{ id: "entry-1", summary: "Mirrored session summary" }]
+    });
+
+    expect(output).toContain("<MemoryContext source=\"seekdb\">");
+    expect(output).toContain("SeekDB memory matches:");
+    expect(output).toContain("[mem-1] Execution memory summary");
+    expect(output).toContain("SeekDB mirrored session entries:");
+    expect(output).toContain("[entry-1] Mirrored session summary");
   });
 
   it("renders compactor trace and compacted steps through templates", async () => {

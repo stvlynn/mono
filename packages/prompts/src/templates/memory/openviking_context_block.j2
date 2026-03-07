@@ -1,0 +1,20 @@
+<MemoryContext source="openviking">
+{% if memories and memories.length %}
+Memories:
+{% for item in memories %}
+- [{{ item.uri }}] {{ item.abstract }}{% if item.score_text %} (score {{ item.score_text }}){% endif %}{% if item.reason %} — {{ item.reason }}{% endif %}
+{% endfor %}
+{% endif %}
+{% if resources and resources.length %}
+Resources:
+{% for item in resources %}
+- [{{ item.uri }}] {{ item.abstract }}{% if item.score_text %} (score {{ item.score_text }}){% endif %}{% if item.reason %} — {{ item.reason }}{% endif %}
+{% endfor %}
+{% endif %}
+{% if skills and skills.length %}
+Skills:
+{% for item in skills %}
+- [{{ item.uri }}] {{ item.abstract }}{% if item.score_text %} (score {{ item.score_text }}){% endif %}{% if item.reason %} — {{ item.reason }}{% endif %}
+{% endfor %}
+{% endif %}
+</MemoryContext>

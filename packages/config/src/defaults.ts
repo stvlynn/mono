@@ -1,4 +1,11 @@
-import type { MonoGlobalConfig, MonoMemoryConfig, MonoProfileConfig, UnifiedModel } from "@mono/shared";
+import type {
+  MonoGlobalConfig,
+  MonoMemoryConfig,
+  MonoOpenVikingConfig,
+  MonoProfileConfig,
+  MonoSeekDbConfig,
+  UnifiedModel
+} from "@mono/shared";
 
 const BUILTIN_MODELS: UnifiedModel[] = [
   {
@@ -83,7 +90,42 @@ export function createDefaultMemoryConfig(): MonoMemoryConfig {
     rawPairLevelNum: 3,
     compactedCapNum: 8,
     rawPairCapNum: 8,
-    keywordSearchLimit: 6
+    keywordSearchLimit: 6,
+    retrievalBackend: "local",
+    fallbackToLocalOnFailure: true,
+    openViking: createDefaultOpenVikingConfig(),
+    seekDb: createDefaultSeekDbConfig()
+  };
+}
+
+export function createDefaultOpenVikingConfig(): MonoOpenVikingConfig {
+  return {
+    enabled: false,
+    url: process.env.OPENVIKING_URL,
+    apiKeyEnv: "OPENVIKING_API_KEY",
+    agentId: process.env.OPENVIKING_AGENT_ID ?? "mono",
+    timeoutMs: 30_000,
+    targetUri: "viking://agent/memories/",
+    useSessionSearch: true,
+    shadowExport: false
+  };
+}
+
+export function createDefaultSeekDbConfig(): MonoSeekDbConfig {
+  return {
+    enabled: false,
+    mode: process.env.MONO_SEEKDB_MODE === "python-embedded" ? "python-embedded" : "mysql",
+    timeoutMs: 30_000,
+    mysqlBinary: process.env.MONO_SEEKDB_MYSQL_BINARY ?? "mysql",
+    host: process.env.MONO_SEEKDB_HOST,
+    port: process.env.MONO_SEEKDB_PORT ? Number(process.env.MONO_SEEKDB_PORT) : undefined,
+    database: process.env.MONO_SEEKDB_DATABASE,
+    user: process.env.MONO_SEEKDB_USER,
+    passwordEnv: process.env.MONO_SEEKDB_PASSWORD_ENV ?? "MONO_SEEKDB_PASSWORD",
+    pythonExecutable: process.env.MONO_SEEKDB_PYTHON ?? "python3",
+    pythonModule: process.env.MONO_SEEKDB_PYTHON_MODULE ?? "seekdb",
+    embeddedPath: process.env.MONO_SEEKDB_EMBEDDED_PATH,
+    mirrorSessionsOnly: true
   };
 }
 

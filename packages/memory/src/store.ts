@@ -19,3 +19,5 @@ export interface MemoryStore {
     }
   ): Promise<MemorySearchMatch[]>;
 }
+
+export type ExecutionMemoryBackend = MemoryStore;

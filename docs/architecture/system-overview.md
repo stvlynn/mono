@@ -119,6 +119,27 @@ Responsibilities:
 - retrieval and compaction helpers
 - mutable task todo records
 
+### OpenViking adapter
+
+`packages/openviking-adapter`
+
+Responsibilities:
+
+- optional retrieval evaluation against OpenViking
+- shadow export of local execution-memory records
+- normalization of OpenViking HTTP responses into `mono`'s retrieval shape
+
+### SeekDB adapter
+
+`packages/seekdb-adapter`
+
+Responsibilities:
+
+- evaluation adapters for SeekDB-backed execution memory
+- retrieval experiments against SeekDB-backed storage
+- session mirroring for migration analysis
+- keeping local runtime state authoritative unless a deeper migration is explicitly chosen
+
 ## Simplified Architecture Diagram
 
 ```text
@@ -156,3 +177,5 @@ Tools
 - [`task-runtime.md`](./task-runtime.md)
 - [`tool-execution.md`](./tool-execution.md)
 - [`event-model.md`](./event-model.md)
+- [`openviking-integration.md`](./openviking-integration.md)
+- [`seekdb-integration.md`](./seekdb-integration.md)

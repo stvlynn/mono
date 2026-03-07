@@ -16,6 +16,8 @@ The root [`README.md`](../README.md) stays intentionally lightweight. The detail
 
 - [`getting-started/`](./getting-started/repo-overview.md): repo orientation, local development, test/build flow
 - [`architecture/`](./architecture/system-overview.md): runtime model, subsystem boundaries, data flow, invariants
+- `architecture/openviking-integration.md`: OpenViking evaluation path, current adapter boundary, migration risks
+- `architecture/seekdb-integration.md`: SeekDB evaluation path for execution memory and session mirroring
 - [`api/`](./api/agent-core.md): maintainer-facing package and interface references
 - [`tui/`](./tui/overview.md): interactive UI architecture, keybindings, dialogs, interrupts, waiting copy
 - [`cli/`](./cli/commands.md): command groups, config/auth flows, print vs interactive behavior

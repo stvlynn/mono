@@ -12,6 +12,8 @@ export const TEMPLATE_FILES: Record<PromptTemplateId, string> = {
   "ui/waiting_task_planning": "ui/waiting_task_planning.j2",
   "ui/waiting_task_verifying": "ui/waiting_task_verifying.j2",
   "memory/context_block": "memory/context_block.j2",
+  "memory/openviking_context_block": "memory/openviking_context_block.j2",
+  "memory/seekdb_context_block": "memory/seekdb_context_block.j2",
   "memory/trace_user": "memory/trace_user.j2",
   "memory/trace_assistant": "memory/trace_assistant.j2",
   "memory/trace_tool_call": "memory/trace_tool_call.j2",

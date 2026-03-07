@@ -17,6 +17,8 @@
       "@mono/config": ["packages/config/src/index.ts"],
       "@mono/prompts": ["packages/prompts/src/index.ts"],
       "@mono/memory": ["packages/memory/src/index.ts"],
+      "@mono/openviking-adapter": ["packages/openviking-adapter/src/index.ts"],
+      "@mono/seekdb-adapter": ["packages/seekdb-adapter/src/index.ts"],
       "@mono/pi-tui": ["packages/pi-tui/src/index.ts"],
       "@mono/llm": ["packages/llm/src/index.ts"],
       "@mono/tools": ["packages/tools/src/index.ts"],

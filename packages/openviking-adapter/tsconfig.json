@@ -7,14 +7,8 @@
   },
   "references": [
     { "path": "../shared" },
-    { "path": "../config" },
-    { "path": "../llm" },
     { "path": "../memory" },
-    { "path": "../openviking-adapter" },
-    { "path": "../seekdb-adapter" },
-    { "path": "../tools" },
-    { "path": "../agent-core" },
-    { "path": "../tui" }
+    { "path": "../prompts" }
   ],
   "include": ["src/**/*.ts"]
 }

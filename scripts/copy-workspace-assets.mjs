@@ -7,6 +7,10 @@ const copies = [
   {
     from: resolve(root, "packages/prompts/src/templates"),
     to: resolve(root, "packages/prompts/dist/templates")
+  },
+  {
+    from: resolve(root, "packages/seekdb-adapter/scripts"),
+    to: resolve(root, "packages/seekdb-adapter/dist/scripts")
   }
 ];
 

@@ -1,0 +1,14 @@
+<MemoryContext source="seekdb">
+{% if memories.length %}
+SeekDB memory matches:
+{% for item in memories %}
+- [{{ item.id }}] {{ item.summary }}
+{% endfor %}
+{% endif %}
+{% if session_entries.length %}
+SeekDB mirrored session entries:
+{% for item in session_entries %}
+- [{{ item.id }}] {{ item.summary }}
+{% endfor %}
+{% endif %}
+</MemoryContext>

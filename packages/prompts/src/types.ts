@@ -7,6 +7,8 @@ export type PromptTemplateId =
   | "ui/waiting_task_planning"
   | "ui/waiting_task_verifying"
   | "memory/context_block"
+  | "memory/openviking_context_block"
+  | "memory/seekdb_context_block"
   | "memory/trace_user"
   | "memory/trace_assistant"
   | "memory/trace_tool_call"

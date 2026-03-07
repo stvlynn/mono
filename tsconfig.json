@@ -5,6 +5,8 @@
     { "path": "./packages/config" },
     { "path": "./packages/prompts" },
     { "path": "./packages/memory" },
+    { "path": "./packages/openviking-adapter" },
+    { "path": "./packages/seekdb-adapter" },
     { "path": "./packages/pi-tui" },
     { "path": "./packages/llm" },
     { "path": "./packages/tools" },

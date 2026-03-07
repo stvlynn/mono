@@ -1,10 +1,13 @@
+import { existsSync } from "node:fs";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { Agent } from "@mono/agent-core";
 import { MonoConfigStore, getMonoConfigSummary, listProfiles, resolveApiKeyEnv, resolveBaseURL, resolveMonoConfig } from "@mono/config";
 import { ModelRegistry } from "@mono/llm";
-import type { MemoryRecord, MonoGlobalConfig, MonoProjectConfig } from "@mono/shared";
+import { renderMemoryContext } from "@mono/memory";
+import type { MemoryRecord, MonoGlobalConfig, MonoProjectConfig, SessionEntry } from "@mono/shared";
 
 async function promptApproval(): Promise<(reason: { toolName: string; reason: string; input: unknown }) => Promise<boolean>> {
   const rl = createInterface({ input, output });
@@ -183,6 +186,137 @@ function formatMemoryRecord(record: MemoryRecord): string {
     `  output: ${record.output}`,
     compacted ? `  compacted:\n${compacted}` : "  compacted: <none>"
   ].join("\n");
+}
+
+function formatContextPreview(label: string, lines: string[]): string {
+  if (lines.length === 0) {
+    return `${label}: <none>`;
+  }
+  return [`${label}:`, ...lines.map((line) => `  ${line}`)].join("\n");
+}
+
+function requireOpenVikingConfig(agent: Agent): NonNullable<ReturnType<Agent["getResolvedConfig"]>["memory"]["openViking"]> {
+  const config = agent.getResolvedConfig().memory.openViking;
+  if (!config.enabled || !config.url) {
+    throw new Error("OpenViking is not configured. Set mono.memory.openViking.enabled=true and mono.memory.openViking.url.");
+  }
+  return config;
+}
+
+function requireSeekDbConfig(agent: Agent): NonNullable<ReturnType<Agent["getResolvedConfig"]>["memory"]["seekDb"]> {
+  const config = agent.getResolvedConfig().memory.seekDb;
+  if (!config.enabled) {
+    throw new Error("SeekDB is not configured. Set mono.memory.seekDb.enabled=true.");
+  }
+  if (config.mode === "mysql" && !config.database) {
+    throw new Error("SeekDB MySQL mode requires mono.memory.seekDb.database to be configured.");
+  }
+  if (config.mode === "python-embedded" && !config.embeddedPath) {
+    throw new Error("SeekDB python-embedded mode requires mono.memory.seekDb.embeddedPath to be configured.");
+  }
+  return config;
+}
+
+async function loadOpenVikingAdapter(): Promise<{
+  OpenVikingRetrievalProvider: new (...args: any[]) => {
+    recallForSession(options: { sessionId: string; messages?: unknown[]; query?: string }): Promise<{ items: unknown[]; contextBlock: string }>;
+    health(): Promise<unknown>;
+  };
+  OpenVikingShadowExporter: new (...args: any[]) => {
+    exportRecord(record: MemoryRecord): Promise<unknown>;
+  };
+}> {
+  const distUrl = new URL("../../openviking-adapter/dist/index.js", import.meta.url);
+  if (existsSync(fileURLToPath(distUrl))) {
+    return import(distUrl.href);
+  }
+
+  const srcUrl = new URL("../../openviking-adapter/src/index.ts", import.meta.url);
+  return import(srcUrl.href);
+}
+
+async function loadSeekDbAdapter(): Promise<{
+  SeekDbExecutionMemoryBackend: new (...args: any[]) => {
+    append(record: MemoryRecord): Promise<void>;
+    count(): Promise<number>;
+  };
+  SeekDbRetrievalProvider: new (...args: any[]) => {
+    recallForSession(options: { sessionId: string; messages?: unknown[]; query?: string }): Promise<{ items: unknown[]; contextBlock: string }>;
+  };
+  SeekDbSessionMirror: new (...args: any[]) => {
+    countEntries(sessionId?: string): Promise<number>;
+    mirrorSession(input: { sessionId: string; cwd: string; headId?: string; entries: unknown[] }): Promise<unknown>;
+  };
+}> {
+  const distUrl = new URL("../../seekdb-adapter/dist/index.js", import.meta.url);
+  if (existsSync(fileURLToPath(distUrl))) {
+    return import(distUrl.href);
+  }
+
+  const srcUrl = new URL("../../seekdb-adapter/src/index.ts", import.meta.url);
+  return import(srcUrl.href);
+}
+
+async function loadSessionModule(): Promise<{
+  SessionManager: new (...args: any[]) => {
+    initialize(model: ReturnType<Agent["getCurrentModel"]>): Promise<void>;
+    getHeadId(): string | undefined;
+    readEntries(): Promise<SessionEntry[]>;
+  } & {
+    listSessions?: never;
+  };
+} & {
+  SessionManager: {
+    listSessions(cwd: string): Promise<Array<{ sessionId: string; filePath: string; cwd: string }>>;
+    rootDirFromSessionFile(filePath: string): string;
+    new (options: {
+      cwd: string;
+      sessionId?: string;
+      branchHeadId?: string;
+      sessionsDir?: string;
+    }): {
+      initialize(model: ReturnType<Agent["getCurrentModel"]>): Promise<void>;
+      getHeadId(): string | undefined;
+      readEntries(): Promise<SessionEntry[]>;
+    };
+  };
+}> {
+  const distUrl = new URL("../../session/dist/index.js", import.meta.url);
+  if (existsSync(fileURLToPath(distUrl))) {
+    return import(distUrl.href) as Promise<any>;
+  }
+
+  const srcUrl = new URL("../../session/src/index.ts", import.meta.url);
+  return import(srcUrl.href) as Promise<any>;
+}
+
+async function loadSessionEntriesForMirror(agent: Agent, sessionId?: string): Promise<{
+  sessionId: string;
+  cwd: string;
+  headId?: string;
+  entries: SessionEntry[];
+}> {
+  const { SessionManager } = await loadSessionModule();
+  const targetSessionId = sessionId ?? agent.getSessionId();
+  const sessions = await SessionManager.listSessions(process.cwd());
+  const target = sessions.find((entry) => entry.sessionId === targetSessionId);
+  if (!target) {
+    throw new Error(`Session not found: ${targetSessionId}`);
+  }
+
+  const session = new SessionManager({
+    cwd: target.cwd,
+    sessionId: targetSessionId,
+    branchHeadId: targetSessionId === agent.getSessionId() ? agent.getBranchHeadId() : undefined,
+    sessionsDir: SessionManager.rootDirFromSessionFile(target.filePath)
+  });
+  await session.initialize(agent.getCurrentModel());
+  return {
+    sessionId: targetSessionId,
+    cwd: target.cwd,
+    headId: session.getHeadId(),
+    entries: await session.readEntries()
+  };
 }
 
 export async function main(argv: string[]): Promise<void> {
@@ -421,7 +555,17 @@ export async function main(argv: string[]): Promise<void> {
       const config = agent.getResolvedConfig();
       output.write(`Enabled: ${config.memory.enabled}\n`);
       output.write(`Auto inject: ${config.memory.autoInject}\n`);
+      output.write(`Retrieval backend: ${config.memory.retrievalBackend}\n`);
+      output.write(`Fallback to local: ${config.memory.fallbackToLocalOnFailure}\n`);
       output.write(`Store path: ${agent.getMemoryStorePath()}\n`);
+      output.write(`OpenViking: ${config.memory.openViking.enabled ? config.memory.openViking.url ?? "<missing url>" : "disabled"}\n`);
+      output.write(
+        `SeekDB: ${
+          config.memory.seekDb.enabled
+            ? `${config.memory.seekDb.mode} (${config.memory.seekDb.database ?? config.memory.seekDb.embeddedPath ?? "<missing target>"})`
+            : "disabled"
+        }\n`
+      );
       output.write(`Records: ${count}\n`);
       output.write(`Current session: ${agent.getSessionId()}\n`);
       output.write(`Last memory: ${records[0]?.id ?? "<none>"}\n`);
@@ -496,6 +640,228 @@ export async function main(argv: string[]): Promise<void> {
           output.write(`${formatMemoryRecord(record)}\n`);
         }
       }
+    });
+
+  memory
+    .command("compare")
+    .description("Compare local execution-memory recall with OpenViking retrieval")
+    .argument("<query>", "query to evaluate against both systems")
+    .option("--json", "output JSON")
+    .action(async (query: string, options) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+
+      const localPlan = await agent.recallMemory(query);
+      const localRecords = (
+        await Promise.all(localPlan.selectedIds.map((id) => agent.getMemoryRecord(id)))
+      ).filter((record): record is MemoryRecord => record !== null);
+      const localContextBlock = renderMemoryContext(localRecords, new Set(localPlan.compactedIds));
+
+      const openViking = requireOpenVikingConfig(agent);
+      const { OpenVikingRetrievalProvider } = await loadOpenVikingAdapter();
+      const provider = new OpenVikingRetrievalProvider({
+        config: openViking
+      });
+      const external = await provider.recallForSession({
+        sessionId: agent.getSessionId(),
+        messages: agent.getMessages(),
+        query
+      });
+
+      const payload = {
+        query,
+        local: {
+          selectedIds: localPlan.selectedIds,
+          compactedIds: localPlan.compactedIds,
+          rawPairIds: localPlan.rawPairIds,
+          contextBlock: localContextBlock
+        },
+        openViking: {
+          items: external.items,
+          contextBlock: external.contextBlock
+        }
+      };
+
+      if (options.json) {
+        output.write(`${JSON.stringify(payload, null, 2)}\n`);
+        return;
+      }
+
+      output.write(`Query: ${query}\n`);
+      output.write(`Local selected: ${localPlan.selectedIds.length}\n`);
+      output.write(`OpenViking selected: ${external.items.length}\n`);
+      output.write(`${formatContextPreview("Local context", localContextBlock ? localContextBlock.split("\n") : [])}\n`);
+      output.write(
+        `${formatContextPreview(
+          "OpenViking context",
+          external.contextBlock ? external.contextBlock.split("\n") : []
+        )}\n`
+      );
+    });
+
+  memory
+    .command("openviking-status")
+    .description("Check OpenViking connectivity with the current memory config")
+    .action(async () => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const openViking = requireOpenVikingConfig(agent);
+      const { OpenVikingRetrievalProvider } = await loadOpenVikingAdapter();
+      const provider = new OpenVikingRetrievalProvider({
+        config: openViking
+      });
+      const health = await provider.health();
+      output.write(`${JSON.stringify({ url: openViking.url, health }, null, 2)}\n`);
+    });
+
+  memory
+    .command("export-openviking")
+    .description("Shadow-export a local execution memory record into OpenViking via session extraction")
+    .argument("[id]", "memory record id; defaults to the latest local memory record")
+    .action(async (id?: string) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const openViking = requireOpenVikingConfig(agent);
+      const { OpenVikingShadowExporter } = await loadOpenVikingAdapter();
+      const exporter = new OpenVikingShadowExporter({
+        config: openViking
+      });
+      const record = id ? await agent.getMemoryRecord(id) : (await agent.listMemories(1))[0] ?? null;
+      if (!record) {
+        throw new Error(id ? `Memory record not found: ${id}` : "No local memory records available to export");
+      }
+      const result = await exporter.exportRecord(record);
+      output.write(`${JSON.stringify(result, null, 2)}\n`);
+    });
+
+  memory
+    .command("seekdb-status")
+    .description("Check SeekDB connectivity and show execution-memory/session mirror stats")
+    .action(async () => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const seekDb = requireSeekDbConfig(agent);
+      const { SeekDbExecutionMemoryBackend, SeekDbSessionMirror } = await loadSeekDbAdapter();
+      const backend = new SeekDbExecutionMemoryBackend({ config: seekDb });
+      const sessionMirror = new SeekDbSessionMirror({ config: seekDb });
+      const health = await Promise.all([
+        backend.count().catch((error) => ({ error: error instanceof Error ? error.message : String(error) })),
+        sessionMirror.countEntries().catch((error) => ({ error: error instanceof Error ? error.message : String(error) }))
+      ]);
+
+      output.write(
+        `${JSON.stringify(
+          {
+            mode: seekDb.mode,
+            enabled: seekDb.enabled,
+            database: seekDb.database,
+            embeddedPath: seekDb.embeddedPath,
+            executionMemoryCount: health[0],
+            mirroredSessionEntryCount: health[1]
+          },
+          null,
+          2
+        )}\n`
+      );
+    });
+
+  memory
+    .command("compare-seekdb")
+    .description("Compare local execution-memory recall with SeekDB-backed retrieval")
+    .argument("<query>", "query to evaluate against both systems")
+    .option("--json", "output JSON")
+    .action(async (query: string, options) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+
+      const localPlan = await agent.recallMemory(query);
+      const localRecords = (
+        await Promise.all(localPlan.selectedIds.map((id) => agent.getMemoryRecord(id)))
+      ).filter((record): record is MemoryRecord => record !== null);
+      const localContextBlock = renderMemoryContext(localRecords, new Set(localPlan.compactedIds));
+
+      const seekDb = requireSeekDbConfig(agent);
+      const { SeekDbExecutionMemoryBackend, SeekDbRetrievalProvider, SeekDbSessionMirror } = await loadSeekDbAdapter();
+      const backend = new SeekDbExecutionMemoryBackend({ config: seekDb });
+      const sessionMirror = new SeekDbSessionMirror({ config: seekDb });
+      const provider = new SeekDbRetrievalProvider({
+        config: seekDb,
+        backend,
+        sessionMirror
+      });
+      const external = await provider.recallForSession({
+        sessionId: agent.getSessionId(),
+        messages: agent.getMessages(),
+        query
+      });
+
+      const payload = {
+        query,
+        local: {
+          selectedIds: localPlan.selectedIds,
+          compactedIds: localPlan.compactedIds,
+          rawPairIds: localPlan.rawPairIds,
+          contextBlock: localContextBlock
+        },
+        seekDb: {
+          items: external.items,
+          contextBlock: external.contextBlock
+        }
+      };
+
+      if (options.json) {
+        output.write(`${JSON.stringify(payload, null, 2)}\n`);
+        return;
+      }
+
+      output.write(`Query: ${query}\n`);
+      output.write(`Local selected: ${localPlan.selectedIds.length}\n`);
+      output.write(`SeekDB selected: ${external.items.length}\n`);
+      output.write(`${formatContextPreview("Local context", localContextBlock ? localContextBlock.split("\n") : [])}\n`);
+      output.write(`${formatContextPreview("SeekDB context", external.contextBlock ? external.contextBlock.split("\n") : [])}\n`);
+    });
+
+  memory
+    .command("export-seekdb")
+    .description("Export a local execution memory record into SeekDB execution memory storage")
+    .argument("[id]", "memory record id; defaults to the latest local memory record")
+    .action(async (id?: string) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const seekDb = requireSeekDbConfig(agent);
+      const { SeekDbExecutionMemoryBackend } = await loadSeekDbAdapter();
+      const backend = new SeekDbExecutionMemoryBackend({ config: seekDb });
+      const record = id ? await agent.getMemoryRecord(id) : (await agent.listMemories(1))[0] ?? null;
+      if (!record) {
+        throw new Error(id ? `Memory record not found: ${id}` : "No local memory records available to export");
+      }
+      await backend.append(record);
+      output.write(
+        `${JSON.stringify(
+          {
+            recordId: record.id,
+            mode: seekDb.mode,
+            exported: true
+          },
+          null,
+          2
+        )}\n`
+      );
+    });
+
+  memory
+    .command("mirror-session-seekdb")
+    .description("Mirror one local session JSONL stream into SeekDB for evaluation")
+    .argument("[sessionId]", "session id; defaults to the current session")
+    .action(async (sessionId?: string) => {
+      const agent = new Agent({ cwd: process.cwd() });
+      await agent.initialize();
+      const seekDb = requireSeekDbConfig(agent);
+      const { SeekDbSessionMirror } = await loadSeekDbAdapter();
+      const sessionMirror = new SeekDbSessionMirror({ config: seekDb });
+      const sessionInput = await loadSessionEntriesForMirror(agent, sessionId);
+      const result = await sessionMirror.mirrorSession(sessionInput);
+      output.write(`${JSON.stringify(result, null, 2)}\n`);
     });
 
   await program.parseAsync(argv, { from: "user" });

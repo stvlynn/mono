@@ -17,16 +17,21 @@ import {
   type UserMessage,
   type VerificationMode
 } from "@mono/shared";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { ModelRegistry, runConversation } from "@mono/llm";
 import {
   DeterministicMemoryCompactor,
   FolderMemoryStore,
   FolderTaskTodoStore,
+  LocalMemoryRetrievalProvider,
   buildMemoryRecordMetadata,
   createMemoryId,
   renderMemoryContext,
   selectMemoryIdsByKeyword,
   selectMemoryIdsBySession,
+  type MemoryRetrievalProvider,
+  type RetrievedContext,
   type MemoryStore
 } from "@mono/memory";
 import { SessionManager } from "@mono/session";
@@ -96,6 +101,57 @@ export interface AgentState {
   taskTodoStore: FolderTaskTodoStore;
   currentTask?: TaskState;
   currentTodoRecord?: TaskTodoRecord;
+}
+
+async function loadOpenVikingAdapter(): Promise<{
+  OpenVikingRetrievalProvider: new (...args: any[]) => MemoryRetrievalProvider;
+  OpenVikingShadowExporter: new (...args: any[]) => {
+    exportRecord(record: MemoryRecord): Promise<unknown>;
+  };
+}> {
+  const distUrl = new URL("../../openviking-adapter/dist/index.js", import.meta.url);
+  if (existsSync(fileURLToPath(distUrl))) {
+    return import(distUrl.href);
+  }
+
+  const srcUrl = new URL("../../openviking-adapter/src/index.ts", import.meta.url);
+  return import(srcUrl.href);
+}
+
+async function loadSeekDbAdapter(): Promise<{
+  SeekDbExecutionMemoryBackend: new (...args: any[]) => {
+    append(record: MemoryRecord): Promise<void>;
+  };
+  SeekDbRetrievalProvider: new (...args: any[]) => MemoryRetrievalProvider;
+  SeekDbSessionMirror: new (...args: any[]) => {
+    mirrorSession(input: { sessionId: string; cwd: string; headId?: string; entries: unknown[] }): Promise<unknown>;
+  };
+}> {
+  const distUrl = new URL("../../seekdb-adapter/dist/index.js", import.meta.url);
+  if (existsSync(fileURLToPath(distUrl))) {
+    return import(distUrl.href);
+  }
+
+  const srcUrl = new URL("../../seekdb-adapter/src/index.ts", import.meta.url);
+  return import(srcUrl.href);
+}
+
+function assertOpenVikingConfig(config: ResolvedMonoConfig["memory"]["openViking"]): void {
+  if (!config.enabled || !config.url) {
+    throw new Error("OpenViking retrieval requires mono.memory.openViking.enabled=true and mono.memory.openViking.url.");
+  }
+}
+
+function assertSeekDbConfig(config: ResolvedMonoConfig["memory"]["seekDb"]): void {
+  if (!config.enabled) {
+    throw new Error("SeekDB retrieval requires mono.memory.seekDb.enabled=true.");
+  }
+  if (config.mode === "mysql" && !config.database) {
+    throw new Error("SeekDB MySQL mode requires mono.memory.seekDb.database to be configured.");
+  }
+  if (config.mode === "python-embedded" && !config.embeddedPath) {
+    throw new Error("SeekDB python-embedded mode requires mono.memory.seekDb.embeddedPath to be configured.");
+  }
 }
 
 export class Agent {
@@ -535,6 +591,118 @@ export class Agent {
     return renderMemoryContext(records, new Set(plan.compactedIds));
   }
 
+   private createLocalMemoryRetrievalProvider(): LocalMemoryRetrievalProvider {
+     return new LocalMemoryRetrievalProvider(this.state.memoryStore, this.state.config.memory);
+   }
+
+   private async loadOpenVikingAdapterModule(): ReturnType<typeof loadOpenVikingAdapter> {
+     return loadOpenVikingAdapter();
+   }
+
+   private async loadSeekDbAdapterModule(): ReturnType<typeof loadSeekDbAdapter> {
+     return loadSeekDbAdapter();
+   }
+
+   private async createConfiguredMemoryRetrievalProvider(): Promise<MemoryRetrievalProvider> {
+     const backend = this.state.config.memory.retrievalBackend;
+     if (backend === "local") {
+       return this.createLocalMemoryRetrievalProvider();
+     }
+
+     if (backend === "openviking") {
+       const config = this.state.config.memory.openViking;
+       assertOpenVikingConfig(config);
+       const { OpenVikingRetrievalProvider } = await this.loadOpenVikingAdapterModule();
+       return new OpenVikingRetrievalProvider({
+         config
+       });
+     }
+
+     const config = this.state.config.memory.seekDb;
+     assertSeekDbConfig(config);
+     const { SeekDbExecutionMemoryBackend, SeekDbRetrievalProvider, SeekDbSessionMirror } = await this.loadSeekDbAdapterModule();
+     const executionMemory = new SeekDbExecutionMemoryBackend({ config });
+     const sessionMirror = new SeekDbSessionMirror({ config });
+     return new SeekDbRetrievalProvider({
+       config,
+       backend: executionMemory,
+       sessionMirror
+     });
+   }
+
+   private async recallInjectedMemoryContext(query?: string): Promise<RetrievedContext> {
+     const localProvider = this.createLocalMemoryRetrievalProvider();
+     const recallLocally = (): Promise<RetrievedContext> =>
+       localProvider.recallForSession({
+         sessionId: this.state.session.sessionId,
+         messages: this.state.messages,
+         query
+       });
+
+     if (this.state.config.memory.retrievalBackend === "local") {
+       return recallLocally();
+     }
+
+     try {
+       const provider = await this.createConfiguredMemoryRetrievalProvider();
+       return await provider.recallForSession({
+         sessionId: this.state.session.sessionId,
+         messages: this.state.messages,
+         query
+       });
+     } catch (error) {
+       if (!this.state.config.memory.fallbackToLocalOnFailure) {
+         throw error;
+       }
+       return recallLocally();
+     }
+   }
+
+   private async syncConfiguredMemoryBackends(record: MemoryRecord, session: SessionManager): Promise<void> {
+     const syncOperations: Array<Promise<unknown>> = [];
+     const openViking = this.state.config.memory.openViking;
+     if (openViking.enabled && openViking.shadowExport && openViking.url) {
+       syncOperations.push(
+         this.loadOpenVikingAdapterModule().then(async ({ OpenVikingShadowExporter }) => {
+           const exporter = new OpenVikingShadowExporter({
+             config: openViking
+           });
+           await exporter.exportRecord(record);
+         })
+       );
+     }
+
+     const seekDb = this.state.config.memory.seekDb;
+     if (seekDb.enabled) {
+       syncOperations.push(
+         this.loadSeekDbAdapterModule().then(async ({ SeekDbExecutionMemoryBackend, SeekDbSessionMirror }) => {
+           const sessionMirror = new SeekDbSessionMirror({ config: seekDb });
+           const entries = await session.readEntries();
+           await sessionMirror.mirrorSession({
+             sessionId: session.sessionId,
+             cwd: this.cwd,
+             headId: session.getHeadId(),
+             entries
+           });
+
+           if (seekDb.mirrorSessionsOnly) {
+             return;
+           }
+
+           assertSeekDbConfig(seekDb);
+           const executionMemory = new SeekDbExecutionMemoryBackend({ config: seekDb });
+           await executionMemory.append(record);
+         })
+       );
+     }
+
+     if (syncOperations.length === 0) {
+       return;
+     }
+
+     await Promise.allSettled(syncOperations);
+   }
+
   private async compactAndPersistTurn(options: {
     userMessage: UserMessage;
     messages: ConversationMessage[];
@@ -708,15 +876,23 @@ export class Agent {
       return "";
     }
 
-    const recallPlan = await this.recallMemory();
-    if (recallPlan.selectedIds.length === 0) {
+    const retrievedContext = await this.recallInjectedMemoryContext();
+    if (retrievedContext.localPlan) {
+      if (retrievedContext.localPlan.selectedIds.length === 0) {
+        return "";
+      }
+
+      mergeRecallPlan(context.recallAccumulator, retrievedContext.localPlan);
+      await context.session.appendMemoryReference(retrievedContext.localPlan, "auto");
+      this.emitIfCurrent(context.runId, { type: "memory-recalled", plan: retrievedContext.localPlan, reason: "auto" });
+      return retrievedContext.contextBlock;
+    }
+
+    if (!retrievedContext.contextBlock.trim() && retrievedContext.items.length === 0) {
       return "";
     }
 
-    mergeRecallPlan(context.recallAccumulator, recallPlan);
-    await context.session.appendMemoryReference(recallPlan, "auto");
-    this.emitIfCurrent(context.runId, { type: "memory-recalled", plan: recallPlan, reason: "auto" });
-    return this.renderMemoryContext(recallPlan);
+    return retrievedContext.contextBlock;
   }
 
   private createToolsForRun(context: TaskRunContext, task: TaskState) {
@@ -811,6 +987,7 @@ export class Agent {
     }
 
     await context.session.appendMemoryRecord(memoryRecord);
+    await this.syncConfiguredMemoryBackends(memoryRecord, context.session);
     this.emitIfCurrent(context.runId, { type: "memory-persisted", record: memoryRecord });
   }
 
