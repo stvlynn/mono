@@ -1,8 +1,10 @@
-import { Box, Text, useInput } from "ink";
-import { useMemo, useState } from "react";
+import { Box, Text } from "ink";
+import { useCallback, useMemo, useState } from "react";
 import type { ListDialog as ListDialogType } from "../types/ui.js";
 import { fuzzyScore } from "../slash/fuzzy.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
+import { isBackwardDeleteInput, isForwardDeleteInput } from "../input-keys.js";
+import { isInsertableInput, useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
 
 export function ListDialog({ dialog }: { dialog: ListDialogType }) {
   const actions = useUIActions();
@@ -20,7 +22,7 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
       .map((entry) => entry.item);
   }, [dialog.items, query]);
 
-  useInput((input, key) => {
+  const handleKeypress = useCallback((input: string, key: RawKey) => {
     if (key.escape) {
       actions.closeTopDialog();
       return;
@@ -40,16 +42,18 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
       setSelectedIndex((value) => Math.min(Math.max(filteredItems.length - 1, 0), value + 1));
       return;
     }
-    if (key.backspace || key.delete) {
+    if (isBackwardDeleteInput(input, key) || isForwardDeleteInput(input, key)) {
       setQuery((value) => value.slice(0, -1));
       setSelectedIndex(0);
       return;
     }
-    if (!key.ctrl && !key.meta && input) {
+    if (isInsertableInput(input, key)) {
       setQuery((value) => `${value}${input}`);
       setSelectedIndex(0);
     }
-  });
+  }, [actions, dialog, filteredItems, selectedIndex]);
+
+  useRawKeypress(handleKeypress, { isActive: true });
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>

@@ -1,11 +1,13 @@
-import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
+import { Box, Text } from "ink";
+import { useCallback, useEffect, useState } from "react";
 import stringWidth from "string-width";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
 import { useUIState } from "../contexts/UIStateContext.js";
 import { useAppContext } from "../contexts/AppContext.js";
+import { isBackwardDeleteInput, isForwardDeleteInput } from "../input-keys.js";
+import { isInsertableInput, useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
 
 function renderBuffer(text: string, cursor: number): string {
   const before = text.slice(0, cursor);
@@ -32,7 +34,7 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
 
   const slashVisible = !dialogsOpen && composer.slashMatches.length > 0;
 
-  useInput((input, key) => {
+  const handleKeypress = useCallback((input: string, key: RawKey) => {
     if (dialogsOpen) {
       return;
     }
@@ -82,6 +84,10 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       composer.historyDown();
       return;
     }
+    if ((key.ctrl && key.name === "j") || (key.shift && key.return)) {
+      composer.insert("\n");
+      return;
+    }
     if (key.return) {
       const prompt = composer.buffer.text.trim();
       if (!prompt) {
@@ -110,15 +116,11 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       })();
       return;
     }
-    if ((key.ctrl && input === "j") || (key.shift && key.return)) {
-      composer.insert("\n");
-      return;
-    }
-    if (key.backspace) {
+    if (isBackwardDeleteInput(input, key)) {
       composer.deleteBackward();
       return;
     }
-    if (key.delete) {
+    if (isForwardDeleteInput(input, key)) {
       composer.deleteForward();
       return;
     }
@@ -130,10 +132,12 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       composer.moveEnd();
       return;
     }
-    if (!key.ctrl && !key.meta && input) {
+    if (isInsertableInput(input, key)) {
       composer.insert(input);
     }
-  });
+  }, [actions, agent, composer, dialogsOpen, selectedSlashIndex, slash, slashVisible]);
+
+  useRawKeypress(handleKeypress, { isActive: !dialogsOpen });
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={running ? "cyan" : "gray"} paddingX={1}>

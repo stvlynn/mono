@@ -3,6 +3,7 @@ import type { Agent } from "@mono/agent-core";
 import type { RuntimeEvent } from "@mono/shared";
 import type { Dispatch, SetStateAction } from "react";
 import type { DialogInstance, UIHistoryItem, UIState, UIToast } from "../types/ui.js";
+import { resolveWaitingCopy } from "../waiting-copy.js";
 
 interface UseAgentBridgeOptions {
   agent: Agent;
@@ -54,13 +55,14 @@ export function useAgentBridge(options: UseAgentBridgeOptions): void {
   }, [options.agent, options.pushDialog, options.setUiState]);
 }
 
-function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState {
+export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState {
   switch (event.type) {
     case "assistant-start":
       return {
         ...state,
         running: true,
         pendingAssistant: { text: "", thinking: "" },
+        waitingCopy: resolveWaitingCopy("assistant_start"),
         status: "Assistant is thinking..."
       };
     case "assistant-text-delta":
@@ -70,6 +72,8 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
           text: `${state.pendingAssistant?.text ?? ""}${event.delta}`,
           thinking: state.pendingAssistant?.thinking ?? ""
         },
+        waitingCopy:
+          state.waitingCopy?.kind === "assistant_streaming" ? state.waitingCopy : resolveWaitingCopy("assistant_streaming"),
         status: "Streaming response..."
       };
     case "assistant-thinking-delta":
@@ -79,6 +83,8 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
           text: state.pendingAssistant?.text ?? "",
           thinking: `${state.pendingAssistant?.thinking ?? ""}${event.delta}`
         },
+        waitingCopy:
+          state.waitingCopy?.kind === "assistant_reasoning" ? state.waitingCopy : resolveWaitingCopy("assistant_reasoning"),
         status: "Reasoning..."
       };
     case "tool-start":
@@ -88,6 +94,7 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
           ...state.pendingTools.filter((item) => item.callId !== event.toolCallId),
           { callId: event.toolCallId, name: event.toolName, status: "running", output: stringify(event.input) }
         ],
+        waitingCopy: resolveWaitingCopy("tool_running", { toolName: event.toolName }),
         status: `Running ${event.toolName}...`
       };
     case "tool-update":
@@ -98,20 +105,41 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
         )
       };
     case "tool-end":
-      return {
-        ...state,
-        pendingTools: state.pendingTools.map((item) =>
-          item.callId === event.toolCallId
-            ? {
-                ...item,
-                status: event.isError ? "error" : "done",
-                output: stringify(event.result.content)
-              }
-            : item
-        ),
-        status: event.isError ? `${event.toolName} failed` : `${event.toolName} completed`
-      };
+      return updateToolWaitingState(
+        {
+          ...state,
+          pendingTools: state.pendingTools.map((item) =>
+            item.callId === event.toolCallId
+              ? {
+                  ...item,
+                  status: event.isError ? "error" : "done",
+                  output: stringify(event.result.content)
+                }
+              : item
+          )
+        },
+        event.isError ? `${event.toolName} failed` : `${event.toolName} completed`
+      );
     case "message":
+      if (event.message.role === "tool") {
+        const toolMessage = event.message;
+        return updateToolWaitingState(
+          {
+            ...state,
+            history: [
+              ...state.history,
+              {
+                id: `message-${toolMessage.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
+                type: "message",
+                message: toolMessage
+              }
+            ],
+            pendingTools: state.pendingTools.filter((item) => item.callId !== toolMessage.toolCallId)
+          },
+          state.status
+        );
+      }
+
       return {
         ...state,
         history: [
@@ -123,10 +151,8 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
           }
         ],
         pendingAssistant: event.message.role === "assistant" ? null : state.pendingAssistant,
-        pendingTools:
-          event.message.role === "tool"
-            ? state.pendingTools.filter((item) => item.callId !== (event.message.role === "tool" ? event.message.toolCallId : undefined))
-            : state.pendingTools
+        pendingTools: state.pendingTools,
+        waitingCopy: event.message.role === "assistant" ? undefined : state.waitingCopy
       };
     case "memory-recalled":
       return pushToast(state, {
@@ -147,14 +173,33 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
         status: `Compressed ${event.result.replacedMessageCount} messages`
       };
     case "task-start":
-      return { ...state, currentTask: event.task, currentTodoRecord: agent.getCurrentTodoRecord(), running: true, status: `Planning task: ${event.task.goal}` };
+      return {
+        ...state,
+        currentTask: event.task,
+        currentTodoRecord: agent.getCurrentTodoRecord(),
+        running: true,
+        waitingCopy: resolveWaitingCopy("task_planning", { goal: event.task.goal }),
+        status: `Planning task: ${event.task.goal}`
+      };
     case "task-update":
     case "task-phase-change":
       return { ...state, currentTask: event.task, currentTodoRecord: agent.getCurrentTodoRecord(), status: currentTaskStatus(event.task) };
     case "task-verify-start":
-      return { ...state, currentTask: event.task, currentTodoRecord: agent.getCurrentTodoRecord(), status: "Verifying result..." };
+      return {
+        ...state,
+        currentTask: event.task,
+        currentTodoRecord: agent.getCurrentTodoRecord(),
+        waitingCopy: resolveWaitingCopy("task_verifying", { goal: event.task.goal }),
+        status: "Verifying result..."
+      };
     case "task-verify-result":
-      return { ...state, currentTask: event.task, currentTodoRecord: agent.getCurrentTodoRecord(), status: event.passed ? "Verification passed" : `Verification failed: ${event.reason}` };
+      return {
+        ...state,
+        currentTask: event.task,
+        currentTodoRecord: agent.getCurrentTodoRecord(),
+        waitingCopy: undefined,
+        status: event.passed ? "Verification passed" : `Verification failed: ${event.reason}`
+      };
     case "task-todos-updated":
       return {
         ...state,
@@ -171,18 +216,21 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
       return {
         ...pushSystemMessage(state, event.result.summary, "success"),
         currentTask: agent.getCurrentTask(),
+        waitingCopy: undefined,
         status: event.result.summary
       };
     case "loop-detected":
       return {
         ...pushSystemMessage(state, `Loop detected: ${event.reason}`, "warning"),
         currentTask: event.task,
+        waitingCopy: undefined,
         status: `Loop detected: ${event.reason}`
       };
     case "run-end":
       return {
         ...state,
         running: false,
+        waitingCopy: undefined,
         pendingAssistant: null,
         pendingTools: [],
         currentTask: agent.getCurrentTask(),
@@ -192,6 +240,7 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
       return {
         ...state,
         running: false,
+        waitingCopy: undefined,
         pendingAssistant: null,
         pendingTools: [],
         currentTask: agent.getCurrentTask(),
@@ -201,6 +250,7 @@ function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState
       return {
         ...state,
         running: false,
+        waitingCopy: undefined,
         pendingAssistant: null,
         pendingTools: [],
         status: event.error.message
@@ -250,4 +300,26 @@ function currentTaskStatus(task: UIState["currentTask"]): string {
     return "Ready";
   }
   return `Task phase: ${task.phase}`;
+}
+
+function updateToolWaitingState(state: UIState, fallbackStatus: string): UIState {
+  const activeTool = [...state.pendingTools].reverse().find((item) => item.status === "running" || item.status === "awaiting_approval");
+  if (!activeTool) {
+    return {
+      ...state,
+      waitingCopy: state.waitingCopy?.kind === "tool_running" ? undefined : state.waitingCopy,
+      status: fallbackStatus
+    };
+  }
+
+  const waitingCopy =
+    state.waitingCopy?.kind === "tool_running" && state.waitingCopy.toolName === activeTool.name
+      ? state.waitingCopy
+      : resolveWaitingCopy("tool_running", { toolName: activeTool.name });
+
+  return {
+    ...state,
+    waitingCopy,
+    status: `Running ${activeTool.name}...`
+  };
 }

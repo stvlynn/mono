@@ -23,6 +23,7 @@ const initialUiState: UIState = {
   initialized: false,
   running: false,
   status: "Starting...",
+  waitingCopy: undefined,
   history: [],
   pendingAssistant: null,
   pendingTools: [],
@@ -77,6 +78,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
       history: toHistory(messages),
       currentTask: agent.getCurrentTask(),
       currentTodoRecord: agent.getCurrentTodoRecord(),
+      waitingCopy: undefined,
       status,
       dialogs: current.dialogs.slice(0, -1)
     }));
@@ -100,7 +102,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
 
   const actions = useMemo<UIActions>(() => ({
     submitPrompt: async (prompt: string) => {
-      setUiState((current) => ({ ...current, currentPrompt: prompt, status: "Submitting prompt..." }));
+      setUiState((current) => ({ ...current, currentPrompt: prompt, waitingCopy: undefined, status: "Submitting prompt..." }));
       try {
         await agent.runTask(prompt);
       } catch (error) {

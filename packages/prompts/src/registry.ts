@@ -5,6 +5,12 @@ import type { PromptTemplateId, TemplateRegistry } from "./types.js";
 
 export const TEMPLATE_FILES: Record<PromptTemplateId, string> = {
   "agent/system_prompt": "agent/system_prompt.j2",
+  "ui/waiting_assistant_start": "ui/waiting_assistant_start.j2",
+  "ui/waiting_assistant_reasoning": "ui/waiting_assistant_reasoning.j2",
+  "ui/waiting_assistant_streaming": "ui/waiting_assistant_streaming.j2",
+  "ui/waiting_tool_running": "ui/waiting_tool_running.j2",
+  "ui/waiting_task_planning": "ui/waiting_task_planning.j2",
+  "ui/waiting_task_verifying": "ui/waiting_task_verifying.j2",
   "memory/context_block": "memory/context_block.j2",
   "memory/trace_user": "memory/trace_user.j2",
   "memory/trace_assistant": "memory/trace_assistant.j2",

@@ -21,7 +21,24 @@ describe("prompt renderer", () => {
     const registry = new FileTemplateRegistry();
     expect(registry.exists("agent/system_prompt")).toBe(true);
     expect(existsSync(join(getTemplatesRoot(), "memory/context_block.j2"))).toBe(true);
+    expect(registry.exists("ui/waiting_tool_running")).toBe(true);
     expect(registry.list()).toContain("memory/compacted_step_tool_result");
+    expect(registry.list()).toContain("ui/waiting_assistant_reasoning");
+  });
+
+  it("renders UI waiting templates with runtime context", () => {
+    const renderer = new NunjucksPromptRenderer();
+    const result = renderer.render("ui/waiting_tool_running", {
+      emoji: "🐟",
+      before: "正在围观",
+      tool_name: "bash",
+      after: "表演",
+      suffix: "……"
+    });
+
+    expect(result).toContain("🐟");
+    expect(result).toContain("bash");
+    expect(result).toContain("表演");
   });
 });
 

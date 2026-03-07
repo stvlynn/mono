@@ -5,7 +5,7 @@ import { LoadingIndicator } from "./LoadingIndicator.js";
 import { useUIState } from "../contexts/UIStateContext.js";
 
 function PendingTools() {
-  const { pendingTools } = useUIState();
+  const { pendingTools, waitingCopy } = useUIState();
   if (pendingTools.length === 0) {
     return null;
   }
@@ -15,6 +15,7 @@ function PendingTools() {
       <Text bold color="yellow">
         Pending Tools
       </Text>
+      {waitingCopy?.kind === "tool_running" ? <Text dimColor>{waitingCopy.message}</Text> : null}
       {pendingTools.map((tool) => (
         <Box key={tool.callId} flexDirection="column" marginTop={1}>
           <Text>
@@ -28,7 +29,7 @@ function PendingTools() {
 }
 
 function PendingAssistant() {
-  const { pendingAssistant, running } = useUIState();
+  const { pendingAssistant, running, waitingCopy } = useUIState();
   if (!pendingAssistant && !running) {
     return null;
   }
@@ -39,7 +40,11 @@ function PendingAssistant() {
         Assistant
       </Text>
       {pendingAssistant?.thinking ? <Text dimColor>{pendingAssistant.thinking}</Text> : null}
-      {pendingAssistant?.text ? <Text>{pendingAssistant.text}</Text> : <LoadingIndicator label="Working..." />}
+      {pendingAssistant?.text ? (
+        <Text>{pendingAssistant.text}</Text>
+      ) : (
+        <LoadingIndicator label={waitingCopy?.kind === "tool_running" ? "Working..." : waitingCopy?.message ?? "Working..."} />
+      )}
     </Box>
   );
 }

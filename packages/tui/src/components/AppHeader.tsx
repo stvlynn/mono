@@ -4,14 +4,14 @@ import { useUIState } from "../contexts/UIStateContext.js";
 
 export function AppHeader() {
   const { version } = useAppContext();
-  const { status } = useUIState();
+  const { status, waitingCopy } = useUIState();
   return (
     <Box justifyContent="space-between">
       <Text color="cyan" bold>
         mono
       </Text>
       <Text dimColor>{version}</Text>
-      <Text dimColor>{status}</Text>
+      <Text dimColor>{waitingCopy?.message ?? status}</Text>
     </Box>
   );
 }

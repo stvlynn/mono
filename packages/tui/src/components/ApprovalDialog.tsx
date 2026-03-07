@@ -1,11 +1,13 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useCallback } from "react";
 import type { ApprovalDialog as ApprovalDialogType } from "../types/ui.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
+import { useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
 
 export function ApprovalDialog({ dialog }: { dialog: ApprovalDialogType }) {
   const actions = useUIActions();
 
-  useInput((input, key) => {
+  const handleKeypress = useCallback((input: string, key: RawKey) => {
     if (key.escape || input.toLowerCase() === "n") {
       dialog.resolve(false);
       actions.closeTopDialog();
@@ -17,7 +19,9 @@ export function ApprovalDialog({ dialog }: { dialog: ApprovalDialogType }) {
       actions.closeTopDialog();
       actions.setStatus(`Approved ${dialog.toolName}`);
     }
-  });
+  }, [actions, dialog]);
+
+  useRawKeypress(handleKeypress, { isActive: true });
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>

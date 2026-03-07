@@ -1,5 +1,11 @@
 export type PromptTemplateId =
   | "agent/system_prompt"
+  | "ui/waiting_assistant_start"
+  | "ui/waiting_assistant_reasoning"
+  | "ui/waiting_assistant_streaming"
+  | "ui/waiting_tool_running"
+  | "ui/waiting_task_planning"
+  | "ui/waiting_task_verifying"
   | "memory/context_block"
   | "memory/trace_user"
   | "memory/trace_assistant"

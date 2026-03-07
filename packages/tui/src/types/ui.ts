@@ -18,6 +18,20 @@ export interface UIToolCall {
   output?: string;
 }
 
+export type WaitingStateKind =
+  | "assistant_start"
+  | "assistant_reasoning"
+  | "assistant_streaming"
+  | "tool_running"
+  | "task_planning"
+  | "task_verifying";
+
+export interface UIWaitingCopy {
+  kind: WaitingStateKind;
+  message: string;
+  toolName?: string;
+}
+
 export type UIHistoryItem =
   | { id: string; type: "message"; message: ConversationMessage }
   | { id: string; type: "system"; text: string; tone?: "muted" | "info" | "warning" | "error" | "success" };
@@ -72,6 +86,7 @@ export interface UIState {
   initialized: boolean;
   running: boolean;
   status: string;
+  waitingCopy?: UIWaitingCopy;
   history: UIHistoryItem[];
   pendingAssistant: UIPendingAssistant | null;
   pendingTools: UIToolCall[];
