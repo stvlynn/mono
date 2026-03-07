@@ -2,6 +2,8 @@ import { createContext, useContext } from "react";
 
 export interface UIActions {
   submitPrompt: (prompt: string) => Promise<void>;
+  handleInterrupt: (context?: { hasInput?: boolean; clearInput?: () => void }) => Promise<void>;
+  clearInterruptArming: () => void;
   openHelp: () => void;
   openSettings: () => void;
   openAuthInfo: () => void;

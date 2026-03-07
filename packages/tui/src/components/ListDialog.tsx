@@ -23,6 +23,10 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
   }, [dialog.items, query]);
 
   const handleKeypress = useCallback((input: string, key: RawKey) => {
+    if (key.ctrl && input === "c") {
+      void actions.handleInterrupt();
+      return;
+    }
     if (key.escape) {
       actions.closeTopDialog();
       return;

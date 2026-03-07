@@ -8,6 +8,10 @@ export function ApprovalDialog({ dialog }: { dialog: ApprovalDialogType }) {
   const actions = useUIActions();
 
   const handleKeypress = useCallback((input: string, key: RawKey) => {
+    if (key.ctrl && input === "c") {
+      void actions.handleInterrupt();
+      return;
+    }
     if (key.escape || input.toLowerCase() === "n") {
       dialog.resolve(false);
       actions.closeTopDialog();

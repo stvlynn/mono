@@ -15,6 +15,7 @@ export function createEditTool(cwd: string): AgentTool<EditInput, { diff: string
   return {
     name: "edit",
     description: "Replace an exact text block in a file.",
+    executionMode: "serial",
     inputSchema: {
       type: "object",
       properties: {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalize as normalizePath } from "node:path";
 import type {
   AssistantMessage,
   ConversationMessage,
@@ -233,11 +234,12 @@ function currentTaskLine(todoRecord?: TaskTodoRecord | null): string {
 }
 
 function detectLoop(messages: ConversationMessage[]): boolean {
-  const toolNames = messages
-    .filter((message) => message.role === "tool")
-    .map((message) => message.toolName);
-  if (toolNames.length >= 3) {
-    const recent = toolNames.slice(-3);
+  const toolSignatures = messages
+    .filter((message): message is Extract<ConversationMessage, { role: "tool" }> => message.role === "tool")
+    .map((message) => message.inputSignature ?? `${message.toolName}:${JSON.stringify(normalizeToolInput(message.input))}`)
+    .filter(Boolean);
+  if (toolSignatures.length >= 3) {
+    const recent = toolSignatures.slice(-3);
     if (new Set(recent).size === 1) {
       return true;
     }
@@ -257,6 +259,31 @@ function detectLoop(messages: ConversationMessage[]): boolean {
   }
 
   return false;
+}
+
+function normalizeToolInput(value: unknown, key?: string): unknown {
+  if (typeof value === "string") {
+    const collapsed = value.trim().replace(/\s+/gu, " ");
+    if (key?.toLowerCase().includes("path")) {
+      return normalizePath(collapsed).replace(/\\/gu, "/");
+    }
+    return collapsed;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeToolInput(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((result, currentKey) => {
+        result[currentKey] = normalizeToolInput((value as Record<string, unknown>)[currentKey], currentKey);
+        return result;
+      }, {});
+  }
+
+  return value;
 }
 
 function evaluateVerification(messages: ConversationMessage[], mode: VerificationMode): VerificationOutcome {

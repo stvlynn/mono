@@ -24,6 +24,7 @@ export function createBashTool(cwd: string): AgentTool<BashInput, BashToolDetail
   return {
     name: "bash",
     description: "Execute a shell command in the workspace.",
+    executionMode: "serial",
     inputSchema: {
       type: "object",
       properties: {

@@ -76,7 +76,7 @@ describe("task runtime", () => {
     expect(verifyUpdate.nextPhase).toBe("summarize");
   });
 
-  it("detects loops when the same tool repeats", () => {
+  it("detects loops when the same tool signature repeats", () => {
     const task = advanceTaskPhase(
       createTaskState({
         goal: "try to fix the issue",
@@ -89,14 +89,85 @@ describe("task runtime", () => {
     const update = updateTaskAfterTurn({
       task,
       turnMessages: [
-        { role: "tool", toolCallId: "1", toolName: "bash", content: "same output", isError: false, timestamp: 1 },
-        { role: "tool", toolCallId: "2", toolName: "bash", content: "same output", isError: false, timestamp: 2 },
-        { role: "tool", toolCallId: "3", toolName: "bash", content: "same output", isError: false, timestamp: 3 }
+        {
+          role: "tool",
+          toolCallId: "1",
+          toolName: "bash",
+          inputSignature: "bash:{\"command\":\"pnpm test\"}",
+          content: "same output",
+          isError: false,
+          timestamp: 1
+        },
+        {
+          role: "tool",
+          toolCallId: "2",
+          toolName: "bash",
+          inputSignature: "bash:{\"command\":\"pnpm test\"}",
+          content: "same output",
+          isError: false,
+          timestamp: 2
+        },
+        {
+          role: "tool",
+          toolCallId: "3",
+          toolName: "bash",
+          inputSignature: "bash:{\"command\":\"pnpm test\"}",
+          content: "same output",
+          isError: false,
+          timestamp: 3
+        }
       ]
     });
 
     expect(update.loopDetected).toBe(true);
     expect(update.nextPhase).toBe("blocked");
+  });
+
+  it("does not detect loops when the same readonly tool reads different files", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "inspect the repo structure",
+        model,
+        existingMessages: []
+      }),
+      "execute"
+    );
+
+    const update = updateTaskAfterTurn({
+      task,
+      turnMessages: [
+        {
+          role: "tool",
+          toolCallId: "1",
+          toolName: "read",
+          inputSignature: "read:path=/repo/packages/tui/package.json;offset=1;limit=all",
+          content: "file a",
+          isError: false,
+          timestamp: 1
+        },
+        {
+          role: "tool",
+          toolCallId: "2",
+          toolName: "read",
+          inputSignature: "read:path=/repo/packages/prompts/package.json;offset=1;limit=all",
+          content: "file b",
+          isError: false,
+          timestamp: 2
+        },
+        {
+          role: "tool",
+          toolCallId: "3",
+          toolName: "read",
+          inputSignature: "read:path=/repo/README.md;offset=1;limit=all",
+          content: "file c",
+          isError: false,
+          timestamp: 3
+        }
+      ]
+    });
+
+    expect(update.loopDetected).toBe(false);
+    expect(update.nextPhase).toBe("summarize");
   });
 
   it("compresses long conversations into a session summary", () => {

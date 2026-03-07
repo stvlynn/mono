@@ -39,3 +39,7 @@ mono config init
 mono config migrate
 mono config list
 ```
+
+## Documentation
+
+Contributor and maintainer docs live under [`docs/`](./docs/README.md).

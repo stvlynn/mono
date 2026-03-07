@@ -46,6 +46,8 @@ export interface ToolResultMessage {
   role: "tool";
   toolCallId: string;
   toolName: string;
+  input?: unknown;
+  inputSignature?: string;
   content: string | ToolResultPart[];
   isError: boolean;
   timestamp: number;
@@ -235,8 +237,12 @@ export interface ToolCallContext {
   onUpdate?: (update: ToolExecutionUpdate) => void;
 }
 
+export type ToolExecutionMode = "serial" | "parallel_readonly";
+
 export interface AgentTool<TArgs = unknown, TDetails = unknown> extends UnifiedToolSpec {
   needsConfirmation?: boolean;
+  executionMode?: ToolExecutionMode;
+  conflictKey?(args: TArgs): string | null;
   execute(args: TArgs, context: ToolCallContext): Promise<ToolExecutionResult<TDetails>>;
   parseArgs?(args: unknown): TArgs;
 }

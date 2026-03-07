@@ -13,6 +13,7 @@ export function createWriteTool(cwd: string): AgentTool<WriteInput> {
   return {
     name: "write",
     description: "Create or overwrite a file in the workspace.",
+    executionMode: "serial",
     inputSchema: {
       type: "object",
       properties: {

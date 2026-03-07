@@ -1,5 +1,5 @@
 import { Box, useApp } from "ink";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Agent } from "@mono/agent-core";
 import type { ConversationMessage, MemoryRecord } from "@mono/shared";
 import { RootApp } from "./RootApp.js";
@@ -10,6 +10,7 @@ import { UIStateContext } from "./contexts/UIStateContext.js";
 import { useAgentBridge } from "./hooks/useAgentBridge.js";
 import { useAlternateBuffer } from "./hooks/useAlternateBuffer.js";
 import { useComposerState } from "./hooks/useComposerState.js";
+import { useInterruptController } from "./hooks/useInterruptController.js";
 import { useSlashCommands } from "./hooks/useSlashCommands.js";
 import { createMemoryItems, createModelItems, createProfileItems, createSessionItems, createTreeItems } from "./selector-items.js";
 import type { DialogInstance, ListDialogItem, UISettings, UIState } from "./types/ui.js";
@@ -24,6 +25,7 @@ const initialUiState: UIState = {
   running: false,
   status: "Starting...",
   waitingCopy: undefined,
+  interrupt: {},
   history: [],
   pendingAssistant: null,
   pendingTools: [],
@@ -57,9 +59,14 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     alternateBuffer: true,
     shortcutsHint: true
   });
+  const uiStateRef = useRef(uiState);
+
+  useEffect(() => {
+    uiStateRef.current = uiState;
+  }, [uiState]);
 
   const pushDialog = useCallback((dialog: DialogInstance) => {
-    setUiState((current) => ({ ...current, dialogs: [...current.dialogs, dialog] }));
+    setUiState((current) => ({ ...current, dialogs: [...current.dialogs, dialog], interrupt: {} }));
   }, []);
 
   const closeTopDialog = useCallback(() => {
@@ -79,6 +86,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
       currentTask: agent.getCurrentTask(),
       currentTodoRecord: agent.getCurrentTodoRecord(),
       waitingCopy: undefined,
+      interrupt: {},
       status,
       dialogs: current.dialogs.slice(0, -1)
     }));
@@ -100,9 +108,37 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     [pushDialog]
   );
 
+  const setInterruptState = useCallback((interrupt: UIState["interrupt"]) => {
+    setUiState((current) => ({ ...current, interrupt }));
+  }, []);
+
+  const setStatus = useCallback((status: string) => {
+    setUiState((current) => ({ ...current, status }));
+  }, []);
+
+  const { handleCtrlC, clearArming } = useInterruptController({
+    getSnapshot: () => ({
+      interrupt: uiStateRef.current.interrupt,
+      isRunning: agent.isRunning(),
+      topDialog: uiStateRef.current.dialogs.at(-1)
+    }),
+    setInterruptState,
+    setStatus,
+    abortRun: () => agent.abort(),
+    closeTopDialog,
+    exitApp: () => exit()
+  });
+
   const actions = useMemo<UIActions>(() => ({
     submitPrompt: async (prompt: string) => {
-      setUiState((current) => ({ ...current, currentPrompt: prompt, waitingCopy: undefined, status: "Submitting prompt..." }));
+      clearArming();
+      setUiState((current) => ({
+        ...current,
+        currentPrompt: prompt,
+        waitingCopy: undefined,
+        interrupt: {},
+        status: "Submitting prompt..."
+      }));
       try {
         await agent.runTask(prompt);
       } catch (error) {
@@ -120,6 +156,12 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
           ].slice(-3)
         }));
       }
+    },
+    handleInterrupt: async (context) => {
+      await handleCtrlC(context);
+    },
+    clearInterruptArming: () => {
+      clearArming();
     },
     openHelp: () => pushDialog({ id: `help-${Date.now()}`, type: "help", title: "Help" }),
     openSettings: () => pushDialog(infoDialog("Settings", ["UI settings are minimal in this build.", "Use /theme and /profile to change runtime behavior."])),
@@ -200,9 +242,9 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     },
     closeTopDialog,
     exitApp: () => exit(),
-    setStatus: (status: string) => setUiState((current) => ({ ...current, status })),
+    setStatus,
     toggleCleanUi: () => setSettings((current) => ({ ...current, cleanUiDetailsVisible: !current.cleanUiDetailsVisible })),
-  }), [agent, closeTopDialog, exit, openListDialog, pushDialog, replaceConversation]);
+  }), [agent, clearArming, closeTopDialog, exit, handleCtrlC, openListDialog, pushDialog, replaceConversation, setStatus]);
 
   const slash = useSlashCommands(actions);
   const composer = useComposerState(slash.registry);

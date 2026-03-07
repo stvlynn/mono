@@ -2,10 +2,7 @@ import { streamText } from "@xsai/stream-text";
 import type { StreamTextEvent } from "@xsai/stream-text";
 import type { AssistantMessage, ConversationMessage, TextPart, ToolCallPart, ToolResultMessage, ToolResultPart } from "@mono/shared";
 import type { LlmRunOptions } from "./types.js";
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
+import { ToolBatchScheduler } from "./tool-batch-scheduler.js";
 
 function toXsaiContent(parts: ToolResultPart[]): Array<Record<string, unknown>> {
   return parts.map((part) => {
@@ -117,7 +114,15 @@ export function mapAnthropicThinking(level: LlmRunOptions["thinkingLevel"]): { t
 }
 
 function buildXsaiTools(options: LlmRunOptions) {
-  const toolResultMap = new Map<string, { toolName: string; content: string | ToolResultPart[]; isError: boolean }>();
+  const toolResultMap = new Map<
+    string,
+    { toolName: string; input: unknown; inputSignature: string; content: string | ToolResultPart[]; isError: boolean }
+  >();
+  const scheduler = new ToolBatchScheduler({
+    llmOptions: options,
+    toolResultMap,
+    toXsaiContent
+  });
 
   const tools = options.tools.map((tool) => ({
     type: "function" as const,
@@ -127,70 +132,8 @@ function buildXsaiTools(options: LlmRunOptions) {
       parameters: tool.inputSchema,
       strict: true
     },
-    execute: async (input: unknown, toolContext: { toolCallId: string }) => {
-      options.emit({
-        type: "tool-start",
-        toolCallId: toolContext.toolCallId,
-        toolName: tool.name,
-        input
-      });
-
-      try {
-        const parsedArgs = tool.parseArgs ? tool.parseArgs(input) : (input as never);
-        const result = await tool.execute(parsedArgs, {
-          toolCallId: toolContext.toolCallId,
-          signal: options.signal,
-          onUpdate: (update) => {
-            options.emit({
-              type: "tool-update",
-              toolCallId: toolContext.toolCallId,
-              toolName: tool.name,
-              update
-            });
-          }
-        });
-
-        if (options.signal?.aborted) {
-          throw options.signal.reason instanceof Error ? options.signal.reason : new DOMException("Aborted", "AbortError");
-        }
-
-        toolResultMap.set(toolContext.toolCallId, {
-          toolName: tool.name,
-          content: result.content,
-          isError: false
-        });
-
-        options.emit({
-          type: "tool-end",
-          toolCallId: toolContext.toolCallId,
-          toolName: tool.name,
-          result,
-          isError: false
-        });
-
-        return typeof result.content === "string" ? result.content : toXsaiContent(result.content);
-      } catch (error) {
-        if (options.signal?.aborted || isAbortError(error)) {
-          throw error;
-        }
-
-        const message = error instanceof Error ? error.message : String(error);
-        const result = { content: message };
-        toolResultMap.set(toolContext.toolCallId, {
-          toolName: tool.name,
-          content: message,
-          isError: true
-        });
-        options.emit({
-          type: "tool-end",
-          toolCallId: toolContext.toolCallId,
-          toolName: tool.name,
-          result,
-          isError: true
-        });
-        return message;
-      }
-    }
+    execute: async (input: unknown, toolContext: { toolCallId: string }) =>
+      scheduler.schedule(tool, input, toolContext.toolCallId)
   }));
 
   return { toolResultMap, tools };
@@ -299,6 +242,8 @@ export async function runXsaiConversation(
         role: "tool",
         toolCallId: message.tool_call_id,
         toolName: stored?.toolName ?? toolStep?.toolName ?? "unknown",
+        input: stored?.input,
+        inputSignature: stored?.inputSignature,
         content: stored?.content ?? (typeof message.content === "string" ? message.content : []),
         isError: stored?.isError ?? false,
         timestamp: Date.now()

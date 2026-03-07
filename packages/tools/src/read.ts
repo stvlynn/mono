@@ -15,6 +15,7 @@ export function createReadTool(cwd: string): AgentTool<ReadInput> {
   return {
     name: "read",
     description: "Read a file from the workspace. Supports text files and common image formats.",
+    executionMode: "parallel_readonly",
     inputSchema: {
       type: "object",
       properties: {
@@ -26,6 +27,8 @@ export function createReadTool(cwd: string): AgentTool<ReadInput> {
       additionalProperties: false
     },
     parseArgs: (input) => schema.parse(input),
+    conflictKey: (args) =>
+      `path=${resolveWithin(cwd, args.path)};offset=${args.offset ?? 1};limit=${args.limit ?? "all"}`,
     async execute(args): Promise<ToolExecutionResult> {
       const filePath = resolveWithin(cwd, args.path);
       const buffer = await readFile(filePath);

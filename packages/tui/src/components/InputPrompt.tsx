@@ -5,7 +5,6 @@ import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
 import { useUIState } from "../contexts/UIStateContext.js";
-import { useAppContext } from "../contexts/AppContext.js";
 import { isBackwardDeleteInput, isForwardDeleteInput } from "../input-keys.js";
 import { isInsertableInput, useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
 
@@ -25,7 +24,6 @@ interface InputPromptProps {
 export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) {
   const actions = useUIActions();
   const { running } = useUIState();
-  const { agent } = useAppContext();
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
 
   useEffect(() => {
@@ -40,19 +38,16 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
     }
 
     if (key.ctrl && input === "c") {
-      if (composer.buffer.hasText) {
-        composer.clear();
-        return;
-      }
-      if (agent.isRunning()) {
-        agent.abort();
-      }
-      actions.exitApp();
+      void actions.handleInterrupt({
+        hasInput: composer.buffer.hasText,
+        clearInput: () => composer.clear()
+      });
       return;
     }
 
     if (key.escape) {
       if (slashVisible) {
+        actions.clearInterruptArming();
         composer.clear();
         return;
       }
@@ -61,14 +56,17 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
     }
 
     if (key.leftArrow) {
+      actions.clearInterruptArming();
       composer.moveLeft();
       return;
     }
     if (key.rightArrow) {
+      actions.clearInterruptArming();
       composer.moveRight();
       return;
     }
     if (key.upArrow) {
+      actions.clearInterruptArming();
       if (slashVisible) {
         setSelectedSlashIndex((current) => Math.max(0, current - 1));
         return;
@@ -77,6 +75,7 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       return;
     }
     if (key.downArrow) {
+      actions.clearInterruptArming();
       if (slashVisible) {
         setSelectedSlashIndex((current) => Math.min(Math.max(composer.slashMatches.length - 1, 0), current + 1));
         return;
@@ -85,6 +84,7 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       return;
     }
     if ((key.ctrl && key.name === "j") || (key.shift && key.return)) {
+      actions.clearInterruptArming();
       composer.insert("\n");
       return;
     }
@@ -117,31 +117,36 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       return;
     }
     if (isBackwardDeleteInput(input, key)) {
+      actions.clearInterruptArming();
       composer.deleteBackward();
       return;
     }
     if (isForwardDeleteInput(input, key)) {
+      actions.clearInterruptArming();
       composer.deleteForward();
       return;
     }
     if (key.ctrl && input === "a") {
+      actions.clearInterruptArming();
       composer.moveHome();
       return;
     }
     if (key.ctrl && input === "e") {
+      actions.clearInterruptArming();
       composer.moveEnd();
       return;
     }
     if (isInsertableInput(input, key)) {
+      actions.clearInterruptArming();
       composer.insert(input);
     }
-  }, [actions, agent, composer, dialogsOpen, selectedSlashIndex, slash, slashVisible]);
+  }, [actions, composer, dialogsOpen, selectedSlashIndex, slash, slashVisible]);
 
   useRawKeypress(handleKeypress, { isActive: !dialogsOpen });
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={running ? "cyan" : "gray"} paddingX={1}>
-      <Text dimColor>{running ? "task running" : "ready"} · Enter submit · Ctrl+J newline · Ctrl+C cancel/exit</Text>
+      <Text dimColor>{running ? "task running" : "ready"} · Enter submit · Ctrl+J newline · Ctrl+C interrupt · double Ctrl+C exit</Text>
       <Text>{renderBuffer(composer.buffer.text, composer.buffer.cursor)}</Text>
       <Text dimColor>width:{stringWidth(composer.buffer.text)}</Text>
       {slashVisible ? (

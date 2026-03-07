@@ -32,6 +32,12 @@ export interface UIWaitingCopy {
   toolName?: string;
 }
 
+export interface InterruptState {
+  lastCtrlCAt?: number;
+  armedAction?: "exit";
+  hint?: string;
+}
+
 export type UIHistoryItem =
   | { id: string; type: "message"; message: ConversationMessage }
   | { id: string; type: "system"; text: string; tone?: "muted" | "info" | "warning" | "error" | "success" };
@@ -87,6 +93,7 @@ export interface UIState {
   running: boolean;
   status: string;
   waitingCopy?: UIWaitingCopy;
+  interrupt: InterruptState;
   history: UIHistoryItem[];
   pendingAssistant: UIPendingAssistant | null;
   pendingTools: UIToolCall[];

@@ -11,6 +11,7 @@ function createUiState(): UIState {
     running: false,
     status: "Ready",
     waitingCopy: undefined,
+    interrupt: {},
     history: [],
     pendingAssistant: null,
     pendingTools: [],

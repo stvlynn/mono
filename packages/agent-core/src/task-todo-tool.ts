@@ -38,6 +38,7 @@ export function createWriteTodosTool(options: CreateWriteTodosToolOptions): Agen
   return {
     name: "write_todos",
     description: "Create or update the current task plan for this task. Provide the full todo list each time.",
+    executionMode: "serial",
     inputSchema: {
       type: "object",
       additionalProperties: false,
