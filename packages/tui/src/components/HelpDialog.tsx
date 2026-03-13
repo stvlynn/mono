@@ -23,8 +23,9 @@ export function HelpDialog() {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
       <Text bold>Commands</Text>
-      <Text>/help /model /profile /sessions /tree /memory /settings /thinking /markdown /tools /quit</Text>
-      <Text dimColor>Enter submit · Ctrl+J newline · Esc close dialog · Ctrl+C interrupt · double Ctrl+C exit</Text>
+      <Text>/help /model /profile /sessions /skills /context /tree /memory /settings /thinking /markdown /tools /quit</Text>
+      <Text dimColor>Enter submit · PgUp/PgDn browse messages · Home/End jump history · Up/Down query history · Ctrl+J newline</Text>
+      <Text dimColor>Esc close dialog · Ctrl+C interrupt · double Ctrl+C exit</Text>
     </Box>
   );
 }

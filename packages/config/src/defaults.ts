@@ -1,4 +1,5 @@
 import type {
+  MonoContextConfig,
   MonoGlobalConfig,
   MonoMemoryConfig,
   MonoOpenVikingConfig,
@@ -116,7 +117,8 @@ export function createDefaultGlobalConfig(): MonoGlobalConfig {
         approvalMode: "default",
         theme: "system"
       },
-      memory: createDefaultMemoryConfig()
+      memory: createDefaultMemoryConfig(),
+      context: createDefaultContextConfig()
     },
     projects: {}
   };
@@ -341,6 +343,46 @@ export function createDefaultMemoryConfig(): MonoMemoryConfig {
     fallbackToLocalOnFailure: true,
     openViking: createDefaultOpenVikingConfig(),
     seekDb: createDefaultSeekDbConfig()
+  };
+}
+
+export function createDefaultContextConfig(): MonoContextConfig {
+  return {
+    enabled: true,
+    userTimezone: "system",
+    identity: {
+      injectOperator: true,
+      injectProjectIdentity: true
+    },
+    bootstrap: {
+      enabled: true,
+      files: [
+        ".mono/CONTEXT.md",
+        ".mono/IDENTITY.md",
+        ".mono/MEMORY.md",
+        "README.md",
+        "docs/getting-started/repo-overview.md",
+        "docs/architecture/system-overview.md"
+      ],
+      maxCharsPerFile: 8_000,
+      totalMaxChars: 32_000,
+      truncationWarning: "once"
+    },
+    docs: {
+      enabled: true,
+      entryPaths: [
+        "docs/README.md",
+        "docs/architecture",
+        "docs/api"
+      ]
+    },
+    memory: {
+      injectBootstrapMemoryFile: true,
+      injectRetrievedMemory: true
+    },
+    reporting: {
+      enabled: true
+    }
   };
 }
 

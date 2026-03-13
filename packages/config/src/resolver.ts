@@ -1,4 +1,5 @@
 import type {
+  MonoContextConfig,
   MonoGlobalConfig,
   MonoConfigSummary,
   MonoMemoryConfig,
@@ -12,6 +13,7 @@ import { readJsonFile } from "@mono/shared";
 import { catalogModelToUnifiedModel, getCatalogModel, getCatalogProvider, getModelsCatalog, listCatalogModels } from "./catalog.js";
 import {
   canonicalizeProviderId,
+  createDefaultContextConfig,
   createDefaultGlobalConfig,
   createDefaultMemoryConfig,
   createDefaultSeekDbConfig,
@@ -140,6 +142,10 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
       globalConfig: effectiveGlobal,
       projectConfig,
       store
+    }),
+    context: resolveContextConfig({
+      globalConfig: effectiveGlobal,
+      projectConfig
     }),
     apiKey,
     source: {
@@ -501,6 +507,67 @@ function resolveMemoryConfig(options: {
         ?? projectMemory.seekDb?.embeddedPath
         ?? globalMemory.seekDb?.embeddedPath
         ?? defaults.seekDb.embeddedPath
+    }
+  };
+}
+
+function resolveContextConfig(options: {
+  globalConfig: MonoGlobalConfig;
+  projectConfig?: MonoProjectConfig;
+}): MonoContextConfig {
+  const { globalConfig, projectConfig } = options;
+  const defaults = createDefaultContextConfig();
+  const globalContext = globalConfig.mono.context ?? {};
+  const projectContext = projectConfig?.context ?? {};
+
+  return {
+    enabled: projectContext.enabled ?? globalContext.enabled ?? defaults.enabled,
+    userTimezone: projectContext.userTimezone ?? globalContext.userTimezone ?? defaults.userTimezone,
+    identity: {
+      injectOperator:
+        projectContext.identity?.injectOperator
+        ?? globalContext.identity?.injectOperator
+        ?? defaults.identity.injectOperator,
+      injectProjectIdentity:
+        projectContext.identity?.injectProjectIdentity
+        ?? globalContext.identity?.injectProjectIdentity
+        ?? defaults.identity.injectProjectIdentity
+    },
+    bootstrap: {
+      enabled: projectContext.bootstrap?.enabled ?? globalContext.bootstrap?.enabled ?? defaults.bootstrap.enabled,
+      files: [...(projectContext.bootstrap?.files ?? globalContext.bootstrap?.files ?? defaults.bootstrap.files)],
+      maxCharsPerFile:
+        projectContext.bootstrap?.maxCharsPerFile
+        ?? globalContext.bootstrap?.maxCharsPerFile
+        ?? defaults.bootstrap.maxCharsPerFile,
+      totalMaxChars:
+        projectContext.bootstrap?.totalMaxChars
+        ?? globalContext.bootstrap?.totalMaxChars
+        ?? defaults.bootstrap.totalMaxChars,
+      truncationWarning:
+        projectContext.bootstrap?.truncationWarning
+        ?? globalContext.bootstrap?.truncationWarning
+        ?? defaults.bootstrap.truncationWarning
+    },
+    docs: {
+      enabled: projectContext.docs?.enabled ?? globalContext.docs?.enabled ?? defaults.docs.enabled,
+      entryPaths: [...(projectContext.docs?.entryPaths ?? globalContext.docs?.entryPaths ?? defaults.docs.entryPaths)]
+    },
+    memory: {
+      injectBootstrapMemoryFile:
+        projectContext.memory?.injectBootstrapMemoryFile
+        ?? globalContext.memory?.injectBootstrapMemoryFile
+        ?? defaults.memory.injectBootstrapMemoryFile,
+      injectRetrievedMemory:
+        projectContext.memory?.injectRetrievedMemory
+        ?? globalContext.memory?.injectRetrievedMemory
+        ?? defaults.memory.injectRetrievedMemory
+    },
+    reporting: {
+      enabled:
+        projectContext.reporting?.enabled
+        ?? globalContext.reporting?.enabled
+        ?? defaults.reporting.enabled
     }
   };
 }

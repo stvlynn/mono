@@ -5,6 +5,7 @@ import { LoadingIndicator } from "./LoadingIndicator.js";
 import { useUIState } from "../contexts/UIStateContext.js";
 import { useSettings } from "../contexts/SettingsContext.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
+import { getHistoryWindow, HISTORY_PAGE_SIZE } from "../history-scroll.js";
 
 function PendingTools() {
   const { pendingTools, waitingCopy } = useUIState();
@@ -57,7 +58,10 @@ function PendingAssistant() {
 }
 
 export function MainContent() {
-  const { history } = useUIState();
+  const { history, historyScrollOffset } = useUIState();
+  const { settings } = useSettings();
+  const window = getHistoryWindow(history.length, historyScrollOffset, HISTORY_PAGE_SIZE);
+  const visibleHistory = settings.alternateBuffer ? history.slice(window.start, window.end) : history;
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -66,7 +70,15 @@ export function MainContent() {
         {history.length === 0 ? (
           <Text dimColor>No conversation yet.</Text>
         ) : (
-          history.map((item) => <HistoryItemDisplay key={item.id} item={item} />)
+          <>
+            {settings.alternateBuffer && window.hiddenAbove > 0 ? (
+              <Text dimColor>↑ {window.hiddenAbove} earlier item(s) · PageUp/Home to scroll back</Text>
+            ) : null}
+            {visibleHistory.map((item) => <HistoryItemDisplay key={item.id} item={item} />)}
+            {settings.alternateBuffer && window.hiddenBelow > 0 ? (
+              <Text dimColor>↓ {window.hiddenBelow} newer item(s) · Down/PageDown/End to return</Text>
+            ) : null}
+          </>
         )}
       </Box>
       <PendingTools />

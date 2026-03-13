@@ -21,13 +21,14 @@ export function Footer() {
   }
 
   const model = agent.getCurrentModel();
+  const contextReport = agent.getLatestContextReport();
   return (
     <Box justifyContent="space-between">
       <Text dimColor>
         profile:{agent.getProfileName()} model:{model.provider}/{model.modelId}
       </Text>
       <Text dimColor>
-        session:{agent.getSessionId().slice(0, 8)} task:{agent.getCurrentTask()?.phase ?? "idle"}
+        session:{agent.getSessionId().slice(0, 8)} task:{agent.getCurrentTask()?.phase ?? "idle"}{contextReport ? ` ctx:~${contextReport.estimatedTokens}tok` : ""}
       </Text>
     </Box>
   );

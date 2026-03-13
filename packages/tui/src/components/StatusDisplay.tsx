@@ -2,10 +2,14 @@ import { Box, Text } from "ink";
 import { useUIState } from "../contexts/UIStateContext.js";
 
 export function StatusDisplay() {
-  const { status, waitingCopy, interrupt, running, currentTask } = useUIState();
+  const { status, waitingCopy, interrupt, running, currentTask, historyScrollOffset } = useUIState();
   return (
     <Box flexDirection="column">
-      <Text color={running ? "cyan" : "gray"}>{interrupt.hint ?? waitingCopy?.message ?? status}</Text>
+      <Text color={running ? "cyan" : "gray"}>
+        {historyScrollOffset > 0
+          ? `Browsing previous messages · ${historyScrollOffset} item(s) from latest`
+          : interrupt.hint ?? waitingCopy?.message ?? status}
+      </Text>
       {currentTask ? (
         <Text dimColor>
           phase={currentTask.phase} attempts={currentTask.attempts}

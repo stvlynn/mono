@@ -5,7 +5,7 @@ function truncateToWidth(value: string, width: number): string {
   return `${value.slice(0, Math.max(0, width - 1))}…`;
 }
 import type { MemoryRecord, SessionNodeSummary, SessionSummary, UnifiedModel } from "@mono/shared";
-import type { ConfiguredModelProfile } from "@mono/agent-core";
+import type { ConfiguredModelProfile, ProjectSkill } from "@mono/agent-core";
 import { formatTime } from "./ui-format.js";
 
 export interface SelectOptionItem {
@@ -39,6 +39,14 @@ export function createSessionItems(sessions: SessionSummary[]): SelectOptionItem
     value: session.sessionId,
     label: `${session.sessionId.slice(0, 8)}  ${formatTime(session.updatedAt)}`,
     description: session.cwd
+  }));
+}
+
+export function createSkillItems(skills: ProjectSkill[]): SelectOptionItem[] {
+  return skills.map((skill) => ({
+    value: skill.name,
+    label: skill.name,
+    description: skill.description || truncateToWidth(skill.content.split("\n").find((line) => line.trim()) ?? "", 72)
   }));
 }
 

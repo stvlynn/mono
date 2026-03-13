@@ -1,5 +1,6 @@
 import {
   type ApprovalRequest,
+  type ContextAssemblyReport,
   type ConversationMessage,
   type MemoryRecallPlan,
   type MemoryRecord,
@@ -48,7 +49,8 @@ import {
   createTaskTodoRecord,
   type RecallAccumulator
 } from "./memory-runtime.js";
-import { createDefaultSystemPrompt } from "./system-prompt.js";
+import { assemblePromptContext } from "./context-assembly.js";
+import { loadProjectSkills, renderProjectSkillsContext } from "./skills.js";
 import {
   advanceTaskPhase,
   applyVerificationMode,
@@ -99,6 +101,8 @@ export interface AgentState {
   configSummary: MonoConfigSummary;
   memoryStore: MemoryStore;
   taskTodoStore: FolderTaskTodoStore;
+  sessionLoadedAt: number;
+  latestContextReport?: ContextAssemblyReport;
   currentTask?: TaskState;
   currentTodoRecord?: TaskTodoRecord;
 }
@@ -226,7 +230,8 @@ export class Agent {
       config,
       configSummary,
       memoryStore,
-      taskTodoStore
+      taskTodoStore,
+      sessionLoadedAt: Date.now()
     };
     this.state.currentTask = await this.loadCurrentTaskForHead(session);
     this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
@@ -473,6 +478,8 @@ export class Agent {
     }
     const messages = await session.loadMessages(branchHeadId);
     this.state.session = session;
+    this.state.sessionLoadedAt = Date.now();
+    this.state.latestContextReport = undefined;
     this.state.messages = messages;
     this.state.currentTask = await this.loadCurrentTaskForHead(session, branchHeadId);
     this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
@@ -490,6 +497,7 @@ export class Agent {
     await this.initialize();
     this.assertIdle("switch branch");
     const messages = await this.state.session.checkout(branchHeadId);
+    this.state.latestContextReport = undefined;
     this.state.messages = messages;
     this.state.currentTask = await this.loadCurrentTaskForHead(this.state.session, branchHeadId);
     this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
@@ -544,6 +552,47 @@ export class Agent {
 
   getBranchHeadId(): string | undefined {
     return this.state.session.getHeadId();
+  }
+
+  getLatestContextReport(): ContextAssemblyReport | undefined {
+    return this.state.latestContextReport;
+  }
+
+  async inspectContext(prompt?: string): Promise<{ systemPrompt: string; report: ContextAssemblyReport }> {
+    await this.initialize();
+    const goal = prompt?.trim() || this.state.currentTask?.goal || "";
+    const memoryPlan = this.state.config.memory.enabled && this.state.config.memory.autoInject
+      ? await this.recallMemory(goal || undefined)
+      : emptyRecallPlan();
+    const memoryContext =
+      this.state.config.memory.enabled
+      && this.state.config.memory.autoInject
+      && this.state.config.context.memory.injectRetrievedMemory
+      && memoryPlan.selectedIds.length > 0
+        ? await this.renderMemoryContext(memoryPlan)
+        : "";
+    const skillsContext = await this.loadSkillsContextForTaskTurn(goal);
+    const taskContext = this.buildInspectableTaskContext(goal);
+    const assembled = await assemblePromptContext({
+      cwd: this.cwd,
+      sessionId: this.state.session.sessionId,
+      sessionStartedAt: this.state.sessionLoadedAt,
+      profileName: this.state.profileName,
+      model: this.state.model,
+      thinkingLevel: this.state.thinkingLevel,
+      verificationMode: this.state.currentTask?.verification.mode ?? this.verificationMode ?? "light",
+      autoApprove: this.autoApprove,
+      config: this.state.config,
+      taskContext,
+      memoryContext,
+      skillsContext,
+      memoryPlan
+    });
+    this.state.latestContextReport = assembled.report;
+    return {
+      systemPrompt: assembled.systemPrompt,
+      report: assembled.report
+    };
   }
 
   private emit(event: RuntimeEvent): void {
@@ -884,6 +933,7 @@ export class Agent {
 
   private async runTaskTurn(context: TaskRunContext, task: TaskState): Promise<ConversationMessage[]> {
     const memoryContext = await this.loadMemoryContextForTaskTurn(context);
+    const skillsContext = await this.loadSkillsContextForTaskTurn(task.goal);
     const todoRecord = await this.state.taskTodoStore.get(task.taskId);
     context.taskTodoRecord = todoRecord;
     this.state.currentTodoRecord = todoRecord ?? undefined;
@@ -897,10 +947,27 @@ export class Agent {
       this.emitIfCurrent(context.runId, { type: "task-verify-start", task });
     }
     this.emitIfCurrent(context.runId, { type: "assistant-start" });
+    const taskContext = `${buildTaskContext(task, todoRecord)}\n${turnPlan.prompt}`;
+    const assembledPrompt = await assemblePromptContext({
+      cwd: this.cwd,
+      sessionId: context.session.sessionId,
+      sessionStartedAt: this.state.sessionLoadedAt,
+      profileName: this.state.profileName,
+      model: context.model,
+      thinkingLevel: this.state.thinkingLevel,
+      verificationMode: task.verification.mode,
+      autoApprove: this.autoApprove,
+      config: this.state.config,
+      taskContext,
+      memoryContext,
+      skillsContext,
+      memoryPlan: collapseRecallAccumulator(context.recallAccumulator)
+    });
+    this.state.latestContextReport = assembledPrompt.report;
 
     const newMessages = await runConversation({
       model: context.model,
-      systemPrompt: createDefaultSystemPrompt(this.cwd, memoryContext, `${buildTaskContext(task, todoRecord)}\n${turnPlan.prompt}`),
+      systemPrompt: assembledPrompt.systemPrompt,
       messages: [...this.state.messages],
       tools,
       thinkingLevel: this.state.thinkingLevel,
@@ -935,6 +1002,31 @@ export class Agent {
     }
 
     return retrievedContext.contextBlock;
+  }
+
+  private async loadSkillsContextForTaskTurn(prompt: string): Promise<string> {
+    const skills = await loadProjectSkills(this.cwd);
+    return renderProjectSkillsContext(skills, prompt, this.cwd);
+  }
+
+  private buildInspectableTaskContext(goal: string): string {
+    const promptGoal = goal.trim();
+    if (this.state.currentTask) {
+      return buildTaskContext(this.state.currentTask, this.state.currentTodoRecord);
+    }
+    if (!promptGoal) {
+      return "";
+    }
+    return [
+      "<TaskContext>",
+      `Goal: ${promptGoal}`,
+      "Phase: preview",
+      "Attempts: 0",
+      `Verification: ${this.verificationMode ?? "light"}`,
+      "Todos: <none>",
+      "Use write_todos to create a task plan if the work becomes multi-step.",
+      "</TaskContext>"
+    ].join("\n");
   }
 
   private createToolsForRun(context: TaskRunContext, task: TaskState) {

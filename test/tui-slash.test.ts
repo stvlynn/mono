@@ -37,6 +37,8 @@ describe("slash registry", () => {
     expect(registry.find("mdl")?.fullName).toBe("/model");
     expect(registry.find("login")?.fullName).toBe("/connect");
     expect(registry.find("tooldetails")?.fullName).toBe("/tools");
+    expect(registry.find("skill")?.fullName).toBe("/skills");
+    expect(registry.find("ctx")?.fullName).toBe("/context");
   });
 
   it("returns fuzzy-ranked matches", () => {
@@ -54,6 +56,8 @@ describe("slash registry", () => {
     expect(matches.map((match) => match.command.fullName)).toContain("/quit");
     expect(matches.map((match) => match.command.fullName)).toContain("/markdown");
     expect(matches.map((match) => match.command.fullName)).toContain("/thinking");
+    expect(matches.map((match) => match.command.fullName)).toContain("/skills");
+    expect(matches.map((match) => match.command.fullName)).toContain("/context");
   });
 });
 

@@ -1,6 +1,6 @@
 import { Box, Text, useApp, useStdin } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Agent } from "@mono/agent-core";
+import { formatContextReportLines, loadProjectSkills, type Agent } from "@mono/agent-core";
 import { catalogModelToUnifiedModel, listCatalogModels, listCatalogProviders, upsertProfile, type CatalogProvider, type CatalogTransportCandidate } from "@mono/config";
 import type { ConversationMessage, MemoryRecord } from "@mono/shared";
 import { RootApp } from "./RootApp.js";
@@ -10,18 +10,19 @@ import { SettingsContext } from "./contexts/SettingsContext.js";
 import { UIActionsContext, type UIActions } from "./contexts/UIActionsContext.js";
 import { UIStateContext } from "./contexts/UIStateContext.js";
 import { useAgentBridge } from "./hooks/useAgentBridge.js";
-import { useAlternateBuffer } from "./hooks/useAlternateBuffer.js";
+import { getDefaultAlternateBufferEnabled, useAlternateBuffer } from "./hooks/useAlternateBuffer.js";
 import { useComposerState } from "./hooks/useComposerState.js";
 import { useInterruptController } from "./hooks/useInterruptController.js";
 import { useRawKeypress } from "./hooks/useRawKeypress.js";
 import { useRepeatedKeyPress } from "./hooks/useRepeatedKeyPress.js";
 import { useTuiShutdown } from "./hooks/useTuiShutdown.js";
 import { useSlashCommands } from "./hooks/useSlashCommands.js";
-import { createConfiguredProfileItems, createMemoryItems, createSessionItems, createTreeItems } from "./selector-items.js";
+import { createConfiguredProfileItems, createMemoryItems, createSessionItems, createSkillItems, createTreeItems } from "./selector-items.js";
 import { FatalScreen } from "./components/FatalScreen.js";
 import { TuiErrorBoundary } from "./components/TuiErrorBoundary.js";
 import { isRecoverableRuntimeError } from "./error-classification.js";
 import { shouldSetConnectedProfileAsDefault } from "./connect-default.js";
+import { clampHistoryScrollOffset, getMaxHistoryScrollOffset, HISTORY_PAGE_SIZE } from "./history-scroll.js";
 import type { DialogInstance, ListDialogItem, UISettings, UIState } from "./types/ui.js";
 
 export interface InteractiveAppProps {
@@ -39,6 +40,7 @@ const initialUiState: UIState = {
   waitingCopy: undefined,
   interrupt: {},
   history: [],
+  historyScrollOffset: 0,
   pendingAssistant: null,
   pendingTools: [],
   dialogs: [],
@@ -117,7 +119,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
   const [settings, setSettings] = useState<UISettings>({
     cleanUiDetailsVisible: true,
     footerVisible: true,
-    alternateBuffer: true,
+    alternateBuffer: getDefaultAlternateBufferEnabled(),
     shortcutsHint: true,
     assistantMarkdownEnabled: true,
     thinkingVisible: true,
@@ -303,6 +305,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
         | "model"
         | "profile"
         | "session"
+        | "skill"
         | "memory"
         | "tree"
         | "settings"
@@ -336,6 +339,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
         | "model"
         | "profile"
         | "session"
+        | "skill"
         | "memory"
         | "tree"
         | "settings"
@@ -417,6 +421,22 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
 
   const setStatus = useCallback((status: string) => {
     setUiState((current) => ({ ...current, status }));
+  }, []);
+
+  const scrollHistoryBy = useCallback((delta: number) => {
+    setUiState((current) => ({
+      ...current,
+      historyScrollOffset: clampHistoryScrollOffset(current.historyScrollOffset + delta, current.history.length, HISTORY_PAGE_SIZE)
+    }));
+  }, []);
+
+  const scrollHistoryTo = useCallback((target: "top" | "bottom") => {
+    setUiState((current) => ({
+      ...current,
+      historyScrollOffset: target === "top"
+        ? getMaxHistoryScrollOffset(current.history.length, HISTORY_PAGE_SIZE)
+        : 0
+    }));
   }, []);
 
   const openConfiguredProfileSelector = useCallback(async (
@@ -785,6 +805,41 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
         }, initialFilter, "Type to filter, Enter resume, Esc close");
       }, "Failed to open session browser");
     },
+    openSkillsDialog: async (initialFilter) => {
+      await runUiAction(async () => {
+        const skills = await loadProjectSkills(process.cwd());
+        if (skills.length === 0) {
+          setUiState((current) => ({
+            ...current,
+            status: "No project skills found under .mono/skills"
+          }));
+          return;
+        }
+
+        const items = createSkillItems(skills);
+        openSafeListDialog("skill", "Project Skills", items, async (value) => {
+          const selected = skills.find((skill) => skill.name === value);
+          if (!selected) {
+            return;
+          }
+          closeTopDialog();
+          pushDialog(infoDialog(`Skill: ${selected.name}`, [
+            selected.description || "No description",
+            `Path: ${selected.location}`,
+            "",
+            ...selected.content.split("\n")
+          ]));
+        }, initialFilter, "Type to filter, Enter inspect, Esc close");
+      }, "Failed to open project skills");
+    },
+    openContextDialog: async () => {
+      await runUiAction(async () => {
+        await initializeAgent();
+        const previewPrompt = uiStateRef.current.currentPrompt?.trim() || agent.getCurrentTask()?.goal;
+        const { report } = await agent.inspectContext(previewPrompt || undefined);
+        pushDialog(infoDialog("Context Report", formatContextReportLines(report, true)));
+      }, "Failed to inspect prompt context");
+    },
     openMemoryDialog: async (initialFilter) => {
       await runUiAction(async () => {
         await initializeAgent();
@@ -831,6 +886,12 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     dismissFatalError,
     requestShutdown,
     setStatus,
+    scrollHistoryLineUp: () => scrollHistoryBy(1),
+    scrollHistoryLineDown: () => scrollHistoryBy(-1),
+    scrollHistoryPageUp: () => scrollHistoryBy(HISTORY_PAGE_SIZE),
+    scrollHistoryPageDown: () => scrollHistoryBy(-HISTORY_PAGE_SIZE),
+    scrollHistoryToTop: () => scrollHistoryTo("top"),
+    scrollHistoryToBottom: () => scrollHistoryTo("bottom"),
     toggleCleanUi: () => setSettings((current) => ({ ...current, cleanUiDetailsVisible: !current.cleanUiDetailsVisible })),
     toggleAssistantMarkdown: () => {
       setSettings((current) => ({ ...current, assistantMarkdownEnabled: !current.assistantMarkdownEnabled }));
@@ -844,13 +905,16 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
       setSettings((current) => ({ ...current, toolDetailsVisible: !current.toolDetailsVisible }));
       setStatus(`Tool details ${settings.toolDetailsVisible ? "hidden" : "visible"}`);
     }
-  }), [agent, clearArming, closeTopDialog, dismissFatalError, handleCtrlC, initializeAgent, openSafeListDialog, pushDialog, replaceConversation, reportUiError, requestShutdown, runUiAction, setStatus, settings.assistantMarkdownEnabled, settings.thinkingVisible, settings.toolDetailsVisible]);
+  }), [agent, clearArming, closeTopDialog, dismissFatalError, handleCtrlC, initializeAgent, openSafeListDialog, pushDialog, replaceConversation, reportUiError, requestShutdown, runUiAction, scrollHistoryBy, scrollHistoryTo, setStatus, settings.assistantMarkdownEnabled, settings.thinkingVisible, settings.toolDetailsVisible]);
 
   const slash = useSlashCommands(actions);
   const composer = useComposerState(slash.registry);
 
   useAlternateBuffer(settings.alternateBuffer);
-  useRawKeypress(dispatchForegroundKeypress, { isActive: true });
+  useRawKeypress(dispatchForegroundKeypress, {
+    isActive: true,
+    enableMouseTracking: settings.alternateBuffer
+  });
   useAgentBridge({ agent, setUiState, pushDialog });
 
   useEffect(() => {

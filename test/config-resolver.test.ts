@@ -19,6 +19,59 @@ afterEach(async () => {
 });
 
 describe("config resolver", () => {
+  it("resolves default context settings and applies project overrides", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-context-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-context-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        },
+        context: {
+          bootstrap: {
+            totalMaxChars: 12_345
+          }
+        }
+      },
+      projects: {}
+    } satisfies MonoGlobalConfig);
+
+    await writeJsonFile(join(cwd, ".mono", "config.json"), {
+      version: 1,
+      mono: {
+        context: {
+          userTimezone: "UTC",
+          docs: {
+            entryPaths: ["docs/README.md", "docs/api"]
+          }
+        }
+      }
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.context.enabled).toBe(true);
+    expect(resolved.context.userTimezone).toBe("UTC");
+    expect(resolved.context.bootstrap.totalMaxChars).toBe(12_345);
+    expect(resolved.context.docs.entryPaths).toEqual(["docs/README.md", "docs/api"]);
+    expect(resolved.context.bootstrap.files).toContain(".mono/CONTEXT.md");
+  });
+
   it("prefers ~/.mono-compatible global config from MONO_CONFIG_DIR", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-cwd-"));
     const configDir = await mkdtemp(join(tmpdir(), "mono-config-dir-"));

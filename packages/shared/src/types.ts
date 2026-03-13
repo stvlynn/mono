@@ -101,6 +101,7 @@ export interface MonoProjectConfig {
   apiKeyRef?: string;
   apiKeyEnv?: string;
   memory?: Partial<MonoMemoryConfig>;
+  context?: Partial<MonoContextConfig>;
 }
 
 export interface MonoMemoryConfig {
@@ -144,6 +145,45 @@ export interface MonoSeekDbConfig {
   pythonModule?: string;
   embeddedPath?: string;
   mirrorSessionsOnly: boolean;
+}
+
+export type ContextTruncationWarningMode = "off" | "once" | "always";
+
+export interface MonoContextIdentityConfig {
+  injectOperator: boolean;
+  injectProjectIdentity: boolean;
+}
+
+export interface MonoContextBootstrapConfig {
+  enabled: boolean;
+  files: string[];
+  maxCharsPerFile: number;
+  totalMaxChars: number;
+  truncationWarning: ContextTruncationWarningMode;
+}
+
+export interface MonoContextDocsConfig {
+  enabled: boolean;
+  entryPaths: string[];
+}
+
+export interface MonoContextMemoryConfig {
+  injectBootstrapMemoryFile: boolean;
+  injectRetrievedMemory: boolean;
+}
+
+export interface MonoContextReportingConfig {
+  enabled: boolean;
+}
+
+export interface MonoContextConfig {
+  enabled: boolean;
+  userTimezone: string;
+  identity: MonoContextIdentityConfig;
+  bootstrap: MonoContextBootstrapConfig;
+  docs: MonoContextDocsConfig;
+  memory: MonoContextMemoryConfig;
+  reporting: MonoContextReportingConfig;
 }
 
 export type VerificationMode = "none" | "light" | "strict";
@@ -216,6 +256,7 @@ export interface MonoGlobalConfig {
       theme?: string;
     };
     memory?: Partial<MonoMemoryConfig>;
+    context?: Partial<MonoContextConfig>;
   };
   projects?: Record<string, MonoProjectConfig>;
 }
@@ -229,6 +270,7 @@ export interface ResolvedMonoConfig {
   profileName: string;
   model: UnifiedModel;
   memory: MonoMemoryConfig;
+  context: MonoContextConfig;
   apiKey?: string;
   source: {
     profile:
@@ -254,6 +296,52 @@ export interface MonoConfigSummary {
   defaultProfile?: string;
   resolvedProfile?: string;
   hasAnyProfiles: boolean;
+}
+
+export type ContextSectionKind =
+  | "operator_identity"
+  | "project_identity"
+  | "runtime"
+  | "task"
+  | "memory"
+  | "skills"
+  | "docs"
+  | "project";
+
+export interface ContextSectionReport {
+  kind: ContextSectionKind;
+  title: string;
+  chars: number;
+  estimatedTokens: number;
+}
+
+export type BootstrapFileStatus = "included" | "truncated" | "missing" | "skipped" | "disabled";
+
+export interface BootstrapFileReport {
+  path: string;
+  rawChars: number;
+  injectedChars: number;
+  status: BootstrapFileStatus;
+}
+
+export interface ContextMemoryReport {
+  enabled: boolean;
+  autoInject: boolean;
+  backend: MonoMemoryConfig["retrievalBackend"];
+  retrievedChars: number;
+  retrievedMemoryIds: string[];
+  bootstrapMemoryPath?: string;
+  bootstrapMemoryIncluded: boolean;
+}
+
+export interface ContextAssemblyReport {
+  generatedAt: number;
+  cwd: string;
+  totalChars: number;
+  estimatedTokens: number;
+  sections: ContextSectionReport[];
+  bootstrapFiles: BootstrapFileReport[];
+  memory: ContextMemoryReport;
 }
 
 export interface ToolExecutionUpdate<TDetails = unknown> {

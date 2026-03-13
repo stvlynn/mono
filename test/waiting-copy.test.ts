@@ -15,6 +15,7 @@ function createUiState(): UIState {
     waitingCopy: undefined,
     interrupt: {},
     history: [],
+    historyScrollOffset: 0,
     pendingAssistant: null,
     pendingTools: [],
     dialogs: [],

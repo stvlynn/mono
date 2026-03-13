@@ -97,7 +97,7 @@ export function renderEditorSection(options: EditorSectionOptions): string[] {
   const after = options.inputValue.slice(options.cursor + (options.cursor < options.inputValue.length ? 1 : 0));
   const editorText = `${promptPrefix}${before}${ansi.inverse(current)}${after}`;
   const lines = wrapText(editorText, bodyWidth).map((line) => `  ${line}`);
-  lines.push(`  ${ansi.dim("/help /profile /model /auth /sessions /memory /tree /quit | Ctrl+J newline | Ctrl+L profiles | Ctrl+R sessions")}`);
+  lines.push(`  ${ansi.dim("/help /profile /model /auth /sessions /skills /context /memory /tree /quit | Ctrl+J newline | Ctrl+L profiles | Ctrl+R sessions")}`);
 
   if (options.slashPaletteVisible) {
     lines.push(`  ${ansi.dim("Commands")}`);
@@ -116,6 +116,8 @@ export function renderModal(modal: ModalState, width: number): string[] {
       padRight("  /model     Open model selector", width),
       padRight("  /auth      Show auth setup hint", width),
       padRight("  /sessions  Open session selector", width),
+      padRight("  /skills    Browse project skills", width),
+      padRight("  /context   Inspect prompt context", width),
       padRight("  /memory    Browse or search project memory", width),
       padRight("  /tree      Open session tree", width),
       padRight("  /quit      Exit mono", width),

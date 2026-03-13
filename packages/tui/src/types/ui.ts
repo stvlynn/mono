@@ -77,6 +77,7 @@ export interface ListDialog extends BaseDialog {
     | "model"
     | "profile"
     | "session"
+    | "skill"
     | "memory"
     | "tree"
     | "settings"
@@ -123,6 +124,7 @@ export interface UIState {
   waitingCopy?: UIWaitingCopy;
   interrupt: InterruptState;
   history: UIHistoryItem[];
+  historyScrollOffset: number;
   pendingAssistant: UIPendingAssistant | null;
   pendingTools: UIToolCall[];
   dialogs: DialogInstance[];

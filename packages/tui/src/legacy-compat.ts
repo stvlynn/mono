@@ -3,6 +3,8 @@ export type KeyId =
   | "down"
   | "left"
   | "right"
+  | "pageup"
+  | "pagedown"
   | "enter"
   | "escape"
   | "backspace"
@@ -38,6 +40,10 @@ export function parseKey(data: string): KeyId {
       return "right";
     case "\u001b[D":
       return "left";
+    case "\u001b[5~":
+      return "pageup";
+    case "\u001b[6~":
+      return "pagedown";
     case "\u001b[3~":
       return "delete";
     case "\u001b[H":

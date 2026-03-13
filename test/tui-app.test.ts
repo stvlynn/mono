@@ -47,6 +47,12 @@ describe("tui app bootstrap", () => {
     expect(appContainer).toContain("Use /connect to add one.");
     expect(slashCommands).toContain('fullName: "/connect"');
     expect(slashHook).toContain('case "connect"');
+    expect(slashCommands).toContain('fullName: "/skills"');
+    expect(slashHook).toContain('case "skills"');
+    expect(appContainer).toContain("loadProjectSkills(process.cwd())");
+    expect(slashCommands).toContain('fullName: "/context"');
+    expect(slashHook).toContain('case "context"');
+    expect(appContainer).toContain("agent.inspectContext(");
   });
 
   it("uses config summary rather than synthesized builtin profiles to choose the first connected default", () => {

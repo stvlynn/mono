@@ -4,6 +4,7 @@ import stringWidth from "string-width";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
 import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";
+import { useSettings } from "../contexts/SettingsContext.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
 import { useUIState } from "../contexts/UIStateContext.js";
 import { isBackwardDeleteInput, isForwardDeleteInput } from "../input-keys.js";
@@ -24,7 +25,8 @@ interface InputPromptProps {
 
 export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) {
   const actions = useUIActions();
-  const { running, isExiting } = useUIState();
+  const { settings } = useSettings();
+  const { running, isExiting, historyScrollOffset } = useUIState();
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
 
   useEffect(() => {
@@ -32,6 +34,7 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
   }, [composer.slashMatches.length]);
 
   const slashVisible = !dialogsOpen && composer.slashMatches.length > 0;
+  const inputIsEmpty = composer.buffer.text.trim().length === 0;
   const handleAsyncError = useCallback((error: unknown, fallback: string) => {
     const message = error instanceof Error ? error.message : String(error || fallback);
     actions.setStatus(message && message !== "undefined" ? message : fallback);
@@ -67,10 +70,44 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       composer.moveRight();
       return;
     }
+    if (settings.alternateBuffer && key.wheelUp) {
+      actions.clearInterruptArming();
+      actions.scrollHistoryLineUp();
+      return;
+    }
+    if (settings.alternateBuffer && key.wheelDown) {
+      actions.clearInterruptArming();
+      actions.scrollHistoryLineDown();
+      return;
+    }
+    if (settings.alternateBuffer && (key.pageUp || (key.ctrl && key.name === "u"))) {
+      actions.clearInterruptArming();
+      actions.scrollHistoryPageUp();
+      return;
+    }
+    if (settings.alternateBuffer && (key.pageDown || (key.ctrl && key.name === "d"))) {
+      actions.clearInterruptArming();
+      actions.scrollHistoryPageDown();
+      return;
+    }
+    if (settings.alternateBuffer && key.home && inputIsEmpty) {
+      actions.clearInterruptArming();
+      actions.scrollHistoryToTop();
+      return;
+    }
+    if (settings.alternateBuffer && key.end && inputIsEmpty) {
+      actions.clearInterruptArming();
+      actions.scrollHistoryToBottom();
+      return;
+    }
     if (key.upArrow) {
       actions.clearInterruptArming();
       if (slashVisible) {
         setSelectedSlashIndex((current) => Math.max(0, current - 1));
+        return;
+      }
+      if (settings.alternateBuffer && inputIsEmpty && historyScrollOffset > 0) {
+        actions.scrollHistoryLineUp();
         return;
       }
       composer.historyUp();
@@ -80,6 +117,10 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       actions.clearInterruptArming();
       if (slashVisible) {
         setSelectedSlashIndex((current) => Math.min(Math.max(composer.slashMatches.length - 1, 0), current + 1));
+        return;
+      }
+      if (settings.alternateBuffer && inputIsEmpty && historyScrollOffset > 0) {
+        actions.scrollHistoryLineDown();
         return;
       }
       composer.historyDown();
@@ -153,13 +194,15 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       actions.clearInterruptArming();
       composer.insert(input);
     }
-  }, [actions, composer, dialogsOpen, handleAsyncError, isExiting, selectedSlashIndex, slash, slashVisible]);
+  }, [actions, composer, dialogsOpen, handleAsyncError, historyScrollOffset, inputIsEmpty, isExiting, selectedSlashIndex, settings.alternateBuffer, slash, slashVisible]);
 
   useForegroundKeypress(handleKeypress, !dialogsOpen || isExiting);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={running ? "cyan" : "gray"} paddingX={1}>
-      <Text dimColor>{isExiting ? "exiting" : running ? "task running" : "ready"} · Enter submit · Ctrl+J newline · Ctrl+C interrupt · double Ctrl+C exit</Text>
+      <Text dimColor>
+        {isExiting ? "exiting" : running ? "task running" : "ready"} · Enter submit · {settings.alternateBuffer ? "PgUp/PgDn browse" : "terminal scrollback enabled"} · Ctrl+J newline · Ctrl+C interrupt · double Ctrl+C exit
+      </Text>
       <Text>{renderBuffer(composer.buffer.text, composer.buffer.cursor)}</Text>
       <Text dimColor>width:{stringWidth(composer.buffer.text)}</Text>
       {slashVisible ? (

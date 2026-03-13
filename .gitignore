@@ -1,8 +1,14 @@
 node_modules
 dist
 packages/*/dist
+*.tsbuildinfo
 .xagent
 *.log
 
 .agents
 .mono
+!.mono/
+.mono/*
+!.mono/CONTEXT.md
+!.mono/IDENTITY.md
+!.mono/MEMORY.md

@@ -60,6 +60,26 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
     executeMode: "open-selector"
   },
   {
+    name: "skills",
+    fullName: "/skills",
+    description: "Browse project-local skills",
+    usage: "/skills [query]",
+    aliases: ["skill"],
+    kind: "selector",
+    source: "builtin",
+    executeMode: "open-selector"
+  },
+  {
+    name: "context",
+    fullName: "/context",
+    description: "Inspect the current prompt context",
+    usage: "/context",
+    aliases: ["ctx"],
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
     name: "memory",
     fullName: "/memory",
     description: "Browse or search project memory",

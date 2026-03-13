@@ -16,6 +16,18 @@ describe("raw keypress compatibility", () => {
     expect(parseKey("\u001b[3~")).toBe("delete");
   });
 
+  it("parses page up and page down escape sequences", () => {
+    expect(parseKey("\u001b[5~")).toBe("pageup");
+    expect(parseKey("\u001b[6~")).toBe("pagedown");
+    expect(createRawKey("\u001b[5~")).toMatchObject({ pageUp: true, name: "pageup" });
+    expect(createRawKey("\u001b[6~")).toMatchObject({ pageDown: true, name: "pagedown" });
+  });
+
+  it("parses sgr mouse wheel escape sequences", () => {
+    expect(createRawKey("\u001b[<64;10;5M")).toMatchObject({ wheelUp: true, name: "wheelup" });
+    expect(createRawKey("\u001b[<65;10;5M")).toMatchObject({ wheelDown: true, name: "wheeldown" });
+  });
+
   it("does not treat backspace or delete as insertable text", () => {
     expect(isInsertableInput("\u007f", {
       name: "backspace",
@@ -27,6 +39,10 @@ describe("raw keypress compatibility", () => {
       downArrow: false,
       leftArrow: false,
       rightArrow: false,
+      pageUp: false,
+      pageDown: false,
+      wheelUp: false,
+      wheelDown: false,
       return: false,
       escape: false,
       backspace: true,
@@ -45,6 +61,10 @@ describe("raw keypress compatibility", () => {
       downArrow: false,
       leftArrow: false,
       rightArrow: false,
+      pageUp: false,
+      pageDown: false,
+      wheelUp: false,
+      wheelDown: false,
       return: false,
       escape: false,
       backspace: false,
@@ -92,11 +112,17 @@ describe("raw keypress compatibility", () => {
 
     expect(setRawMode).toHaveBeenCalledWith(true);
     expect(stdin.on).toHaveBeenCalledWith("data", expect.any(Function));
+    if (process.stdout.isTTY) {
+      expect(writeSpy).toHaveBeenCalledWith("\u001b[?1000h\u001b[?1006h");
+    }
 
     cleanup();
 
     expect(stdin.removeListener).toHaveBeenCalledWith("data", expect.any(Function));
     expect(setRawMode).toHaveBeenLastCalledWith(false);
+    if (process.stdout.isTTY) {
+      expect(writeSpy).toHaveBeenCalledWith("\u001b[?1000l\u001b[?1006l");
+    }
     expect(writeSpy).not.toHaveBeenCalledWith("\u001b[?1049l");
   });
 

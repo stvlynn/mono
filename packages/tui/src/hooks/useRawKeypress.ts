@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useStdin } from "ink";
 import { parseKey } from "../legacy-compat.js";
-import { restoreRawMode } from "../terminal-cleanup.js";
+import { restoreRawMode, setMouseTracking } from "../terminal-cleanup.js";
 
 export interface RawKey {
   name: string;
@@ -13,6 +13,10 @@ export interface RawKey {
   downArrow: boolean;
   leftArrow: boolean;
   rightArrow: boolean;
+  pageUp: boolean;
+  pageDown: boolean;
+  wheelUp: boolean;
+  wheelDown: boolean;
   return: boolean;
   escape: boolean;
   backspace: boolean;
@@ -32,6 +36,10 @@ function createEmptyRawKey(sequence: string): RawKey {
     downArrow: false,
     leftArrow: false,
     rightArrow: false,
+    pageUp: false,
+    pageDown: false,
+    wheelUp: false,
+    wheelDown: false,
     return: false,
     escape: false,
     backspace: false,
@@ -42,6 +50,11 @@ function createEmptyRawKey(sequence: string): RawKey {
 }
 
 function resolveModifiedSpecialKey(sequence: string): RawKey | null {
+  const mouseWheel = parseMouseWheel(sequence);
+  if (mouseWheel) {
+    return mouseWheel;
+  }
+
   if (sequence === "\n") {
     return {
       ...createEmptyRawKey(sequence),
@@ -56,6 +69,32 @@ function resolveModifiedSpecialKey(sequence: string): RawKey | null {
       name: "return",
       shift: true,
       return: true
+    };
+  }
+
+  return null;
+}
+
+function parseMouseWheel(sequence: string): RawKey | null {
+  const match = /^\u001b\[<(\d+);(\d+);(\d+)([mM])$/u.exec(sequence);
+  if (!match) {
+    return null;
+  }
+
+  const button = Number(match[1]);
+  if (button === 64) {
+    return {
+      ...createEmptyRawKey(sequence),
+      name: "wheelup",
+      wheelUp: true
+    };
+  }
+
+  if (button === 65) {
+    return {
+      ...createEmptyRawKey(sequence),
+      name: "wheeldown",
+      wheelDown: true
     };
   }
 
@@ -90,6 +129,14 @@ export function createRawKey(sequence: string): RawKey {
     case "right":
       key.name = "right";
       key.rightArrow = true;
+      return key;
+    case "pageup":
+      key.name = "pageup";
+      key.pageUp = true;
+      return key;
+    case "pagedown":
+      key.name = "pagedown";
+      key.pageDown = true;
       return key;
     case "enter":
       key.name = "return";
@@ -138,8 +185,12 @@ export function bindRawKeypressListener(options: {
   stdin: NodeJS.ReadStream;
   setRawMode?: ((isEnabled: boolean) => void) | undefined;
   onKeypress: (input: string, key: RawKey) => void;
+  enableMouseTracking?: boolean;
 }): () => void {
   options.setRawMode?.(true);
+  if (options.enableMouseTracking) {
+    setMouseTracking(true);
+  }
 
   const emitSequence = (sequence: string) => {
     options.onKeypress(sequence, createRawKey(sequence));
@@ -155,6 +206,9 @@ export function bindRawKeypressListener(options: {
   options.stdin.on("data", handleData);
   return () => {
     options.stdin.removeListener("data", handleData);
+    if (options.enableMouseTracking) {
+      setMouseTracking(false);
+    }
     restoreRawMode(options.setRawMode);
   };
 }
@@ -210,7 +264,7 @@ function readEscapeSequence(input: string, startIndex: number): { sequence: stri
 
 export function useRawKeypress(
   onKeypress: (input: string, key: RawKey) => void,
-  options: { isActive: boolean }
+  options: { isActive: boolean; enableMouseTracking?: boolean }
 ): void {
   const { stdin, setRawMode } = useStdin();
 
@@ -223,9 +277,10 @@ export function useRawKeypress(
     return bindRawKeypressListener({
       stdin,
       setRawMode,
-      onKeypress
+      onKeypress,
+      enableMouseTracking: options.enableMouseTracking
     });
-  }, [onKeypress, options.isActive, setRawMode, stdin]);
+  }, [onKeypress, options.enableMouseTracking, options.isActive, setRawMode, stdin]);
 }
 
 export function isInsertableInput(input: string, key: RawKey): boolean {
@@ -238,6 +293,10 @@ export function isInsertableInput(input: string, key: RawKey): boolean {
     key.downArrow ||
     key.leftArrow ||
     key.rightArrow ||
+    key.pageUp ||
+    key.pageDown ||
+    key.wheelUp ||
+    key.wheelDown ||
     key.return ||
     key.escape ||
     key.backspace ||

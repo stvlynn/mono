@@ -37,6 +37,12 @@ export function useSlashCommands(actions: UIActions) {
       case "sessions":
         await actions.openSessionDialog(parsed.argsText || undefined);
         return true;
+      case "skills":
+        await actions.openSkillsDialog(parsed.argsText || undefined);
+        return true;
+      case "context":
+        await actions.openContextDialog();
+        return true;
       case "memory":
         await actions.openMemoryDialog(parsed.argsText || undefined);
         return true;
