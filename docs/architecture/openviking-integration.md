@@ -2,46 +2,54 @@
 
 ## Purpose
 
-Describe how `mono` integrates with `volcengine/OpenViking` today, what remains local, and why the integration is explicitly scoped as an evaluation path rather than a full backend migration.
+Describe how `mono` integrates with `volcengine/OpenViking` today, what remains local, and why the runtime uses a hybrid architecture instead of an OpenViking-authoritative design.
 
 ## Current Position
 
-`mono` does **not** replace its local memory, task, or session stores with OpenViking.
+`mono` uses OpenViking as a hybrid retrieval and shadow-sync layer.
 
-The current integration is limited to:
+OpenViking currently supports:
 
-- optional retrieval evaluation against OpenViking
-- optional shadow export of local execution-memory records into OpenViking session extraction
+- retrieval for execution-memory experiments and runtime recall
+- retrieval augmentation for structured memory packages
+- shadow export of execution-memory records
+- shadow export of structured-memory snapshots
 
-The default runtime remains local.
-
-## Why This Is Evaluation-Only
-
-OpenViking is not a drop-in replacement for `mono`'s current memory subsystem.
-
-It is closer to a context database and retrieval runtime than a filesystem-backed execution-memory store.
-
-`mono` currently depends on three distinct local state systems:
-
-1. append-only execution memory
-2. mutable task todo memory for `write_todos`
-3. session JSONL plus branch-head replay
-
-OpenViking aligns best with the first area and least with the second and third.
+The default runtime truth remains local.
 
 ## What Stays Local
 
-The following remain the source of truth in `mono`:
+The following remain authoritative in `mono`:
 
 - `FolderMemoryStore` for execution memory
-- `FolderTaskTodoStore` for task-scoped mutable todo state
+- `FolderTaskTodoStore` for mutable task todo state
 - `SessionManager` for session append, replay, and branch switching
+- `FolderStructuredMemoryStore` for self / other / project / episodic memory
 
 This means:
 
 - task planning still uses local task todo memory
 - session replay still uses local JSONL files
 - branch checkout semantics are unchanged by OpenViking
+- structured memory mutations always happen locally first
+
+## What OpenViking Owns
+
+OpenViking acts as a retrieval and indexing layer for local canonical data.
+
+In practice it is used for:
+
+- semantic search over externalized memory snapshots
+- cross-type retrieval augmentation
+- extraction-driven shadow sync validation
+- future migration experiments that still preserve local truth
+
+It does **not** own:
+
+- authoritative session history
+- branch semantics
+- mutable task todo state
+- canonical structured-memory writes
 
 ## Implemented Adapter Layer
 
@@ -54,40 +62,66 @@ Key pieces:
 - `OpenVikingHttpClient`
 - `OpenVikingRetrievalProvider`
 - `OpenVikingShadowExporter`
+- `OpenVikingStructuredShadowExporter`
 
-These map OpenViking's HTTP API into `mono` evaluation flows without changing the local runtime truth.
+These map OpenViking's HTTP API into `mono` retrieval and shadow-sync flows without changing local truth.
 
-## Retrieval Flow
+## Retrieval Flows
 
-When OpenViking retrieval is used for comparison:
+### Execution-memory retrieval
 
-1. `mono memory compare <query>` resolves the current local session and config
-2. local recall still runs through the normal execution-memory path
-3. the OpenViking provider optionally syncs recent user and assistant messages into an ephemeral OpenViking session
-4. OpenViking search results are normalized into `RetrievedContext`
-5. the result is rendered through a dedicated `memory/openviking_context_block` prompt template
+When `mono.memory.retrievalBackend=openviking`, the runtime delegates execution-memory recall to `OpenVikingRetrievalProvider`.
 
-This lets maintainers compare local and OpenViking retrieval quality without changing the task runtime.
+That provider may:
 
-## Shadow Export Flow
+1. derive a query from the current turn
+2. optionally sync recent user and assistant messages into an ephemeral OpenViking session
+3. run OpenViking search
+4. normalize results into `RetrievedContext`
+5. render `memory/openviking_context_block`
 
-`mono memory export-openviking [id]` exports a local execution-memory record by:
+### Structured-memory augmentation
+
+When structured memory builds a `StructuredMemoryPackage`, the runtime may also ask OpenViking for external items and merge them into the package.
+
+Important detail:
+
+- OpenViking external items are treated as augmentation candidates
+- the final prompt still uses the local package renderer
+- local summaries and evidence stay primary
+
+## Shadow Sync Flows
+
+### Execution-memory shadow export
+
+`OpenVikingShadowExporter` exports a `MemoryRecord` by:
 
 1. creating an ephemeral OpenViking session
 2. writing the record input as a user message
-3. writing the record output plus compacted steps as an assistant message
-4. calling OpenViking session extraction
+3. writing the record output, compacted steps, and trace summary as an assistant message
+4. calling session extraction
 5. deleting the ephemeral session
 
-This is intentionally one-way and non-authoritative.
+### Structured-memory shadow export
 
-## Current Config Surface
+`OpenVikingStructuredShadowExporter` exports a structured-memory snapshot by:
+
+1. creating an ephemeral OpenViking session
+2. writing a stable snapshot id as the user message
+3. writing the structured summary and detail lines as the assistant message
+4. calling session extraction
+5. deleting the ephemeral session
+
+This is one-way and non-authoritative.
+
+## Config Surface
 
 OpenViking-related config lives under:
 
 - `mono.memory.retrievalBackend`
 - `mono.memory.fallbackToLocalOnFailure`
 - `mono.memory.openViking`
+- `mono.memory.v2.openVikingSync`
 
 The nested `openViking` block currently supports:
 
@@ -100,31 +134,36 @@ The nested `openViking` block currently supports:
 - `useSessionSearch`
 - `shadowExport`
 
-## Constraints
+`mono.memory.v2.openVikingSync` currently supports:
 
-The current integration deliberately does not do any of the following:
+- `off`
+- `async`
 
-- replace local execution-memory append as the default write path
-- replace task todo memory
-- replace session replay or branch ownership
-- inject OpenViking retrieval into the agent's normal auto-recall path by default
+## Failure Modes and Fallbacks
 
-Those would all expand the scope from evaluation into runtime migration.
+The runtime is designed to degrade gracefully.
 
-## Risks
+If OpenViking retrieval fails:
 
-Main risks if this integration were expanded too aggressively:
+- execution memory can fall back to local retrieval when `fallbackToLocalOnFailure=true`
+- structured memory still builds a local package without external items
 
-- task todo semantic loss
-- session/branch replay mismatch
-- runtime stack complexity from a Python-based dependency
-- harder debugging compared to local JSON/JSONL inspection
+If OpenViking shadow sync fails:
 
-## Recommended Next Step
+- local memory writes still succeed
+- shadow sync is treated as best-effort
 
-If OpenViking is evaluated further, keep the rollout staged:
+## Why OpenViking Is Not Authoritative
 
-1. shadow retrieval comparison
-2. optional retrieval backend experiments
-3. shadow export for execution-memory records
-4. no migration of task todo memory or session ownership unless the product direction changes materially
+OpenViking is not a drop-in replacement for the current runtime because `mono` depends on local semantics that OpenViking does not model directly:
+
+- branch replay
+- overwrite-style task todo state
+- local-first structured memory mutation
+- deterministic prompt assembly from local summaries and evidence
+
+## Related Documents
+
+- [`memory-system.md`](./memory-system.md)
+- [`structured-memory-v2.md`](./structured-memory-v2.md)
+- [`../decisions/0006-memory-v2-hybrid-openviking.md`](../decisions/0006-memory-v2-hybrid-openviking.md)

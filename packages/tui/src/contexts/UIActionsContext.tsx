@@ -1,7 +1,11 @@
 import { createContext, useContext } from "react";
+import type { TaskInput } from "@mono/shared";
 
 export interface UIActions {
-  submitPrompt: (prompt: string) => Promise<void>;
+  submitPrompt: (input: string | TaskInput) => Promise<void>;
+  attachImage: (path: string) => Promise<void>;
+  detachImage: (target?: string) => void;
+  showAttachments: () => void;
   handleInterrupt: () => Promise<void>;
   clearInterruptArming: () => void;
   openHelp: () => void;
@@ -15,6 +19,8 @@ export interface UIActions {
   openContextDialog: () => Promise<void>;
   openMemoryDialog: (initialFilter?: string) => Promise<void>;
   openTreeDialog: (initialFilter?: string) => Promise<void>;
+  runPairCommand: (argsText: string) => Promise<void>;
+  runTelegramCommand: (argsText: string) => Promise<void>;
   closeTopDialog: () => void;
   dismissFatalError: () => void;
   requestShutdown: () => Promise<void>;

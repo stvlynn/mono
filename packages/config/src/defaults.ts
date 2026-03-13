@@ -1,13 +1,16 @@
 import type {
+  MonoChannelsConfig,
   MonoContextConfig,
   MonoGlobalConfig,
   MonoMemoryConfig,
+  MonoMemoryV2Config,
   MonoOpenVikingConfig,
   MonoProfileConfig,
   MonoSeekDbConfig,
   UnifiedModel
 } from "@mono/shared";
 import type { CatalogTransportCandidate, CatalogTransportKind } from "./catalog-types.js";
+import { createDefaultChannelsConfig } from "./channels.js";
 
 const PROVIDER_ALIASES: Record<string, string> = {
   gemini: "google",
@@ -24,7 +27,8 @@ const BUILTIN_MODELS: UnifiedModel[] = [
     apiKeyEnv: "OPENAI_API_KEY",
     providerFactory: "openai",
     supportsTools: true,
-    supportsReasoning: true
+    supportsReasoning: true,
+    supportsAttachments: true
   },
   {
     provider: "openrouter",
@@ -35,7 +39,8 @@ const BUILTIN_MODELS: UnifiedModel[] = [
     apiKeyEnv: "OPENROUTER_API_KEY",
     providerFactory: "openrouter",
     supportsTools: true,
-    supportsReasoning: true
+    supportsReasoning: true,
+    supportsAttachments: true
   },
   {
     provider: "xai",
@@ -46,7 +51,8 @@ const BUILTIN_MODELS: UnifiedModel[] = [
     apiKeyEnv: "XAI_API_KEY",
     providerFactory: "custom",
     supportsTools: true,
-    supportsReasoning: true
+    supportsReasoning: true,
+    supportsAttachments: true
   },
   {
     provider: "moonshotai",
@@ -57,7 +63,8 @@ const BUILTIN_MODELS: UnifiedModel[] = [
     apiKeyEnv: "MOONSHOT_API_KEY",
     providerFactory: "custom",
     supportsTools: true,
-    supportsReasoning: true
+    supportsReasoning: true,
+    supportsAttachments: true
   },
   {
     provider: "anthropic",
@@ -68,7 +75,8 @@ const BUILTIN_MODELS: UnifiedModel[] = [
     apiKeyEnv: "ANTHROPIC_API_KEY",
     providerFactory: "anthropic",
     supportsTools: true,
-    supportsReasoning: true
+    supportsReasoning: true,
+    supportsAttachments: true
   }
 ];
 
@@ -118,10 +126,15 @@ export function createDefaultGlobalConfig(): MonoGlobalConfig {
         theme: "system"
       },
       memory: createDefaultMemoryConfig(),
-      context: createDefaultContextConfig()
+      context: createDefaultContextConfig(),
+      channels: createDefaultChannelsConfig()
     },
     projects: {}
   };
+}
+
+export function createDefaultChannels(): MonoChannelsConfig {
+  return createDefaultChannelsConfig();
 }
 
 export function resolveCatalogTransport(
@@ -342,7 +355,30 @@ export function createDefaultMemoryConfig(): MonoMemoryConfig {
     retrievalBackend: "local",
     fallbackToLocalOnFailure: true,
     openViking: createDefaultOpenVikingConfig(),
-    seekDb: createDefaultSeekDbConfig()
+    seekDb: createDefaultSeekDbConfig(),
+    v2: createDefaultMemoryV2Config()
+  };
+}
+
+export function createDefaultMemoryV2Config(): MonoMemoryV2Config {
+  return {
+    enabled: true,
+    storePath: ".mono/memory-v2",
+    primaryEntityId: "primary-user",
+    injectIntoContext: true,
+    enableInference: true,
+    maxEvidencePerPackage: 3,
+    openVikingSync: "async",
+    decay: {
+      explicitPreferenceDays: 120,
+      inferredTraitDays: 45,
+      relationshipSignalDays: 30
+    },
+    promotion: {
+      minPatternOccurrences: 2,
+      stablePreferenceOccurrences: 2,
+      stableInferenceDays: 7
+    }
   };
 }
 
@@ -430,6 +466,7 @@ export function modelToProfile(model: UnifiedModel): MonoProfileConfig {
     apiKeyEnv: model.apiKeyEnv,
     supportsTools: model.supportsTools,
     supportsReasoning: model.supportsReasoning,
+    supportsAttachments: model.supportsAttachments,
     contextWindow: model.contextWindow
   };
 }
@@ -455,7 +492,8 @@ export function createFallbackModel(provider: string, modelId: string, baseURLOv
     apiKeyEnv: resolveApiKeyEnv(canonicalProvider),
     providerFactory: runtimeCandidate?.providerFactory ?? resolveProviderFactory(canonicalProvider),
     supportsTools: true,
-    supportsReasoning: true
+    supportsReasoning: true,
+    supportsAttachments: true
   };
 }
 
@@ -471,6 +509,7 @@ export function profileToModel(profile: MonoProfileConfig): UnifiedModel {
     providerFactory: profile.providerFactory,
     supportsTools: profile.supportsTools,
     supportsReasoning: profile.supportsReasoning,
+    supportsAttachments: profile.supportsAttachments,
     contextWindow: profile.contextWindow
   };
 }

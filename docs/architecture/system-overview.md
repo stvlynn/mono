@@ -18,13 +18,15 @@ This is the high-level architecture document. For subsystem specifics, use the l
 A typical interactive request follows this path:
 
 1. `packages/cli` constructs an `Agent`
-2. `packages/tui` mounts the Ink app and bridges runtime events into UI state
-3. `Agent.initialize()` resolves config, profile, model, session, and memory stores
-4. `Agent.runTask()` creates task state and runs task/turn orchestration
-5. `packages/llm` sends prompts through an `xsai` adapter
-6. tool calls are executed through the batch scheduler
-7. tool results, task state, memory updates, and session entries are appended
-8. runtime events flow back into the TUI or print-mode output
+2. `packages/tui` mounts the Ink app, manages pending image attachments, and bridges runtime events into UI state
+3. local or platform entrypoints normalize text and images into a shared `TaskInput`
+4. `Agent.initialize()` resolves config, profile, model, session, and memory stores
+5. `Agent.runTask()` creates task state and runs task/turn orchestration
+6. the agent assembles prompt context from task state, execution memory, structured memory, skills, docs, and workspace files
+7. `packages/llm` sends prompts through an `xsai` adapter
+8. tool calls are executed through the batch scheduler
+9. tool results, task state, memory updates, and session entries are appended
+10. runtime events flow back into the TUI or print-mode output
 
 ## Main State Stores
 
@@ -35,12 +37,16 @@ Stored under `~/.mono`:
 - `config.json`
 - `local/secrets.json`
 - `sessions/`
+- `skills/`
 
 ### Project-level state
 
 Stored under the current workspace:
 
 - `.mono/memories/` for execution memory and task todo records
+- `.mono/memory-v2/` for structured self / other / project / episodic memory
+- `.mono/skills/` for workspace-local skill overrides and additions
+- `.mono/CONTEXT.md`, `.mono/IDENTITY.md`, and `.mono/MEMORY.md` for workspace bootstrap context
 
 ## Main Components
 
@@ -51,8 +57,9 @@ Stored under the current workspace:
 Responsibilities:
 
 - command parsing
-- auth/config/memory command handling
+- auth/config/context/memory command handling
 - choosing interactive mode vs `--print`
+- loading native image attachments for one-shot and interactive runs
 
 ### TUI
 
@@ -62,6 +69,7 @@ Responsibilities:
 
 - Ink UI composition
 - input handling
+- pending image attachment management
 - dialog lifecycle
 - mapping runtime events into visible state
 
@@ -71,10 +79,12 @@ Responsibilities:
 
 Responsibilities:
 
-- initialize config/model/session/memory
+- initialize config, model, session, and memory stores
+- assemble prompt context and context reports
 - run tasks and turns
-- inject memory and task context
+- validate image-bearing inputs against model capability
 - verify and summarize
+- write execution memory and structured memory
 - emit runtime events
 
 ### LLM layer
@@ -86,6 +96,7 @@ Responsibilities:
 - resolve models
 - route to the correct adapter
 - normalize provider interactions
+- convert shared image parts into provider-specific multimodal request blocks
 - schedule tool calls through the tool batch scheduler
 
 ### Tools
@@ -97,6 +108,7 @@ Responsibilities:
 - filesystem and shell tools
 - permission wrapping
 - execution metadata such as serial vs readonly parallel mode
+- image file reads when the agent uses the `read` tool on workspace images
 
 ### Session store
 
@@ -115,9 +127,10 @@ Responsibilities:
 
 Responsibilities:
 
-- execution memory records
-- retrieval and compaction helpers
+- execution-memory records and retrieval helpers
 - mutable task todo records
+- structured memory storage, promotion, retrieval planning, and rendering
+- plain-text summaries for image-bearing user turns inside memory traces and task summaries
 
 ### OpenViking adapter
 
@@ -125,9 +138,10 @@ Responsibilities:
 
 Responsibilities:
 
-- optional retrieval evaluation against OpenViking
-- shadow export of local execution-memory records
-- normalization of OpenViking HTTP responses into `mono`'s retrieval shape
+- retrieval integration for execution memory
+- external retrieval augmentation for structured memory
+- shadow export of execution-memory records
+- shadow export of structured-memory snapshots
 
 ### SeekDB adapter
 
@@ -150,7 +164,8 @@ Agent
    |
    +--> Config
    +--> Session
-   +--> Memory
+   +--> Execution Memory
+   +--> Structured Memory
    +--> Prompts
    |
    v
@@ -168,7 +183,7 @@ Tools
 - prompt templates are centralized in `@mono/prompts`
 - shared cross-package types live in `@mono/shared`
 - runtime events are the main bridge from agent/runtime into the TUI
-- config resolution influences model selection, memory settings, and session paths
+- config resolution influences model selection, memory settings, prompt context, and OpenViking sync behavior
 
 ## Related Documents
 
@@ -177,5 +192,9 @@ Tools
 - [`task-runtime.md`](./task-runtime.md)
 - [`tool-execution.md`](./tool-execution.md)
 - [`event-model.md`](./event-model.md)
+- [`image-input.md`](./image-input.md)
+- [`memory-system.md`](./memory-system.md)
+- [`skills-system.md`](./skills-system.md)
+- [`structured-memory-v2.md`](./structured-memory-v2.md)
 - [`openviking-integration.md`](./openviking-integration.md)
 - [`seekdb-integration.md`](./seekdb-integration.md)

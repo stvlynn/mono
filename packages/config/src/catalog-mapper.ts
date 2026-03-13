@@ -46,6 +46,7 @@ export function catalogModelToUnifiedModel(
     providerFactory: selectedCandidate.providerFactory,
     supportsTools: model.toolCall,
     supportsReasoning: model.reasoning,
+    supportsAttachments: model.attachment,
     contextWindow: model.contextWindow
   } satisfies UnifiedModel;
 

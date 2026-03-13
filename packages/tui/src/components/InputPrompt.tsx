@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { useCallback, useEffect, useState } from "react";
 import stringWidth from "string-width";
+import type { InputImageAttachment } from "@mono/shared";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
 import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";
@@ -21,9 +22,15 @@ interface InputPromptProps {
   composer: ReturnTypeUseComposerState;
   slash: ReturnTypeUseSlashCommands;
   dialogsOpen: boolean;
+  attachments: InputImageAttachment[];
 }
 
-export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) {
+function formatAttachmentLine(attachment: InputImageAttachment, index: number): string {
+  const label = attachment.sourceLabel ?? `image-${index + 1}`;
+  return `${index + 1}. ${label} (${attachment.mimeType})`;
+}
+
+export function InputPrompt({ composer, slash, dialogsOpen, attachments }: InputPromptProps) {
   const actions = useUIActions();
   const { settings } = useSettings();
   const { running, isExiting, historyScrollOffset } = useUIState();
@@ -133,7 +140,7 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
     }
     if (key.return) {
       const prompt = composer.buffer.text.trim();
-      if (!prompt) {
+      if (!prompt && attachments.length === 0) {
         return;
       }
 
@@ -160,8 +167,10 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
             composer.clear();
             return;
           }
-          composer.recordHistory(composer.buffer.text);
           const raw = composer.buffer.text;
+          if (raw.trim()) {
+            composer.recordHistory(raw);
+          }
           composer.clear();
           await actions.submitPrompt(raw);
         } catch (error) {
@@ -201,8 +210,17 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={running ? "cyan" : "gray"} paddingX={1}>
       <Text dimColor>
-        {isExiting ? "exiting" : running ? "task running" : "ready"} · Enter submit · {settings.alternateBuffer ? "PgUp/PgDn browse" : "terminal scrollback enabled"} · Ctrl+J newline · Ctrl+C interrupt · double Ctrl+C exit
+        {isExiting ? "exiting" : running ? "task running" : "ready"} · Enter submit · {settings.alternateBuffer ? "PgUp/PgDn browse" : "terminal scrollback enabled"} · Ctrl+J newline · /attach path/to.png · Ctrl+C interrupt · double Ctrl+C exit
       </Text>
+      {attachments.length > 0 ? (
+        <Box flexDirection="column">
+          <Text color="yellow">attachments: {attachments.length}</Text>
+          {attachments.slice(0, 3).map((attachment, index) => (
+            <Text key={`${attachment.sourceLabel ?? attachment.mimeType}-${index}`}>{formatAttachmentLine(attachment, index)}</Text>
+          ))}
+          {attachments.length > 3 ? <Text dimColor>...and {attachments.length - 3} more</Text> : null}
+        </Box>
+      ) : null}
       <Text>{renderBuffer(composer.buffer.text, composer.buffer.cursor)}</Text>
       <Text dimColor>width:{stringWidth(composer.buffer.text)}</Text>
       {slashVisible ? (

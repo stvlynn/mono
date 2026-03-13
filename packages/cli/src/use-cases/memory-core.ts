@@ -8,6 +8,10 @@ export interface MemoryStatusResult {
   retrievalBackend: string;
   fallbackToLocal: boolean;
   storePath: string;
+  v2Enabled: boolean;
+  v2StorePath: string;
+  v2PrimaryEntityId: string;
+  v2OpenVikingSync: string;
   openViking: string;
   seekDb: string;
   records: number;
@@ -31,6 +35,10 @@ export async function runMemoryStatus(): Promise<MemoryStatusResult> {
     retrievalBackend: config.memory.retrievalBackend,
     fallbackToLocal: config.memory.fallbackToLocalOnFailure,
     storePath: agent.getMemoryStorePath(),
+    v2Enabled: config.memory.v2.enabled,
+    v2StorePath: agent.getStructuredMemoryStorePath(),
+    v2PrimaryEntityId: config.memory.v2.primaryEntityId,
+    v2OpenVikingSync: config.memory.v2.openVikingSync,
     openViking: config.memory.openViking.enabled ? config.memory.openViking.url ?? "<missing url>" : "disabled",
     seekDb: config.memory.seekDb.enabled
       ? `${config.memory.seekDb.mode} (${config.memory.seekDb.database ?? config.memory.seekDb.embeddedPath ?? "<missing target>"})`

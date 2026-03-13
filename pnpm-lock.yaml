@@ -74,6 +74,9 @@ importers:
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
+      '@mono/telegram-control':
+        specifier: workspace:*
+        version: link:../telegram-control
       '@mono/tools':
         specifier: workspace:*
         version: link:../tools
@@ -89,6 +92,15 @@ importers:
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/im-platform:
+    dependencies:
+      '@mono/shared':
+        specifier: workspace:*
+        version: link:../shared
+      marked:
+        specifier: ^15.0.12
+        version: 15.0.12
 
   packages/llm:
     dependencies:
@@ -157,6 +169,18 @@ importers:
 
   packages/shared: {}
 
+  packages/telegram-control:
+    dependencies:
+      '@mono/config':
+        specifier: workspace:*
+        version: link:../config
+      '@mono/im-platform':
+        specifier: workspace:*
+        version: link:../im-platform
+      '@mono/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/tools:
     dependencies:
       '@mono/shared':
@@ -186,6 +210,9 @@ importers:
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
+      '@mono/telegram-control':
+        specifier: workspace:*
+        version: link:../telegram-control
       ink:
         specifier: ^5.1.0
         version: 5.2.1(@types/react@18.3.28)(react@18.3.1)

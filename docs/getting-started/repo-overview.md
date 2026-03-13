@@ -38,6 +38,8 @@ This is a package-level overview, not a runtime walkthrough.
 - `packages/shared`: shared types, JSON/file helpers, path helpers, runtime primitives
 - `packages/config`: `~/.mono` layout, config read/write, config resolution, migration logic
 - `packages/prompts`: Nunjucks templates for LLM-facing prompts and UI waiting-copy text
+- `packages/im-platform`: outbound IM dispatch abstraction and Telegram send adapter
+- `packages/telegram-control`: Telegram pairing runtime, allowlist store, and operator control commands
 
 ### User-facing packages
 

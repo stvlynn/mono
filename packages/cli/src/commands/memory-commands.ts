@@ -33,6 +33,10 @@ export function registerMemoryCommands(program: Command): void {
       output.write(`Retrieval backend: ${payload.retrievalBackend}\n`);
       output.write(`Fallback to local: ${payload.fallbackToLocal}\n`);
       output.write(`Store path: ${payload.storePath}\n`);
+      output.write(`V2 enabled: ${payload.v2Enabled}\n`);
+      output.write(`V2 store path: ${payload.v2StorePath}\n`);
+      output.write(`V2 primary entity: ${payload.v2PrimaryEntityId}\n`);
+      output.write(`V2 OpenViking sync: ${payload.v2OpenVikingSync}\n`);
       output.write(`OpenViking: ${payload.openViking}\n`);
       output.write(`SeekDB: ${payload.seekDb}\n`);
       output.write(`Records: ${payload.records}\n`);

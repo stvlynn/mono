@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { toolOrUserContentToPlainText } from "./input.js";
 import type { ConversationMessage, ToolResultPart } from "./types.js";
 
 export function createId(): string {
@@ -10,13 +11,7 @@ export function now(): number {
 }
 
 export function contentToPlainText(content: string | ToolResultPart[]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => (part.type === "text" ? part.text : `[image:${part.mimeType}]`))
-    .join("\n");
+  return toolOrUserContentToPlainText(content);
 }
 
 export function getLastAssistantText(message: ConversationMessage): string {

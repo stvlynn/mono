@@ -16,6 +16,21 @@ export interface ImagePart {
   data: string;
 }
 
+export type UserInputOrigin = "local_cli" | "local_tui" | "remote_platform";
+
+export interface InputImageAttachment {
+  kind: "image";
+  mimeType: string;
+  data: string;
+  sourceLabel?: string;
+  origin?: UserInputOrigin;
+}
+
+export interface TaskInput {
+  text?: string;
+  attachments?: InputImageAttachment[];
+}
+
 export interface ToolCallPart {
   type: "tool-call";
   id: string;
@@ -75,6 +90,7 @@ export interface UnifiedModel {
   providerFactory?: "openai" | "anthropic" | "openrouter" | "google" | "custom";
   supportsTools: boolean;
   supportsReasoning: boolean;
+  supportsAttachments?: boolean;
   contextWindow?: number;
 }
 
@@ -90,6 +106,7 @@ export interface MonoProfileConfig {
   apiKeyEnv?: string;
   supportsTools: boolean;
   supportsReasoning: boolean;
+  supportsAttachments?: boolean;
   contextWindow?: number;
 }
 
@@ -102,6 +119,29 @@ export interface MonoProjectConfig {
   apiKeyEnv?: string;
   memory?: Partial<MonoMemoryConfig>;
   context?: Partial<MonoContextConfig>;
+}
+
+export type MonoTelegramDmPolicy = "pairing" | "allowlist" | "open" | "disabled";
+
+export interface MonoTelegramGroupConfig {
+  allow?: boolean;
+  requireMention?: boolean;
+  allowFrom?: string[];
+}
+
+export interface MonoTelegramConfig {
+  enabled: boolean;
+  botToken?: string;
+  botId?: string;
+  allowFrom: string[];
+  groupAllowFrom: string[];
+  groups: Record<string, MonoTelegramGroupConfig>;
+  dmPolicy: MonoTelegramDmPolicy;
+  pollingTimeoutSeconds: number;
+}
+
+export interface MonoChannelsConfig {
+  telegram: MonoTelegramConfig;
 }
 
 export interface MonoMemoryConfig {
@@ -118,6 +158,7 @@ export interface MonoMemoryConfig {
   fallbackToLocalOnFailure: boolean;
   openViking: MonoOpenVikingConfig;
   seekDb: MonoSeekDbConfig;
+  v2: MonoMemoryV2Config;
 }
 
 export interface MonoOpenVikingConfig {
@@ -145,6 +186,201 @@ export interface MonoSeekDbConfig {
   pythonModule?: string;
   embeddedPath?: string;
   mirrorSessionsOnly: boolean;
+}
+
+export interface MonoMemoryV2DecayConfig {
+  explicitPreferenceDays: number;
+  inferredTraitDays: number;
+  relationshipSignalDays: number;
+}
+
+export interface MonoMemoryV2PromotionConfig {
+  minPatternOccurrences: number;
+  stablePreferenceOccurrences: number;
+  stableInferenceDays: number;
+}
+
+export interface MonoMemoryV2Config {
+  enabled: boolean;
+  storePath: string;
+  primaryEntityId: string;
+  injectIntoContext: boolean;
+  enableInference: boolean;
+  maxEvidencePerPackage: number;
+  openVikingSync: "off" | "async";
+  decay: MonoMemoryV2DecayConfig;
+  promotion: MonoMemoryV2PromotionConfig;
+}
+
+export type StructuredMemoryScope = "self" | "other" | "project" | "episodic" | "external";
+export type MemoryEvidenceType =
+  | "explicit_preference"
+  | "implicit_preference"
+  | "interaction_pattern"
+  | "relationship_signal"
+  | "self_reflection"
+  | "project_fact";
+export type InferenceDecayPolicy = "slow" | "medium" | "fast";
+export type InferenceStatus = "hypothesis" | "reviewed" | "stable";
+
+export interface MemoryEvidenceRecord {
+  id: string;
+  entityId: string;
+  createdAt: number;
+  type: MemoryEvidenceType;
+  content: string;
+  summary: string;
+  weight: number;
+  sessionId?: string;
+  eventId?: string;
+  tags: string[];
+}
+
+export interface SelfIdentityRecord {
+  updatedAt: number;
+  mission?: string;
+  nonNegotiablePrinciples: string[];
+  defaultSocialStance?: string;
+  defaultReasoningStance?: string;
+  boundaries: string[];
+  forbiddenIdentityClaims: string[];
+  styleContract: string[];
+  summary?: string;
+}
+
+export interface SelfValueRecord {
+  name: string;
+  priority: number;
+  description?: string;
+  behavioralRules: string[];
+}
+
+export interface SelfTraitRecord {
+  name: string;
+  baseline: number;
+  varianceByContext: Record<string, number>;
+  evidenceCount: number;
+  lastReviewed: number;
+}
+
+export interface SelfRoleRecord {
+  role: string;
+  triggers: string[];
+  obligations: string[];
+  styleShift: Record<string, string | number | boolean>;
+}
+
+export interface SelfGuideConflictRule {
+  when: string;
+  prefer: string;
+  unless?: string;
+}
+
+export interface SelfGuidesRecord {
+  updatedAt: number;
+  actualSelf: {
+    strengths: string[];
+    limitations: string[];
+  };
+  idealSelf: {
+    aspirations: string[];
+  };
+  oughtSelf: {
+    duties: string[];
+  };
+  conflictRules: SelfGuideConflictRule[];
+}
+
+export interface NarrativeUpdateRecord {
+  id: string;
+  createdAt: number;
+  eventId?: string;
+  interpretation: string;
+  carryForwardImplication: string;
+  confidenceDelta?: number;
+}
+
+export interface OtherEntityProfileRecord {
+  entityId: string;
+  updatedAt: number;
+  knownFacts: Record<string, string>;
+  communicationNotes: string[];
+}
+
+export interface OtherPreferenceRecord {
+  key: string;
+  summary: string;
+  polarity: "prefer" | "avoid";
+  confidence: number;
+  evidenceIds: string[];
+  updatedAt: number;
+}
+
+export interface OtherPreferencesRecord {
+  entityId: string;
+  updatedAt: number;
+  items: OtherPreferenceRecord[];
+}
+
+export interface OtherInferenceRecord {
+  id: string;
+  trait: string;
+  summary: string;
+  confidence: number;
+  basedOn: string[];
+  decayPolicy: InferenceDecayPolicy;
+  status: InferenceStatus;
+  updatedAt: number;
+}
+
+export interface OtherRelationshipStateRecord {
+  entityId: string;
+  updatedAt: number;
+  trustLevel: number;
+  collaborationMode: string;
+  recentTensions: string[];
+}
+
+export interface ProjectMemoryProfileRecord {
+  updatedAt: number;
+  workspaceSummary: string;
+  durableFacts: string[];
+  collaborationNorms: string[];
+}
+
+export interface EpisodicEventRecord {
+  id: string;
+  createdAt: number;
+  entityId: string;
+  sessionId?: string;
+  branchHeadId?: string;
+  queryText: string;
+  summary: string;
+  messages: string[];
+  salience: number;
+  extractedPreferenceKeys: string[];
+}
+
+export interface StructuredMemoryPackageEntry {
+  scope: StructuredMemoryScope;
+  title: string;
+  summary: string;
+  confidence?: number;
+  evidenceIds?: string[];
+  sourceIds?: string[];
+}
+
+export interface StructuredMemoryPackage {
+  activeEntityId: string;
+  generatedAt: number;
+  entries: StructuredMemoryPackageEntry[];
+  evidence: MemoryEvidenceRecord[];
+  externalItems: Array<{
+    id: string;
+    title: string;
+    text: string;
+    score?: number;
+  }>;
 }
 
 export type ContextTruncationWarningMode = "off" | "once" | "always";
@@ -257,6 +493,7 @@ export interface MonoGlobalConfig {
     };
     memory?: Partial<MonoMemoryConfig>;
     context?: Partial<MonoContextConfig>;
+    channels?: Partial<MonoChannelsConfig>;
   };
   projects?: Record<string, MonoProjectConfig>;
 }
@@ -271,6 +508,7 @@ export interface ResolvedMonoConfig {
   model: UnifiedModel;
   memory: MonoMemoryConfig;
   context: MonoContextConfig;
+  channels: MonoChannelsConfig;
   apiKey?: string;
   source: {
     profile:

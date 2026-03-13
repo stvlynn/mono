@@ -36,3 +36,17 @@ export interface OpenVikingShadowExportResult {
   extracted: unknown;
   recordId: MemoryRecord["id"];
 }
+
+export interface OpenVikingStructuredMemoryRecord {
+  id: string;
+  scope: "self" | "other" | "project" | "episodic";
+  title: string;
+  summary: string;
+  detailLines?: string[];
+}
+
+export interface OpenVikingStructuredShadowExportResult {
+  sessionId: string;
+  extracted: unknown;
+  recordId: string;
+}

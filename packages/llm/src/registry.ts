@@ -59,6 +59,7 @@ export class ModelRegistry {
         providerFactory: profile.profile.providerFactory,
         supportsTools: profile.profile.supportsTools,
         supportsReasoning: profile.profile.supportsReasoning,
+        supportsAttachments: profile.profile.supportsAttachments,
         contextWindow: profile.profile.contextWindow
       } satisfies UnifiedModel;
       this.profiles.set(profile.name, model);

@@ -154,6 +154,52 @@ describe("Agent", () => {
     delete process.env.MONO_CONFIG_DIR;
   });
 
+  it("injects structured memory context into inspectContext after persisting a turn", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    await (agent as unknown as { persistTaskMemory: (context: unknown) => Promise<void> }).persistTaskMemory({
+      runId: 1,
+      controller: new AbortController(),
+      session: (agent as unknown as { state: { session: unknown } }).state.session,
+      model: (agent as unknown as { state: { model: unknown } }).state.model,
+      userMessage: {
+        role: "user",
+        content: "请直接一点，不要自作主张地总结。",
+        timestamp: Date.now()
+      },
+      taskMessages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "stop",
+          timestamp: Date.now(),
+          content: [{ type: "text", text: "后续会更直接，不再擅自总结。" }]
+        }
+      ],
+      recallAccumulator: {
+        rootIds: new Set(),
+        compactedIds: new Set(),
+        rawPairIds: new Set(),
+        selectedIds: new Set()
+      }
+    });
+
+    const inspected = await agent.inspectContext("直接回答");
+
+    expect(inspected.systemPrompt).toContain("<StructuredMemoryContext");
+    expect(inspected.systemPrompt).toContain("prefers_directness");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
   it("clears stale currentTask when switching to a session without task state", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
     const cwd = join(rootDir, "workspace");

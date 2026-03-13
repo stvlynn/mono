@@ -23,6 +23,8 @@
       "@mono/llm": ["packages/llm/src/index.ts"],
       "@mono/tools": ["packages/tools/src/index.ts"],
       "@mono/session": ["packages/session/src/index.ts"],
+      "@mono/im-platform": ["packages/im-platform/src/index.ts"],
+      "@mono/telegram-control": ["packages/telegram-control/src/index.ts"],
       "@mono/agent-core": ["packages/agent-core/src/index.ts"],
       "@mono/tui": ["packages/tui/src/index.ts"],
       "@mono/cli": ["packages/cli/src/index.ts"]

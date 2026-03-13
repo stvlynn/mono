@@ -49,7 +49,7 @@ describe("tui app bootstrap", () => {
     expect(slashHook).toContain('case "connect"');
     expect(slashCommands).toContain('fullName: "/skills"');
     expect(slashHook).toContain('case "skills"');
-    expect(appContainer).toContain("loadProjectSkills(process.cwd())");
+    expect(appContainer).toContain("loadAvailableSkills(process.cwd())");
     expect(slashCommands).toContain('fullName: "/context"');
     expect(slashHook).toContain('case "context"');
     expect(appContainer).toContain("agent.inspectContext(");

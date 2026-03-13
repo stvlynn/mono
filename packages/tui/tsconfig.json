@@ -10,6 +10,7 @@
     { "path": "../shared" },
     { "path": "../config" },
     { "path": "../memory" },
+    { "path": "../telegram-control" },
     { "path": "../pi-tui" },
     { "path": "../agent-core" }
   ],

@@ -1,4 +1,5 @@
 import { Box } from "ink";
+import type { InputImageAttachment } from "@mono/shared";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
 import { TodoTray } from "./TodoTray.js";
@@ -12,16 +13,17 @@ interface ComposerProps {
   composer: ReturnTypeUseComposerState;
   slash: ReturnTypeUseSlashCommands;
   dialogsOpen: boolean;
+  attachments: InputImageAttachment[];
 }
 
-export function Composer({ composer, slash, dialogsOpen }: ComposerProps) {
+export function Composer({ composer, slash, dialogsOpen, attachments }: ComposerProps) {
   return (
     <Box flexDirection="column" marginTop={1}>
       <TodoTray />
       <StatusDisplay />
       <ContextUsageDisplay />
       <ToastDisplay />
-      <InputPrompt composer={composer} slash={slash} dialogsOpen={dialogsOpen} />
+      <InputPrompt composer={composer} slash={slash} dialogsOpen={dialogsOpen} attachments={attachments} />
       <Footer />
     </Box>
   );

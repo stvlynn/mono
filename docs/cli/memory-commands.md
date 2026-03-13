@@ -19,9 +19,43 @@
 
 These commands expose project memory state for inspection and debugging.
 
-## OpenViking Evaluation Commands
+## `mono memory status`
 
-The OpenViking commands are evaluation-oriented, not default runtime behavior.
+`mono memory status` now reports both memory lanes:
+
+- execution-memory status
+- `memory-v2` status
+
+The command includes:
+
+- execution-memory enabled / auto-inject flags
+- retrieval backend and fallback behavior
+- execution-memory store path
+- `memory.v2.enabled`
+- `memory.v2.storePath`
+- `memory.v2.primaryEntityId`
+- `memory.v2.openVikingSync`
+- OpenViking and SeekDB integration status
+
+Important limitation:
+
+- this command reports `memory-v2` configuration only
+- it does not yet enumerate or edit structured-memory records
+
+## Execution-Memory Commands
+
+The following commands still operate on execution memory (`MemoryRecord`) rather than structured memory:
+
+- `mono memory list`
+- `mono memory search`
+- `mono memory show`
+- `mono memory recall`
+
+These are still useful because execution memory remains part of the runtime prompt path.
+
+## OpenViking Commands
+
+The OpenViking commands work as adapter and migration diagnostics, not as canonical-memory editors.
 
 ### `mono memory compare <query>`
 
@@ -40,21 +74,11 @@ Runs a health check against the configured OpenViking endpoint.
 
 Shadow-exports a local execution-memory record into OpenViking session extraction.
 
-If no id is given, the latest local execution-memory record is used.
+If no id is given, the latest local memory record is used.
 
-## Important Boundary
+## SeekDB Commands
 
-These commands do not migrate the live runtime to OpenViking.
-
-They are for:
-
-- retrieval comparison
-- adapter validation
-- migration feasibility work
-
-## SeekDB Evaluation Commands
-
-The SeekDB commands are also evaluation-oriented and do not replace the local runtime by default.
+The SeekDB commands remain evaluation-oriented and do not replace local runtime truth.
 
 ### `mono memory seekdb-status`
 
@@ -79,5 +103,11 @@ Mirrors one local JSONL session stream into SeekDB for evaluation.
 
 Important boundary:
 
-- local JSONL remains the source of truth
+- local JSONL remains authoritative
 - mirrored sessions are for search and migration analysis
+
+## Related Documents
+
+- [`commands.md`](./commands.md)
+- [`../architecture/memory-system.md`](../architecture/memory-system.md)
+- [`../architecture/openviking-integration.md`](../architecture/openviking-integration.md)

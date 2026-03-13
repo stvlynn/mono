@@ -186,8 +186,23 @@ export function compressConversation(messages: ConversationMessage[], model: Uni
     };
   }
 
-  const preserved = messages.slice(-preserveRecentMessages);
-  const replaced = messages.slice(0, -preserveRecentMessages);
+  const desiredSplitIndex = messages.length - preserveRecentMessages;
+  const splitIndex = findSafeCompressionSplitIndex(messages, desiredSplitIndex);
+  if (splitIndex <= 0) {
+    return {
+      messages,
+      result: {
+        summary: "",
+        preservedRecentMessages: messages.length,
+        replacedMessageCount: 0,
+        tokenEstimateBefore: estimateTokenCount(messages),
+        tokenEstimateAfter: estimateTokenCount(messages)
+      }
+    };
+  }
+
+  const preserved = messages.slice(splitIndex);
+  const replaced = messages.slice(0, splitIndex);
   const summary = summarizeMessages(replaced);
   const syntheticSummary: AssistantMessage = {
     role: "assistant",
@@ -202,12 +217,43 @@ export function compressConversation(messages: ConversationMessage[], model: Uni
     messages: compressedMessages,
     result: {
       summary,
-      preservedRecentMessages: preserveRecentMessages,
+      preservedRecentMessages: preserved.length,
       replacedMessageCount: replaced.length,
       tokenEstimateBefore: estimateTokenCount(messages),
       tokenEstimateAfter: estimateTokenCount(compressedMessages)
     }
   };
+}
+
+function findSafeCompressionSplitIndex(messages: ConversationMessage[], desiredSplitIndex: number): number {
+  let splitIndex = Math.max(0, desiredSplitIndex);
+
+  while (splitIndex > 0 && suffixHasDanglingToolResults(messages, splitIndex)) {
+    splitIndex -= 1;
+  }
+
+  return splitIndex;
+}
+
+function suffixHasDanglingToolResults(messages: ConversationMessage[], startIndex: number): boolean {
+  const availableToolCallIds = new Set<string>();
+
+  for (const message of messages.slice(startIndex)) {
+    if (message.role === "assistant") {
+      for (const part of message.content) {
+        if (part.type === "tool-call") {
+          availableToolCallIds.add(part.id);
+        }
+      }
+      continue;
+    }
+
+    if (message.role === "tool" && !availableToolCallIds.has(message.toolCallId)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function buildTaskContext(task: TaskState, todoRecord?: TaskTodoRecord | null): string {

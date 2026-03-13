@@ -1,4 +1,5 @@
 import type { MemoryDetailedTrace, MemoryRecord } from "@mono/shared";
+import type { OpenVikingStructuredMemoryRecord } from "./types.js";
 
 export function buildAssistantShadowText(record: MemoryRecord): string {
   const compacted = record.compacted.map((line) => `- ${line}`).join("\n");
@@ -10,6 +11,18 @@ export function buildAssistantShadowText(record: MemoryRecord): string {
   ]
     .filter(Boolean)
     .join("\n")
+    .trim();
+}
+
+export function buildStructuredAssistantShadowText(record: OpenVikingStructuredMemoryRecord): string {
+  const details = (record.detailLines ?? []).filter(Boolean).map((line) => `- ${line}`).join("\n");
+  return [
+    `[${record.scope}] ${record.title}`.trim(),
+    record.summary.trim(),
+    details ? `Details:\n${details}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n")
     .trim();
 }
 

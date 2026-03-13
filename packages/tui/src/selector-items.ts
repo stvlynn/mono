@@ -46,7 +46,10 @@ export function createSkillItems(skills: ProjectSkill[]): SelectOptionItem[] {
   return skills.map((skill) => ({
     value: skill.name,
     label: skill.name,
-    description: skill.description || truncateToWidth(skill.content.split("\n").find((line) => line.trim()) ?? "", 72)
+    description: [
+      skill.origin,
+      skill.description || truncateToWidth(skill.content.split("\n").find((line) => line.trim()) ?? "", 72)
+    ].filter(Boolean).join(" · ")
   }));
 }
 

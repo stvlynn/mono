@@ -2,11 +2,26 @@
 
 ## Purpose
 
-Describe the two memory lanes used by `mono`.
+Describe the memory layers used by `mono`, which stores are authoritative, and how memory is injected into agent runs.
 
-## Two Distinct Memory Lanes
+## Memory Layers
 
-### Execution memory
+`mono` now has four distinct memory lanes:
+
+### Session memory
+
+Session memory is the append-only JSONL transcript managed by `SessionManager`.
+
+It stores:
+
+- user, assistant, and tool messages
+- branch heads and replay pointers
+- task pointers and task summaries
+- session compression entries
+
+Session memory remains the source of truth for replay, branch checkout, and recent conversation state.
+
+### Execution memory (`memory v1`)
 
 Execution memory is append-only and stores reusable traces of prior work.
 
@@ -15,7 +30,9 @@ It includes:
 - user input
 - compacted steps
 - final output
-- detailed tool/assistant trace
+- detailed tool and assistant trace
+
+This lane is still the source of truth for the existing `MemoryRecord` retrieval path.
 
 ### Task todo memory
 
@@ -23,65 +40,90 @@ Task todo memory is mutable and task-scoped.
 
 It stores the current `TaskTodoRecord` for a task and is overwritten in place when `write_todos` updates the plan.
 
-## Default Location
+### Structured memory (`memory v2`)
+
+Structured memory is the new local-first long-term memory layer used for:
+
+- self identity and behavior constraints
+- per-entity profiles, preferences, and inference records
+- project-level durable facts
+- episodic event capture for later promotion
+
+Structured memory is stored locally and is the canonical source for these higher-level records.
+
+## Authoritative Stores
+
+The current authoritative sources are:
+
+- `SessionManager` for session replay and branching
+- `FolderTaskTodoStore` for mutable task state
+- `FolderMemoryStore` for execution-memory records
+- `FolderStructuredMemoryStore` for self / other / project / episodic memory
+
+`OpenViking` is not an authoritative store. It acts as a hybrid retrieval and async shadow-sync layer on top of local structured and execution memory.
+
+## Default Locations
 
 Project-local memory defaults to:
 
-- `.mono/memories/`
+- `.mono/memories/` for execution memory and task todo records
+- `.mono/memory-v2/` for structured memory
 
-Task todo records live under the task store path derived from that memory root.
+Structured memory is further split into:
 
-## Recall Flow
+- `self/`
+- `others/`
+- `project/`
+- `episodic/`
 
-During task execution, the agent may:
+## Write Path
 
-1. select memory roots
-2. expand compacted/raw pair ids
-3. render a memory context block into the prompt
-4. persist a new execution memory record after the turn
+During a normal task turn, the runtime may:
 
-## Todo Record Flow
+1. append user and assistant messages to the session store
+2. compact and persist a `MemoryRecord` into execution memory
+3. capture an episodic structured-memory event
+4. extract evidence-backed preference candidates from the user turn
+5. consolidate preferences and lightweight inferences into per-entity structured memory
+6. update relationship state and profile notes
+7. optionally mirror execution and structured memory into OpenViking
 
-1. task starts with a shell state
-2. model may call `write_todos`
-3. task todo store upserts the record for that task
-4. next turn reads the latest todo record
-5. TUI task tray reflects the current todo record
+Execution memory and structured memory are intentionally separate:
 
-## Current Limits
+- execution memory optimizes trace reuse
+- structured memory optimizes stable behavioral and relationship context
 
-- execution memory and task memory are filesystem-based, not vector-backed
-- todo records are overwritten, not versioned
+## Read and Injection Path
 
-## SeekDB Evaluation Path
+Prompt assembly now combines three memory inputs:
 
-`mono` now also has a SeekDB evaluation path for:
+1. execution-memory recall from the configured retrieval backend
+2. structured memory packages built locally for the active entity
+3. optional OpenViking retrieval items merged into the structured package
 
-- execution-memory persistence experiments
-- retrieval experiments
-- mirrored session search
+The agent does not inject raw structured-memory files or raw OpenViking results directly into the prompt. It injects rendered context blocks after local planning and summarization.
 
-What it does not do today:
+## Current Operational Boundary
 
-- replace local execution memory as the default write path
-- replace task todo memory
-- replace local session replay
+What this system does today:
 
-See [`seekdb-integration.md`](./seekdb-integration.md) for the boundary and risk analysis.
-
-## OpenViking Evaluation Path
-
-`mono` now has an optional OpenViking adapter, but it is intentionally scoped as an evaluation layer.
-
-What it can do today:
-
-- compare local retrieval with OpenViking retrieval
-- shadow-export local execution-memory records into OpenViking extraction
+- keeps session replay local
+- keeps task todo state local
+- stores structured memory locally
+- augments prompt context with structured summaries and evidence
+- uses OpenViking for retrieval augmentation and async shadow sync
 
 What it does not do today:
 
-- replace local execution memory as the default source of truth
-- replace task todo memory
-- replace session replay or branch semantics
+- migrate session truth into OpenViking
+- migrate task todo truth into OpenViking
+- expose dedicated CLI subcommands for editing structured-memory records
+- run a separate background consolidation daemon
 
-See [`openviking-integration.md`](./openviking-integration.md) for the boundary and risk analysis.
+## Related Documents
+
+- [`structured-memory-v2.md`](./structured-memory-v2.md)
+- [`openviking-integration.md`](./openviking-integration.md)
+- [`prompt-system.md`](./prompt-system.md)
+- [`../api/memory.md`](../api/memory.md)
+- [`../api/structured-memory.md`](../api/structured-memory.md)

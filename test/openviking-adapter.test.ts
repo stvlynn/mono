@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConversationMessage, MemoryRecord } from "../packages/shared/src/index.js";
 import { OpenVikingHttpClient } from "../packages/openviking-adapter/src/client.js";
 import { OpenVikingRetrievalProvider } from "../packages/openviking-adapter/src/retrieval.js";
-import { OpenVikingShadowExporter } from "../packages/openviking-adapter/src/shadow-export.js";
+import { OpenVikingShadowExporter, OpenVikingStructuredShadowExporter } from "../packages/openviking-adapter/src/shadow-export.js";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -291,5 +291,74 @@ describe("OpenViking shadow exporter", () => {
     expect((postedBodies[1] as { content: string }).content).toContain("Tool result read:");
     expect(calls.some((call) => call.url.endsWith("/api/v1/sessions/ov-shadow-1/extract"))).toBe(true);
     expect(calls.some((call) => call.url.endsWith("/api/v1/sessions/ov-shadow-1") && call.method === "DELETE")).toBe(true);
+  });
+
+  it("exports a structured memory snapshot through session extraction", async () => {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      const url = String(_url);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method: init?.method, body });
+
+      if (url.endsWith("/api/v1/sessions")) {
+        return jsonResponse({
+          status: "ok",
+          result: {
+            session_id: "ov-structured-1"
+          }
+        });
+      }
+
+      if (url.endsWith("/api/v1/sessions/ov-structured-1/messages")) {
+        return jsonResponse({ status: "ok" });
+      }
+
+      if (url.endsWith("/api/v1/sessions/ov-structured-1/extract")) {
+        return jsonResponse({
+          status: "ok",
+          result: {
+            extracted: 1
+          }
+        });
+      }
+
+      if (url.endsWith("/api/v1/sessions/ov-structured-1") && init?.method === "DELETE") {
+        return jsonResponse({ status: "ok" });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const exporter = new OpenVikingStructuredShadowExporter({
+      config: {
+        enabled: true,
+        url: "https://openviking.example",
+        apiKeyEnv: "OPENVIKING_API_KEY",
+        agentId: "mono",
+        timeoutMs: 30_000,
+        targetUri: "viking://agent/memories/",
+        useSessionSearch: true,
+        shadowExport: true
+      },
+      fetchImpl
+    });
+
+    await exporter.exportRecord({
+      id: "pref-primary-user-prefers_directness",
+      scope: "other",
+      title: "prefers_directness",
+      summary: "User prefers direct, low-friction responses.",
+      detailLines: ["confidence=0.94", "evidence=ev-1"]
+    });
+
+    const bodies = calls
+      .filter((call) => call.url.endsWith("/api/v1/sessions/ov-structured-1/messages"))
+      .map((call) => call.body);
+    expect(bodies[0]).toEqual({
+      role: "user",
+      content: "Structured memory snapshot: pref-primary-user-prefers_directness"
+    });
+    expect(String((bodies[1] as { content: string }).content)).toContain("[other] prefers_directness");
+    expect(calls.some((call) => call.url.endsWith("/api/v1/sessions/ov-structured-1/extract"))).toBe(true);
   });
 });

@@ -22,6 +22,12 @@ export function useSlashCommands(actions: UIActions) {
       case "help":
         actions.openHelp();
         return true;
+      case "pair":
+        await actions.runPairCommand(parsed.argsText || "");
+        return true;
+      case "telegram":
+        await actions.runTelegramCommand(parsed.argsText || "");
+        return true;
       case "profile":
         await actions.openProfileDialog(parsed.argsText || undefined);
         return true;
@@ -48,6 +54,19 @@ export function useSlashCommands(actions: UIActions) {
         return true;
       case "tree":
         await actions.openTreeDialog(parsed.argsText || undefined);
+        return true;
+      case "attach":
+        if (!parsed.argsText) {
+          actions.setStatus("Usage: /attach <path>");
+          return true;
+        }
+        await actions.attachImage(parsed.argsText);
+        return true;
+      case "detach":
+        actions.detachImage(parsed.argsText || undefined);
+        return true;
+      case "attachments":
+        actions.showAttachments();
         return true;
       case "quit":
         await actions.requestShutdown();

@@ -1,4 +1,4 @@
-import { MonoConfigStore } from "@mono/config";
+import { MonoConfigStore, validateChannelsConfig } from "@mono/config";
 import type { MonoGlobalConfig, MonoProjectConfig } from "@mono/shared";
 import { getPathValue, parseConfigValue, setPathValue } from "../config-utils.js";
 
@@ -34,6 +34,7 @@ export async function runConfigSet(key: string, value: string): Promise<{ key: s
   const store = new MonoConfigStore(process.cwd());
   const config = (await store.readGlobalConfig()) ?? await store.initGlobalConfig();
   setPathValue(config as unknown as Record<string, unknown>, key, parseConfigValue(value));
+  validateChannelsConfig(config as MonoGlobalConfig);
   await store.writeGlobalConfig(config as MonoGlobalConfig);
   return { key };
 }

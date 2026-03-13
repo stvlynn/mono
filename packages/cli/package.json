@@ -16,6 +16,7 @@
     "@mono/openviking-adapter": "workspace:*",
     "@mono/session": "workspace:*",
     "@mono/shared": "workspace:*",
+    "@mono/telegram-control": "workspace:*",
     "@mono/tools": "workspace:*",
     "@mono/tui": "workspace:*",
     "commander": "^13.1.0"

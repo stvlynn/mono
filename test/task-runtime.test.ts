@@ -200,6 +200,110 @@ describe("task runtime", () => {
     );
   });
 
+  it("keeps tool call and tool result history aligned when compressing", () => {
+    const messages: ConversationMessage[] = [
+      { role: "user", content: "user-0", timestamp: 0 },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 1,
+        content: [{ type: "text", text: "assistant-1" }]
+      },
+      { role: "user", content: "user-2", timestamp: 2 },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 3,
+        content: [{ type: "text", text: "assistant-3" }]
+      },
+      { role: "user", content: "user-4", timestamp: 4 },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "tool_use",
+        timestamp: 5,
+        content: [
+          {
+            type: "tool-call",
+            id: "tool-1",
+            name: "read",
+            arguments: { path: "README.md" }
+          }
+        ]
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-1",
+        toolName: "read",
+        input: { path: "README.md" },
+        inputSignature: "read:{\"path\":\"README.md\"}",
+        content: "file contents",
+        isError: false,
+        timestamp: 6
+      },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 7,
+        content: [{ type: "text", text: "assistant-7" }]
+      },
+      { role: "user", content: "user-8", timestamp: 8 },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 9,
+        content: [{ type: "text", text: "assistant-9" }]
+      },
+      { role: "user", content: "user-10", timestamp: 10 },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 11,
+        content: [{ type: "text", text: "assistant-11" }]
+      },
+      { role: "user", content: "user-12", timestamp: 12 },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 13,
+        content: [{ type: "text", text: "assistant-13" }]
+      }
+    ];
+
+    const compressed = compressConversation(messages, model, 8);
+
+    expect(compressed.result.preservedRecentMessages).toBe(9);
+    expect(compressed.result.replacedMessageCount).toBe(5);
+    expect(compressed.messages[1]).toMatchObject({
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          id: "tool-1",
+          name: "read"
+        }
+      ]
+    });
+    expect(compressed.messages[2]).toMatchObject({
+      role: "tool",
+      toolCallId: "tool-1",
+      toolName: "read"
+    });
+  });
+
   it("builds a deterministic task summary from assistant output", () => {
     const task = advanceTaskPhase(
       createTaskState({

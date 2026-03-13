@@ -1,4 +1,5 @@
 import type {
+  MonoChannelsConfig,
   MonoContextConfig,
   MonoGlobalConfig,
   MonoConfigSummary,
@@ -11,11 +12,13 @@ import type {
 } from "@mono/shared";
 import { readJsonFile } from "@mono/shared";
 import { catalogModelToUnifiedModel, getCatalogModel, getCatalogProvider, getModelsCatalog, listCatalogModels } from "./catalog.js";
+import { resolveChannelsConfig, validateTelegramConfig } from "./channels.js";
 import {
   canonicalizeProviderId,
   createDefaultContextConfig,
   createDefaultGlobalConfig,
   createDefaultMemoryConfig,
+  createDefaultMemoryV2Config,
   createDefaultSeekDbConfig,
   createFallbackModel,
   getBuiltinModels,
@@ -147,12 +150,19 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
       globalConfig: effectiveGlobal,
       projectConfig
     }),
+    channels: resolveResolvedChannelsConfig(effectiveGlobal),
     apiKey,
     source: {
       profile: source,
       apiKey: apiKeySource
     }
   };
+}
+
+function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChannelsConfig {
+  const resolved = resolveChannelsConfig(globalConfig);
+  validateTelegramConfig(resolved.telegram);
+  return resolved;
 }
 
 export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoConfigSummary> {
@@ -364,6 +374,7 @@ async function normalizeProfileWithCatalog(
     apiKeyEnv: profile.apiKeyEnv ?? normalized.apiKeyEnv,
     supportsTools: normalized.supportsTools,
     supportsReasoning: normalized.supportsReasoning,
+    supportsAttachments: normalized.supportsAttachments,
     contextWindow: normalized.contextWindow
   };
 }
@@ -507,6 +518,24 @@ function resolveMemoryConfig(options: {
         ?? projectMemory.seekDb?.embeddedPath
         ?? globalMemory.seekDb?.embeddedPath
         ?? defaults.seekDb.embeddedPath
+    },
+    v2: {
+      ...createDefaultMemoryV2Config(),
+      ...defaults.v2,
+      ...globalMemory.v2,
+      ...projectMemory.v2,
+      decay: {
+        ...createDefaultMemoryV2Config().decay,
+        ...defaults.v2.decay,
+        ...globalMemory.v2?.decay,
+        ...projectMemory.v2?.decay
+      },
+      promotion: {
+        ...createDefaultMemoryV2Config().promotion,
+        ...defaults.v2.promotion,
+        ...globalMemory.v2?.promotion,
+        ...projectMemory.v2?.promotion
+      }
     }
   };
 }

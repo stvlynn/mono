@@ -11,6 +11,8 @@
     { "path": "./packages/llm" },
     { "path": "./packages/tools" },
     { "path": "./packages/session" },
+    { "path": "./packages/im-platform" },
+    { "path": "./packages/telegram-control" },
     { "path": "./packages/agent-core" },
     { "path": "./packages/tui" },
     { "path": "./packages/cli" }

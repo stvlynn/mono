@@ -2,6 +2,7 @@ import {
   type ApprovalRequest,
   type ContextAssemblyReport,
   type ConversationMessage,
+  hasTaskInputContent,
   type MemoryRecallPlan,
   type MemoryRecord,
   type MemorySearchMatch,
@@ -10,28 +11,41 @@ import {
   type RuntimeEvent,
   type SessionNodeSummary,
   type SessionSummary,
+  supportsImageAttachments,
+  type TaskInput,
   type TaskResult,
   type TaskState,
   type TaskTodoRecord,
+  taskInputToPlainText,
+  taskInputToUserMessage,
   type ThinkingLevel,
   type UnifiedModel,
+  userContentToPlainText,
   type UserMessage,
   type VerificationMode
 } from "@mono/shared";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelRegistry, runConversation, type LoadedProfile } from "@mono/llm";
 import {
   DeterministicMemoryCompactor,
   FolderMemoryStore,
+  FolderStructuredMemoryStore,
   FolderTaskTodoStore,
   LocalMemoryRetrievalProvider,
+  StructuredMemoryRetrievalPlanner,
   buildMemoryRecordMetadata,
   createMemoryId,
+  persistStructuredMemoryTurn,
   renderMemoryContext,
+  renderStructuredMemoryPackage,
+  resolvePrimaryEntityId,
   selectMemoryIdsByKeyword,
   selectMemoryIdsBySession,
   type MemoryRetrievalProvider,
+  type RetrievedContextItem,
   type RetrievedContext,
   type MemoryStore
 } from "@mono/memory";
@@ -50,7 +64,7 @@ import {
   type RecallAccumulator
 } from "./memory-runtime.js";
 import { assemblePromptContext } from "./context-assembly.js";
-import { loadProjectSkills, renderProjectSkillsContext } from "./skills.js";
+import { loadAvailableSkills, renderSkillsContext } from "./skills.js";
 import {
   advanceTaskPhase,
   applyVerificationMode,
@@ -101,6 +115,7 @@ export interface AgentState {
   configSummary: MonoConfigSummary;
   memoryStore: MemoryStore;
   taskTodoStore: FolderTaskTodoStore;
+  structuredMemoryStore: FolderStructuredMemoryStore;
   sessionLoadedAt: number;
   latestContextReport?: ContextAssemblyReport;
   currentTask?: TaskState;
@@ -116,6 +131,9 @@ async function loadOpenVikingAdapter(): Promise<{
   OpenVikingRetrievalProvider: new (...args: any[]) => MemoryRetrievalProvider;
   OpenVikingShadowExporter: new (...args: any[]) => {
     exportRecord(record: MemoryRecord): Promise<unknown>;
+  };
+  OpenVikingStructuredShadowExporter: new (...args: any[]) => {
+    exportRecord(record: { id: string; scope: string; title: string; summary: string; detailLines?: string[] }): Promise<unknown>;
   };
 }> {
   const distUrl = new URL("../../openviking-adapter/dist/index.js", import.meta.url);
@@ -219,7 +237,9 @@ export class Agent {
     await session.initialize(model);
     const messages = this.continueSession ? await session.loadMessages() : [];
     const memoryStore = new FolderMemoryStore(resolveMemoryStorePath(this.cwd, config.memory.storePath));
+    const structuredMemoryStore = new FolderStructuredMemoryStore(resolveMemoryStorePath(this.cwd, config.memory.v2.storePath));
     const taskTodoStore = new FolderTaskTodoStore(resolveTaskTodoStorePath(this.cwd, config.memory.storePath));
+    await structuredMemoryStore.ensureLayout();
     this.state = {
       cwd: this.cwd,
       profileName: config.profileName,
@@ -230,9 +250,11 @@ export class Agent {
       config,
       configSummary,
       memoryStore,
+      structuredMemoryStore,
       taskTodoStore,
       sessionLoadedAt: Date.now()
     };
+    await this.seedStructuredMemoryStore();
     this.state.currentTask = await this.loadCurrentTaskForHead(session);
     this.state.currentTodoRecord = this.state.currentTask?.currentTodoMemoryId
       ? (await taskTodoStore.get(this.state.currentTask.currentTodoMemoryId)) ?? undefined
@@ -249,20 +271,30 @@ export class Agent {
     this.requestApprovalHandler = handler;
   }
 
-  async prompt(input: string): Promise<ConversationMessage[]> {
+  async prompt(input: string | TaskInput): Promise<ConversationMessage[]> {
     const result = await this.runTask(input);
     return result.messages;
   }
 
-  async runTask(input: string): Promise<TaskResult> {
+  async runTask(input: string | TaskInput): Promise<TaskResult> {
     await this.initialize();
-    const runContext = this.createTaskRunContext(input);
+    if (!hasTaskInputContent(input)) {
+      throw new Error("Task input requires text or at least one image attachment");
+    }
+
+    const normalizedInput = typeof input === "string" ? { text: input } satisfies TaskInput : input;
+    if ((normalizedInput.attachments?.length ?? 0) > 0 && !supportsImageAttachments(this.state.model)) {
+      throw new Error(`Model ${this.state.model.provider}/${this.state.model.modelId} does not support image attachments`);
+    }
+
+    const runContext = this.createTaskRunContext(normalizedInput);
+    const goal = taskInputToPlainText(normalizedInput);
 
     try {
       await this.beginTaskRun(runContext);
 
       let task = createTaskState({
-        goal: input,
+        goal,
         model: runContext.model,
         existingMessages: this.state.messages,
         maxTurns: this.maxTurns
@@ -410,7 +442,10 @@ export class Agent {
     this.state.model = resolved.model;
     this.state.config = resolved;
     this.state.memoryStore = new FolderMemoryStore(resolveMemoryStorePath(this.cwd, resolved.memory.storePath));
+    this.state.structuredMemoryStore = new FolderStructuredMemoryStore(resolveMemoryStorePath(this.cwd, resolved.memory.v2.storePath));
     this.state.taskTodoStore = new FolderTaskTodoStore(resolveTaskTodoStorePath(this.cwd, resolved.memory.storePath));
+    await this.state.structuredMemoryStore.ensureLayout();
+    await this.seedStructuredMemoryStore();
     this.state.configSummary = await this.registry.getConfigSummary();
     return resolved;
   }
@@ -546,6 +581,10 @@ export class Agent {
     return resolveMemoryStorePath(this.cwd, this.state.config.memory.storePath);
   }
 
+  getStructuredMemoryStorePath(): string {
+    return resolveMemoryStorePath(this.cwd, this.state.config.memory.v2.storePath);
+  }
+
   getSessionId(): string {
     return this.state.session.sessionId;
   }
@@ -564,13 +603,15 @@ export class Agent {
     const memoryPlan = this.state.config.memory.enabled && this.state.config.memory.autoInject
       ? await this.recallMemory(goal || undefined)
       : emptyRecallPlan();
-    const memoryContext =
+    const executionMemoryContext =
       this.state.config.memory.enabled
       && this.state.config.memory.autoInject
       && this.state.config.context.memory.injectRetrievedMemory
       && memoryPlan.selectedIds.length > 0
         ? await this.renderMemoryContext(memoryPlan)
         : "";
+    const structuredMemoryContext = await this.buildStructuredMemoryContext(goal);
+    const memoryContext = [executionMemoryContext, structuredMemoryContext].filter(Boolean).join("\n\n");
     const skillsContext = await this.loadSkillsContextForTaskTurn(goal);
     const taskContext = this.buildInspectableTaskContext(goal);
     const assembled = await assemblePromptContext({
@@ -677,9 +718,99 @@ export class Agent {
     };
   }
 
+  private async seedStructuredMemoryStore(): Promise<void> {
+    if (!this.state.config.memory.v2.enabled) {
+      return;
+    }
+
+    const [identityRecord, projectProfile] = await Promise.all([
+      this.state.structuredMemoryStore.getSelfIdentity(),
+      this.state.structuredMemoryStore.getProjectProfile()
+    ]);
+
+    if (!identityRecord.summary && identityRecord.nonNegotiablePrinciples.length === 0) {
+      const identityText = await this.readWorkspaceTextFile(".mono/IDENTITY.md");
+      if (identityText) {
+        const lines = this.toBulletLikeLines(identityText);
+        await this.state.structuredMemoryStore.upsertSelfIdentity({
+          summary: lines.slice(0, 3).join(" "),
+          nonNegotiablePrinciples: lines.slice(0, 4),
+          styleContract: lines.slice(0, 4)
+        });
+      }
+    }
+
+    if (!projectProfile.workspaceSummary && projectProfile.durableFacts.length === 0) {
+      const [contextText, memoryText, readmeText] = await Promise.all([
+        this.readWorkspaceTextFile(".mono/CONTEXT.md"),
+        this.readWorkspaceTextFile(".mono/MEMORY.md"),
+        this.readWorkspaceTextFile("README.md")
+      ]);
+      const contextLines = this.toBulletLikeLines(contextText ?? "");
+      const memoryLines = this.toBulletLikeLines(memoryText ?? "");
+      const readmeLines = this.toBulletLikeLines(readmeText ?? "");
+      await this.state.structuredMemoryStore.upsertProjectProfile({
+        workspaceSummary: contextLines[0] ?? readmeLines[0] ?? "",
+        durableFacts: [...new Set([...memoryLines, ...readmeLines.slice(0, 3)])].slice(0, 6),
+        collaborationNorms: contextLines.slice(0, 5)
+      });
+    }
+  }
+
   private async renderMemoryContext(plan: MemoryRecallPlan): Promise<string> {
     const records = await this.state.memoryStore.getByIds(plan.selectedIds);
     return renderMemoryContext(records, new Set(plan.compactedIds));
+  }
+
+  private async buildStructuredMemoryContext(
+    query: string,
+    externalItems: RetrievedContextItem[] = []
+  ): Promise<string> {
+    if (!this.state.config.memory.v2.enabled || !this.state.config.memory.v2.injectIntoContext) {
+      return "";
+    }
+
+    let combinedExternalItems = externalItems;
+    if (combinedExternalItems.length === 0 && this.state.config.memory.openViking.enabled && this.state.config.memory.openViking.url && query.trim()) {
+      try {
+        const { OpenVikingRetrievalProvider } = await this.loadOpenVikingAdapterModule();
+        const provider = new OpenVikingRetrievalProvider({
+          config: this.state.config.memory.openViking
+        });
+        const retrieved = await provider.recallForQuery({
+          query,
+          sessionId: this.state.session.sessionId,
+          messages: this.state.messages
+        });
+        combinedExternalItems = retrieved.items;
+      } catch {
+        combinedExternalItems = externalItems;
+      }
+    }
+
+    const planner = new StructuredMemoryRetrievalPlanner(this.state.structuredMemoryStore, this.state.config.memory.v2);
+    const memoryPackage = await planner.buildPackage({
+      query,
+      activeEntityId: resolvePrimaryEntityId(this.state.config.memory.v2),
+      externalItems: combinedExternalItems
+    });
+    return renderStructuredMemoryPackage(memoryPackage);
+  }
+
+  private async readWorkspaceTextFile(relativePath: string): Promise<string | undefined> {
+    try {
+      return await readFile(join(this.cwd, relativePath), "utf8");
+    } catch {
+      return undefined;
+    }
+  }
+
+  private toBulletLikeLines(text: string): string[] {
+    return text
+      .split("\n")
+      .map((line) => line.trim().replace(/^[-*]\s+/u, ""))
+      .filter((line) => line && !line.startsWith("#"))
+      .slice(0, 12);
   }
 
    private createLocalMemoryRetrievalProvider(): LocalMemoryRetrievalProvider {
@@ -749,8 +880,8 @@ export class Agent {
      }
    }
 
-   private async syncConfiguredMemoryBackends(record: MemoryRecord, session: SessionManager): Promise<void> {
-     const syncOperations: Array<Promise<unknown>> = [];
+  private async syncConfiguredMemoryBackends(record: MemoryRecord, session: SessionManager): Promise<void> {
+    const syncOperations: Array<Promise<unknown>> = [];
      const openViking = this.state.config.memory.openViking;
      if (openViking.enabled && openViking.shadowExport && openViking.url) {
        syncOperations.push(
@@ -791,8 +922,30 @@ export class Agent {
        return;
      }
 
-     await Promise.allSettled(syncOperations);
-   }
+    await Promise.allSettled(syncOperations);
+  }
+
+  private async syncStructuredMemoryBackends(records: Array<{
+    id: string;
+    scope: "self" | "other" | "project" | "episodic";
+    title: string;
+    summary: string;
+    detailLines?: string[];
+  }>): Promise<void> {
+    if (records.length === 0) {
+      return;
+    }
+    const openViking = this.state.config.memory.openViking;
+    if (!openViking.enabled || !openViking.url || this.state.config.memory.v2.openVikingSync !== "async") {
+      return;
+    }
+
+    const { OpenVikingStructuredShadowExporter } = await this.loadOpenVikingAdapterModule();
+    const exporter = new OpenVikingStructuredShadowExporter({
+      config: openViking
+    });
+    await Promise.allSettled(records.map((record) => exporter.exportRecord(record)));
+  }
 
   private async compactAndPersistTurn(options: {
     userMessage: UserMessage;
@@ -817,10 +970,7 @@ export class Agent {
 
     const trace = buildDetailedTrace(options.userMessage, options.messages);
     const compacted = await this.memoryCompactor.compact({
-      userRequest:
-        typeof options.userMessage.content === "string"
-          ? options.userMessage.content
-          : options.userMessage.content.map((part) => ("text" in part ? part.text : `[image:${part.mimeType}]`)).join("\n"),
+      userRequest: userContentToPlainText(options.userMessage.content),
       assistantOutput,
       trace,
       referencedMemoryIds: options.recallPlan?.selectedIds ?? []
@@ -848,18 +998,14 @@ export class Agent {
     return record;
   }
 
-  private createTaskRunContext(input: string): TaskRunContext {
+  private createTaskRunContext(input: string | TaskInput): TaskRunContext {
     const run = this.startRun();
     return {
       runId: run.id,
       controller: run.controller,
       session: this.state.session,
       model: this.state.model,
-      userMessage: {
-        role: "user",
-        content: input,
-        timestamp: Date.now()
-      },
+      userMessage: taskInputToUserMessage(input),
       taskMessages: [],
       recallAccumulator: createRecallAccumulator(),
       taskTodoRecord: null,
@@ -981,32 +1127,40 @@ export class Agent {
   }
 
   private async loadMemoryContextForTaskTurn(context: TaskRunContext): Promise<string> {
-    if (!this.state.config.memory.enabled || !this.state.config.memory.autoInject) {
-      return "";
-    }
+    const blocks: string[] = [];
+    let retrievedItems: RetrievedContextItem[] = [];
 
-    const retrievedContext = await this.recallInjectedMemoryContext();
-    if (retrievedContext.localPlan) {
-      if (retrievedContext.localPlan.selectedIds.length === 0) {
-        return "";
+    if (this.state.config.memory.enabled && this.state.config.memory.autoInject) {
+      const retrievedContext = await this.recallInjectedMemoryContext();
+      retrievedItems = retrievedContext.items;
+      if (retrievedContext.localPlan) {
+        if (retrievedContext.localPlan.selectedIds.length > 0) {
+          mergeRecallPlan(context.recallAccumulator, retrievedContext.localPlan);
+          await context.session.appendMemoryReference(retrievedContext.localPlan, "auto");
+          this.emitIfCurrent(context.runId, { type: "memory-recalled", plan: retrievedContext.localPlan, reason: "auto" });
+          if (retrievedContext.contextBlock.trim()) {
+            blocks.push(retrievedContext.contextBlock);
+          }
+        }
+      } else if (retrievedContext.contextBlock.trim() || retrievedContext.items.length > 0) {
+        blocks.push(retrievedContext.contextBlock);
       }
-
-      mergeRecallPlan(context.recallAccumulator, retrievedContext.localPlan);
-      await context.session.appendMemoryReference(retrievedContext.localPlan, "auto");
-      this.emitIfCurrent(context.runId, { type: "memory-recalled", plan: retrievedContext.localPlan, reason: "auto" });
-      return retrievedContext.contextBlock;
     }
 
-    if (!retrievedContext.contextBlock.trim() && retrievedContext.items.length === 0) {
-      return "";
+    const structuredMemoryContext = await this.buildStructuredMemoryContext(
+      userContentToPlainText(context.userMessage.content),
+      retrievedItems,
+    );
+    if (structuredMemoryContext) {
+      blocks.push(structuredMemoryContext);
     }
 
-    return retrievedContext.contextBlock;
+    return blocks.join("\n\n");
   }
 
   private async loadSkillsContextForTaskTurn(prompt: string): Promise<string> {
-    const skills = await loadProjectSkills(this.cwd);
-    return renderProjectSkillsContext(skills, prompt, this.cwd);
+    const skills = await loadAvailableSkills(this.cwd);
+    return renderSkillsContext(skills, prompt, this.cwd);
   }
 
   private buildInspectableTaskContext(goal: string): string {
@@ -1103,26 +1257,60 @@ export class Agent {
   }
 
   private async persistTaskMemory(context: TaskRunContext): Promise<void> {
-    if (!this.state.config.memory.enabled) {
-      return;
-    }
-
     if (context.taskMessages.length === 0) {
       return;
     }
 
-    const memoryRecord = await this.compactAndPersistTurn({
-      userMessage: context.userMessage,
-      messages: context.taskMessages,
-      recallPlan: collapseRecallAccumulator(context.recallAccumulator)
-    });
-    if (!memoryRecord) {
+    let memoryRecord: MemoryRecord | null = null;
+    if (this.state.config.memory.enabled) {
+      memoryRecord = await this.compactAndPersistTurn({
+        userMessage: context.userMessage,
+        messages: context.taskMessages,
+        recallPlan: collapseRecallAccumulator(context.recallAccumulator)
+      });
+      if (memoryRecord) {
+        await context.session.appendMemoryRecord(memoryRecord);
+        await this.syncConfiguredMemoryBackends(memoryRecord, context.session);
+        this.emitIfCurrent(context.runId, { type: "memory-persisted", record: memoryRecord });
+      }
+    }
+
+    if (!this.state.config.memory.v2.enabled) {
       return;
     }
 
-    await context.session.appendMemoryRecord(memoryRecord);
-    await this.syncConfiguredMemoryBackends(memoryRecord, context.session);
-    this.emitIfCurrent(context.runId, { type: "memory-persisted", record: memoryRecord });
+    const structuredResult = await persistStructuredMemoryTurn({
+      config: this.state.config.memory.v2,
+      store: this.state.structuredMemoryStore,
+      entityId: resolvePrimaryEntityId(this.state.config.memory.v2),
+      userMessage: userContentToPlainText(context.userMessage.content),
+      assistantMessages: context.taskMessages,
+      sessionId: context.session.sessionId,
+      branchHeadId: context.session.getHeadId()
+    });
+    await this.syncStructuredMemoryBackends([
+      {
+        id: structuredResult.event.id,
+        scope: "episodic",
+        title: "episodic event",
+        summary: structuredResult.event.summary,
+        detailLines: structuredResult.event.messages
+      },
+      ...structuredResult.preferences.items.slice(0, 3).map((item) => ({
+        id: `pref-${resolvePrimaryEntityId(this.state.config.memory.v2)}-${item.key}`,
+        scope: "other" as const,
+        title: item.key,
+        summary: item.summary,
+        detailLines: item.evidenceIds
+      })),
+      ...structuredResult.inferences.slice(0, 2).map((item) => ({
+        id: item.id,
+        scope: "other" as const,
+        title: item.trait,
+        summary: item.summary,
+        detailLines: item.basedOn
+      }))
+    ]);
   }
 
   private async finishTask(runId: number, session: SessionManager, task: TaskState, result: TaskResult): Promise<TaskState> {

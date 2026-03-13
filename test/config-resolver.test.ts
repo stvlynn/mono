@@ -106,6 +106,8 @@ describe("config resolver", () => {
     expect(resolved.profileName).toBe("default");
     expect(resolved.model.provider).toBe("moonshotai");
     expect(resolved.source.profile).toBe("global-mono");
+    expect(resolved.memory.v2.enabled).toBe(true);
+    expect(resolved.memory.v2.primaryEntityId).toBe("primary-user");
   });
 
   it("self-heals saved profiles to the catalog-declared interface when no runtime interface is pinned", async () => {

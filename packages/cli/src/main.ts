@@ -4,8 +4,10 @@ import { registerConfigCommands } from "./commands/config-commands.js";
 import { registerContextCommand } from "./commands/context-command.js";
 import { registerMemoryCommands } from "./commands/memory-commands.js";
 import { registerModelsCommand } from "./commands/models-command.js";
+import { registerPairCommand } from "./commands/pair-command.js";
 import { registerRootCommand } from "./commands/root-command.js";
 import { registerSkillsCommand } from "./commands/skills-command.js";
+import { registerTelegramCommand } from "./commands/telegram-command.js";
 
 export async function main(argv: string[]): Promise<void> {
   const program = new Command();
@@ -16,7 +18,9 @@ export async function main(argv: string[]): Promise<void> {
   registerContextCommand(program);
   registerModelsCommand(program);
   registerMemoryCommands(program);
+  registerPairCommand(program);
   registerSkillsCommand(program);
+  registerTelegramCommand(program);
 
   await program.parseAsync(argv, { from: "user" });
 }

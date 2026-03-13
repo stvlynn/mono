@@ -1,0 +1,20 @@
+<StructuredMemoryContext active_entity="{{ active_entity_id }}">
+{% if entries and entries.length %}
+Summaries:
+{% for item in entries %}
+- [{{ item.scope }}] {{ item.title }}: {{ item.summary }}{% if item.confidence is defined %} (confidence {{ item.confidence }}){% endif %}
+{% endfor %}
+{% endif %}
+{% if evidence and evidence.length %}
+Evidence:
+{% for item in evidence %}
+- [{{ item.id }}] {{ item.summary }} (weight {{ item.weight }})
+{% endfor %}
+{% endif %}
+{% if external_items and external_items.length %}
+External retrieval:
+{% for item in external_items %}
+- [{{ item.id }}] {{ item.title }}: {{ item.text }}{% if item.score %} (score {{ item.score }}){% endif %}
+{% endfor %}
+{% endif %}
+</StructuredMemoryContext>

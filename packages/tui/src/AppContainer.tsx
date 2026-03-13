@@ -1,8 +1,14 @@
 import { Box, Text, useApp, useStdin } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatContextReportLines, loadProjectSkills, type Agent } from "@mono/agent-core";
+import { formatContextReportLines, loadAvailableSkills, type Agent } from "@mono/agent-core";
 import { catalogModelToUnifiedModel, listCatalogModels, listCatalogProviders, upsertProfile, type CatalogProvider, type CatalogTransportCandidate } from "@mono/config";
-import type { ConversationMessage, MemoryRecord } from "@mono/shared";
+import {
+  executePairCommand,
+  executeTelegramCommand,
+  TelegramControlRuntime,
+  type TelegramControlEvent,
+} from "@mono/telegram-control";
+import { readInputImageAttachmentFromPath, type ConversationMessage, type InputImageAttachment, type MemoryRecord, type TaskInput } from "@mono/shared";
 import { RootApp } from "./RootApp.js";
 import { AppContext } from "./contexts/AppContext.js";
 import { ForegroundKeypressContext, type ForegroundKeypressHandler } from "./contexts/ForegroundKeypressContext.js";
@@ -28,6 +34,7 @@ import type { DialogInstance, ListDialogItem, UISettings, UIState } from "./type
 export interface InteractiveAppProps {
   agent: Agent;
   initialPrompt?: string;
+  initialAttachments?: InputImageAttachment[];
 }
 
 const initialUiState: UIState = {
@@ -112,10 +119,11 @@ function createSuggestedProfileName(providerId: string, modelId: string, existin
   return `${uniqueBase}-${index}`;
 }
 
-export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
+export function AppContainer({ agent, initialPrompt, initialAttachments }: InteractiveAppProps) {
   const { exit } = useApp();
   const { setRawMode } = useStdin();
   const [uiState, setUiState] = useState<UIState>(initialUiState);
+  const [pendingAttachments, setPendingAttachments] = useState<InputImageAttachment[]>(() => initialAttachments ?? []);
   const [settings, setSettings] = useState<UISettings>({
     cleanUiDetailsVisible: true,
     footerVisible: true,
@@ -126,13 +134,20 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     toolDetailsVisible: true
   });
   const uiStateRef = useRef(uiState);
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  const initialPromptSubmittedRef = useRef(false);
   const initializationRef = useRef<Promise<void> | null>(null);
   const keypressHandlerStackRef = useRef<Array<{ id: number; handler: ForegroundKeypressHandler }>>([]);
   const nextKeypressHandlerIdRef = useRef(0);
+  const telegramRuntimeRef = useRef<TelegramControlRuntime | null>(null);
 
   useEffect(() => {
     uiStateRef.current = uiState;
   }, [uiState]);
+
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
 
   const registerForegroundKeypressHandler = useCallback((handler: ForegroundKeypressHandler) => {
     const id = nextKeypressHandlerIdRef.current++;
@@ -423,6 +438,88 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     setUiState((current) => ({ ...current, status }));
   }, []);
 
+  const pushToast = useCallback((level: "info" | "warning" | "error" | "success", message: string) => {
+    setUiState((current) => ({
+      ...current,
+      status: message,
+      toasts: [
+        ...current.toasts,
+        {
+          id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          level,
+          message,
+        },
+      ].slice(-3),
+    }));
+  }, []);
+
+  const flattenDialogLines = useCallback((lines: string[]) => {
+    return lines.flatMap((line) => line.split("\n"));
+  }, []);
+
+  const handleTelegramRuntimeEvent = useCallback((event: TelegramControlEvent) => {
+    if (event.type === "stopped" && event.message === "Telegram runtime is disabled.") {
+      return;
+    }
+
+    const level =
+      event.type === "error"
+        ? "error"
+        : event.type === "warning"
+          ? "warning"
+          : event.type === "pairing-approved"
+            ? "success"
+            : "info";
+    pushToast(level, event.message);
+  }, [pushToast]);
+
+  const formatAttachmentStatus = useCallback((attachments: InputImageAttachment[]): string => {
+    if (attachments.length === 0) {
+      return "No pending attachments";
+    }
+
+    return attachments
+      .map((attachment, index) => `${index + 1}. ${attachment.sourceLabel ?? attachment.mimeType}`)
+      .join(", ");
+  }, []);
+
+  const detachPendingAttachment = useCallback((target?: string) => {
+    setPendingAttachments((current) => {
+      if (current.length === 0) {
+        setStatus("No pending attachments");
+        return current;
+      }
+
+      const normalizedTarget = target?.trim();
+      if (!normalizedTarget) {
+        const removed = current.at(-1);
+        setStatus(`Removed ${removed?.sourceLabel ?? "last attachment"}`);
+        return current.slice(0, -1);
+      }
+
+      if (normalizedTarget.toLowerCase() === "all") {
+        setStatus(`Removed ${current.length} attachment${current.length === 1 ? "" : "s"}`);
+        return [];
+      }
+
+      const index = Number.parseInt(normalizedTarget, 10);
+      if (Number.isInteger(index) && index >= 1 && index <= current.length) {
+        const removed = current[index - 1];
+        setStatus(`Removed ${removed?.sourceLabel ?? `attachment ${index}`}`);
+        return current.filter((_, itemIndex) => itemIndex !== index - 1);
+      }
+
+      const matchedIndex = current.findIndex((attachment) => attachment.sourceLabel === normalizedTarget);
+      if (matchedIndex >= 0) {
+        setStatus(`Removed ${current[matchedIndex]?.sourceLabel ?? normalizedTarget}`);
+        return current.filter((_, itemIndex) => itemIndex !== matchedIndex);
+      }
+
+      setStatus(`Attachment not found: ${normalizedTarget}`);
+      return current;
+    });
+  }, [setStatus]);
+
   const scrollHistoryBy = useCallback((delta: number) => {
     setUiState((current) => ({
       ...current,
@@ -700,21 +797,49 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
   });
 
   const actions = useMemo<UIActions>(() => ({
-    submitPrompt: async (prompt: string) => {
+    submitPrompt: async (input: string | TaskInput) => {
+      const attachments = pendingAttachmentsRef.current;
+      const taskInput = typeof input === "string"
+        ? { text: input, attachments }
+        : { text: input.text, attachments: input.attachments ?? attachments };
+      if (!(taskInput.text?.trim() || taskInput.attachments?.length)) {
+        return;
+      }
+
       clearArming();
       setUiState((current) => ({
         ...current,
         isExiting: false,
-        currentPrompt: prompt,
+        currentPrompt: taskInput.text ?? "",
         waitingCopy: undefined,
         interrupt: {},
         status: "Submitting prompt..."
       }));
+      if (attachments.length > 0) {
+        setPendingAttachments([]);
+      }
       try {
-        await agent.runTask(prompt);
+        await agent.runTask(taskInput);
       } catch (error) {
+        if (attachments.length > 0) {
+          setPendingAttachments(attachments);
+        }
         reportUiError(error, "Failed to run task");
       }
+    },
+    attachImage: async (path: string) => {
+      const attachment = await readInputImageAttachmentFromPath(path, {
+        cwd: process.cwd(),
+        origin: "local_tui"
+      });
+      setPendingAttachments((current) => [...current, attachment]);
+      setStatus(`Attached ${attachment.sourceLabel ?? attachment.mimeType}`);
+    },
+    detachImage: (target?: string) => {
+      detachPendingAttachment(target);
+    },
+    showAttachments: () => {
+      setStatus(formatAttachmentStatus(pendingAttachmentsRef.current));
     },
     handleInterrupt: async () => {
       await handleCtrlC();
@@ -807,17 +932,17 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
     },
     openSkillsDialog: async (initialFilter) => {
       await runUiAction(async () => {
-        const skills = await loadProjectSkills(process.cwd());
+        const skills = await loadAvailableSkills(process.cwd());
         if (skills.length === 0) {
           setUiState((current) => ({
             ...current,
-            status: "No project skills found under .mono/skills"
+            status: "No builtin, global, or project skills are available"
           }));
           return;
         }
 
         const items = createSkillItems(skills);
-        openSafeListDialog("skill", "Project Skills", items, async (value) => {
+        openSafeListDialog("skill", "Available Skills", items, async (value) => {
           const selected = skills.find((skill) => skill.name === value);
           if (!selected) {
             return;
@@ -825,12 +950,13 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
           closeTopDialog();
           pushDialog(infoDialog(`Skill: ${selected.name}`, [
             selected.description || "No description",
+            `Origin: ${selected.origin}`,
             `Path: ${selected.location}`,
             "",
             ...selected.content.split("\n")
           ]));
         }, initialFilter, "Type to filter, Enter inspect, Esc close");
-      }, "Failed to open project skills");
+      }, "Failed to open skills browser");
     },
     openContextDialog: async () => {
       await runUiAction(async () => {
@@ -882,6 +1008,26 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
         }, initialFilter, "Type to filter, Enter checkout, Esc close");
       }, "Failed to open session tree");
     },
+    runPairCommand: async (argsText) => {
+      const result = await executePairCommand(argsText, process.cwd());
+      pushDialog(infoDialog(result.title, flattenDialogLines(result.lines)));
+      setStatus(result.status);
+      if (result.shouldReloadRuntime) {
+        await telegramRuntimeRef.current?.reload().catch((error) => {
+          reportUiError(error, "Failed to reload Telegram runtime");
+        });
+      }
+    },
+    runTelegramCommand: async (argsText) => {
+      const result = await executeTelegramCommand(argsText, process.cwd());
+      pushDialog(infoDialog(result.title, flattenDialogLines(result.lines)));
+      setStatus(result.status);
+      if (result.shouldReloadRuntime) {
+        await telegramRuntimeRef.current?.reload().catch((error) => {
+          reportUiError(error, "Failed to reload Telegram runtime");
+        });
+      }
+    },
     closeTopDialog,
     dismissFatalError,
     requestShutdown,
@@ -905,7 +1051,29 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
       setSettings((current) => ({ ...current, toolDetailsVisible: !current.toolDetailsVisible }));
       setStatus(`Tool details ${settings.toolDetailsVisible ? "hidden" : "visible"}`);
     }
-  }), [agent, clearArming, closeTopDialog, dismissFatalError, handleCtrlC, initializeAgent, openSafeListDialog, pushDialog, replaceConversation, reportUiError, requestShutdown, runUiAction, scrollHistoryBy, scrollHistoryTo, setStatus, settings.assistantMarkdownEnabled, settings.thinkingVisible, settings.toolDetailsVisible]);
+  }), [
+    agent,
+    clearArming,
+    closeTopDialog,
+    detachPendingAttachment,
+    dismissFatalError,
+    formatAttachmentStatus,
+    flattenDialogLines,
+    handleCtrlC,
+    initializeAgent,
+    openSafeListDialog,
+    pushDialog,
+    replaceConversation,
+    reportUiError,
+    requestShutdown,
+    runUiAction,
+    scrollHistoryBy,
+    scrollHistoryTo,
+    setStatus,
+    settings.assistantMarkdownEnabled,
+    settings.thinkingVisible,
+    settings.toolDetailsVisible,
+  ]);
 
   const slash = useSlashCommands(actions);
   const composer = useComposerState(slash.registry);
@@ -920,6 +1088,22 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
   useEffect(() => {
     void initializeAgent();
   }, [initializeAgent]);
+
+  useEffect(() => {
+    const runtime = new TelegramControlRuntime({
+      cwd: process.cwd(),
+      onEvent: handleTelegramRuntimeEvent,
+    });
+    telegramRuntimeRef.current = runtime;
+    void runtime.start().catch((error) => {
+      reportUiError(error, "Failed to start Telegram runtime");
+    });
+
+    return () => {
+      telegramRuntimeRef.current = null;
+      void runtime.stop();
+    };
+  }, [handleTelegramRuntimeEvent, reportUiError]);
 
   useEffect(() => {
     const handleUnhandledRejection = (reason: unknown) => {
@@ -949,9 +1133,14 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
   }, [reportFatalError, reportUiError]);
 
   useEffect(() => {
-    if (!initialPrompt) {
+    setPendingAttachments(initialAttachments ?? []);
+  }, [initialAttachments]);
+
+  useEffect(() => {
+    if (!initialPrompt || initialPromptSubmittedRef.current) {
       return;
     }
+    initialPromptSubmittedRef.current = true;
     void actions.submitPrompt(initialPrompt);
   }, [actions, initialPrompt]);
 
@@ -966,7 +1155,7 @@ export function AppContainer({ agent, initialPrompt }: InteractiveAppProps) {
                   <FatalScreen />
                 ) : (
                   <TuiErrorBoundary onError={(error) => reportFatalError(error, "Render failure in TUI")}>
-                    <RootApp composer={composer} slash={slash} />
+                    <RootApp composer={composer} slash={slash} attachments={pendingAttachments} />
                   </TuiErrorBoundary>
                 )}
               </Box>

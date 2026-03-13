@@ -11,6 +11,25 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
     executeMode: "direct"
   },
   {
+    name: "pair",
+    fullName: "/pair",
+    description: "Approve Telegram pairing codes and ids",
+    usage: "/pair telegram code|userid|botid <value>",
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "telegram",
+    fullName: "/telegram",
+    description: "Configure or inspect Telegram control runtime",
+    usage: "/telegram status|token|enable|disable",
+    aliases: ["tg"],
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
     name: "profile",
     fullName: "/profile",
     description: "Open profile selector",
@@ -62,7 +81,7 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     name: "skills",
     fullName: "/skills",
-    description: "Browse project-local skills",
+    description: "Browse available skills",
     usage: "/skills [query]",
     aliases: ["skill"],
     kind: "selector",
@@ -105,6 +124,36 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Exit mono",
     usage: "/quit",
     aliases: ["exit", "q"],
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "attach",
+    fullName: "/attach",
+    description: "Attach an image by local path",
+    usage: "/attach <path>",
+    aliases: ["image"],
+    kind: "input",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "detach",
+    fullName: "/detach",
+    description: "Remove a pending attachment",
+    usage: "/detach [index|name|all]",
+    aliases: ["remove-image"],
+    kind: "input",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "attachments",
+    fullName: "/attachments",
+    description: "List pending image attachments",
+    usage: "/attachments",
+    aliases: ["files"],
     kind: "action",
     source: "builtin",
     executeMode: "direct"

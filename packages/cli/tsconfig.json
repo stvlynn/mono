@@ -15,6 +15,7 @@
     { "path": "../seekdb-adapter" },
     { "path": "../tools" },
     { "path": "../agent-core" },
+    { "path": "../telegram-control" },
     { "path": "../tui" }
   ],
   "include": ["src/**/*.ts"]

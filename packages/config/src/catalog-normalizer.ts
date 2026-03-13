@@ -50,7 +50,7 @@ export function createBuiltinCatalog(): Record<string, CatalogProvider> {
       toolCall: model.supportsTools,
       reasoning: model.supportsReasoning,
       temperature: true,
-      attachment: false,
+      attachment: model.supportsAttachments ?? true,
       contextWindow: model.contextWindow,
       supported: true
     };
@@ -169,7 +169,7 @@ function normalizeModel(
     toolCall: rawModel.tool_call !== false,
     reasoning: rawModel.reasoning === true,
     temperature: rawModel.temperature !== false,
-    attachment: rawModel.attachment === true,
+    attachment: rawModel.attachment !== false,
     contextWindow,
     supported
   };

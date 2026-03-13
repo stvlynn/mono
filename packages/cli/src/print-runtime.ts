@@ -1,6 +1,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { Agent } from "@mono/agent-core";
+import type { TaskInput } from "@mono/shared";
 
 export async function promptApproval(): Promise<(reason: { toolName: string; reason: string; input: unknown }) => Promise<boolean>> {
   const rl = createInterface({ input, output });
@@ -13,7 +14,7 @@ export async function promptApproval(): Promise<(reason: { toolName: string; rea
 }
 
 export async function runPrint(
-  promptText: string,
+  inputText: string | TaskInput,
   options: { model?: string; profile?: string; baseURL?: string; yes?: boolean; continueSession?: boolean }
 ): Promise<void> {
   const agent = new Agent({
@@ -43,6 +44,6 @@ export async function runPrint(
       process.stderr.write(`\n[task] ${event.result.summary}\n`);
     }
   });
-  await agent.runTask(promptText);
+  await agent.runTask(inputText);
   process.stdout.write("\n");
 }
