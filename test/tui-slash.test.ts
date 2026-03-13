@@ -35,19 +35,25 @@ describe("slash registry", () => {
   it("resolves aliases", () => {
     expect(registry.find("/exit")?.fullName).toBe("/quit");
     expect(registry.find("mdl")?.fullName).toBe("/model");
+    expect(registry.find("login")?.fullName).toBe("/connect");
+    expect(registry.find("tooldetails")?.fullName).toBe("/tools");
   });
 
   it("returns fuzzy-ranked matches", () => {
     const modelMatches = registry.search("mdl");
     const sessionMatches = registry.search("ses");
+    const connectMatches = registry.search("conn");
     expect(modelMatches[0]?.command.fullName).toBe("/model");
     expect(sessionMatches[0]?.command.fullName).toBe("/sessions");
+    expect(connectMatches[0]?.command.fullName).toBe("/connect");
   });
 
   it("lists builtins on empty query", () => {
     const matches = registry.search("");
     expect(matches.map((match) => match.command.fullName)).toContain("/help");
     expect(matches.map((match) => match.command.fullName)).toContain("/quit");
+    expect(matches.map((match) => match.command.fullName)).toContain("/markdown");
+    expect(matches.map((match) => match.command.fullName)).toContain("/thinking");
   });
 });
 

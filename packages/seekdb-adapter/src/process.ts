@@ -37,13 +37,16 @@ export async function runProcess(options: {
         resolve({ stdout, stderr });
         return;
       }
-      reject(
-        new Error(
-          `Command failed: ${options.command} ${options.args.join(" ")} (code=${code ?? "null"}, signal=${signal ?? "null"})${
-            stderr ? `\n${stderr.trim()}` : ""
-          }`
-        )
-      );
+      const error = new Error(
+        `Command failed: ${options.command} ${options.args.join(" ")} (code=${code ?? "null"}, signal=${signal ?? "null"})${
+          stderr ? `\n${stderr.trim()}` : ""
+        }`
+      ) as Error & { stdout?: string; stderr?: string; code?: number | null; signal?: NodeJS.Signals | null };
+      error.stdout = stdout;
+      error.stderr = stderr;
+      error.code = code;
+      error.signal = signal;
+      reject(error);
     });
   });
 

@@ -8,8 +8,10 @@ import type { UIState } from "../packages/tui/src/types/ui.js";
 function createUiState(): UIState {
   return {
     initialized: true,
+    startupState: "ready",
     running: false,
     status: "Ready",
+    fatalError: undefined,
     waitingCopy: undefined,
     interrupt: {},
     history: [],
@@ -128,5 +130,38 @@ describe("waiting copy reducer", () => {
     expect(state.waitingCopy?.kind).toBe("tool_running");
     expect(state.waitingCopy?.message).toContain("bash");
     expect(state.status).toBe("Running bash...");
+  });
+
+  it("tracks assistant tool-call preparation before the tool starts", () => {
+    const agent = createAgentStub();
+    let state = createUiState();
+
+    state = reduceEvent(
+      state,
+      { type: "assistant-tool-call", toolCallId: "tool-3", toolName: "write_todos", argsText: "{\"todos\":[" },
+      agent
+    );
+
+    expect(state.pendingTools).toEqual([
+      expect.objectContaining({
+        callId: "tool-3",
+        name: "write_todos",
+        status: "pending",
+        summary: "Preparing tool call",
+        detail: "{\"todos\":["
+      })
+    ]);
+
+    state = reduceEvent(
+      state,
+      { type: "tool-start", toolCallId: "tool-3", toolName: "write_todos", input: { todos: [{ id: "a" }] } },
+      agent
+    );
+
+    expect(state.pendingTools[0]).toEqual(expect.objectContaining({
+      callId: "tool-3",
+      status: "running"
+    }));
+    expect(state.pendingTools[0]?.summary).toContain("todos=");
   });
 });

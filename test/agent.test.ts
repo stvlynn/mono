@@ -20,7 +20,7 @@ async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: bo
             modelId: "gpt-4.1-mini",
             baseURL: "https://api.openai.com/v1",
             family: "openai-compatible",
-            transport: "xsai-openai-compatible",
+            transport: "openai-compatible",
             supportsTools: true,
             supportsReasoning: true
           }
@@ -285,6 +285,30 @@ describe("Agent", () => {
     delete process.env.MONO_CONFIG_DIR;
   });
 
+  it("lists configured profiles with resolved model metadata", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-profiles-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+
+    const profiles = await agent.listConfiguredProfiles();
+
+    expect(profiles).toEqual([
+      expect.objectContaining({
+        name: "default",
+        model: expect.objectContaining({
+          provider: "openai",
+          modelId: "gpt-4.1-mini"
+        })
+      })
+    ]);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
   it("falls back to local auto-injected memory when the configured backend fails", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
     const cwd = join(rootDir, "workspace");
@@ -490,6 +514,60 @@ describe("Agent", () => {
     internalAgent.state.config.memory.seekDb.mirrorSessionsOnly = false;
     await internalAgent.syncConfiguredMemoryBackends(record, internalAgent.state.session);
     expect(exported).toEqual(["mem-seekdb"]);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("lists models and can switch model before initialization even if the default profile is invalid", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    const configDir = join(rootDir, ".mono");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "config.json"),
+      JSON.stringify({
+        version: 1,
+        mono: {
+          defaultProfile: "broken",
+          profiles: {
+            broken: {
+              provider: "unsupported",
+              modelId: "unsupported-model",
+              baseURL: "https://unsupported.example/v1",
+              family: "anthropic",
+              transport: "xsai-unsupported",
+              supportsTools: true,
+              supportsReasoning: true
+            }
+          },
+          memory: {
+            enabled: true,
+            autoInject: true,
+            storePath: ".mono/memories",
+            latestRoots: 4,
+            compactedLevelNum: 1,
+            rawPairLevelNum: 3,
+            compactedCapNum: 8,
+            rawPairCapNum: 8,
+            keywordSearchLimit: 6
+          }
+        }
+      }),
+      "utf8"
+    );
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+
+    const models = await agent.listModels();
+    expect(models.some((model) => model.provider === "openai" && model.modelId === "gpt-4.1-mini")).toBe(true);
+
+    const selected = await agent.setModel("openai/gpt-4.1-mini");
+    expect(selected.provider).toBe("openai");
+    expect(selected.modelId).toBe("gpt-4.1-mini");
+    expect(agent.getCurrentModel().provider).toBe("openai");
 
     delete process.env.MONO_CONFIG_DIR;
   });

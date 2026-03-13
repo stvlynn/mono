@@ -3,6 +3,7 @@ import type { ExecutionMemoryBackend } from "@mono/memory";
 import { buildExecutionMemoryUpsert, escapeLikePattern, EXECUTION_MEMORY_SCHEMA, sqlNumber, sqlString } from "./sql.js";
 import { createSeekDbRunner } from "./runner-factory.js";
 import type { SeekDbConnectionOptions, SeekDbRunner } from "./types.js";
+import { findMatchedLines } from "./memory-search.js";
 
 export class SeekDbExecutionMemoryBackend implements ExecutionMemoryBackend {
   private readonly runner: SeekDbRunner;
@@ -97,7 +98,12 @@ export class SeekDbExecutionMemoryBackend implements ExecutionMemoryBackend {
     await this.ensureSchema();
     const pattern = `%${escapeLikePattern(query.trim())}%`;
     const where = [
-      `(input_text LIKE ${sqlString(pattern)} ESCAPE '\\' OR output_text LIKE ${sqlString(pattern)} ESCAPE '\\' OR compacted_text LIKE ${sqlString(pattern)} ESCAPE '\\')`
+      `(
+        input_text LIKE ${sqlString(pattern)} ESCAPE '\\'
+        OR output_text LIKE ${sqlString(pattern)} ESCAPE '\\'
+        OR compacted_text LIKE ${sqlString(pattern)} ESCAPE '\\'
+        OR detailed_json LIKE ${sqlString(pattern)} ESCAPE '\\'
+      )`
     ];
     if (options?.sessionId) {
       where.push(`session_id = ${sqlString(options.sessionId)}`);
@@ -126,15 +132,4 @@ export class SeekDbExecutionMemoryBackend implements ExecutionMemoryBackend {
 
 function parseRecord(row: string): MemoryRecord {
   return JSON.parse(row) as MemoryRecord;
-}
-
-function findMatchedLines(record: MemoryRecord, query: string): Array<{ line: number; text: string }> {
-  const loweredQuery = query.trim().toLowerCase();
-  const lines = [record.input, record.output, ...record.compacted];
-  return lines
-    .map((text, index) => ({
-      line: index + 1,
-      text
-    }))
-    .filter((line) => line.text.toLowerCase().includes(loweredQuery));
 }

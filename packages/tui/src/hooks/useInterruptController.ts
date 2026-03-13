@@ -1,79 +1,42 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { DialogInstance, InterruptState } from "../types/ui.js";
 
-export interface InterruptInvocationContext {
-  hasInput?: boolean;
-  clearInput?: () => void;
-}
-
 export interface InterruptSnapshot {
   interrupt: InterruptState;
   isRunning: boolean;
+  isExiting: boolean;
   topDialog?: DialogInstance;
 }
 
 export interface InterruptControllerOptions {
-  repeatWindowMs?: number;
   getSnapshot: () => InterruptSnapshot;
   setInterruptState: (interrupt: InterruptState) => void;
   setStatus: (status: string) => void;
   abortRun: () => void;
   closeTopDialog: () => void;
-  exitApp: () => void;
+  registerCtrlCPress: () => number;
+  resetCtrlCPress: () => void;
+  forceExit: () => void;
 }
 
 export interface InterruptController {
-  handleCtrlC: (context?: InterruptInvocationContext) => Promise<void>;
+  handleCtrlC: () => Promise<void>;
   clearArming: () => void;
   dispose: () => void;
 }
 
-function isExitArmed(interrupt: InterruptState, repeatWindowMs: number, now: number): boolean {
-  return (
-    interrupt.armedAction === "exit" &&
-    typeof interrupt.lastCtrlCAt === "number" &&
-    now - interrupt.lastCtrlCAt <= repeatWindowMs
-  );
-}
-
 export function createInterruptController(options: InterruptControllerOptions): InterruptController {
-  const repeatWindowMs = options.repeatWindowMs ?? 600;
-  let clearTimer: ReturnType<typeof setTimeout> | undefined;
-
   const clearArming = () => {
-    if (clearTimer) {
-      clearTimeout(clearTimer);
-      clearTimer = undefined;
-    }
+    options.resetCtrlCPress();
     options.setInterruptState({});
   };
 
-  const armExit = (hint: string) => {
-    const interrupt: InterruptState = {
-      armedAction: "exit",
-      lastCtrlCAt: Date.now(),
-      hint
-    };
-
-    if (clearTimer) {
-      clearTimeout(clearTimer);
-    }
-
-    clearTimer = setTimeout(() => {
-      clearTimer = undefined;
-      options.setInterruptState({});
-    }, repeatWindowMs);
-
-    options.setInterruptState(interrupt);
-  };
-
-  const handleCtrlC = async (context: InterruptInvocationContext = {}) => {
-    const now = Date.now();
+  const handleCtrlC = async () => {
     const snapshot = options.getSnapshot();
+    const wasRunning = snapshot.isRunning;
 
-    if (isExitArmed(snapshot.interrupt, repeatWindowMs, now)) {
-      clearArming();
-      options.exitApp();
+    if (snapshot.isExiting) {
+      options.forceExit();
       return;
     }
 
@@ -85,19 +48,23 @@ export function createInterruptController(options: InterruptControllerOptions): 
       return;
     }
 
-    if (snapshot.isRunning) {
+    if (wasRunning) {
       options.abortRun();
-      armExit("Run cancelled. Press Ctrl+C again to exit.");
+    }
+
+    const count = options.registerCtrlCPress();
+    if (count > 1) {
       return;
     }
 
-    if (context.hasInput && context.clearInput) {
-      context.clearInput();
-      armExit("Input cleared. Press Ctrl+C again to exit.");
-      return;
-    }
+    const hint = wasRunning
+      ? "Run cancelled. Press Ctrl+C again to exit."
+      : "Press Ctrl+C again to exit.";
 
-    armExit("Press Ctrl+C again to exit.");
+    options.setInterruptState({
+      ctrlCPressedOnce: true,
+      hint
+    });
   };
 
   return {
@@ -121,12 +88,9 @@ export function useInterruptController(options: InterruptControllerOptions): Int
     };
   }, []);
 
-  const handleCtrlC = useCallback(
-    async (context?: InterruptInvocationContext) => {
-      await controllerRef.current?.handleCtrlC(context);
-    },
-    []
-  );
+  const handleCtrlC = useCallback(async () => {
+    await controllerRef.current?.handleCtrlC();
+  }, []);
 
   const clearArming = useCallback(() => {
     controllerRef.current?.clearArming();

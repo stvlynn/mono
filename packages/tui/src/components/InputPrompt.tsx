@@ -3,10 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 import stringWidth from "string-width";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
+import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
 import { useUIState } from "../contexts/UIStateContext.js";
 import { isBackwardDeleteInput, isForwardDeleteInput } from "../input-keys.js";
-import { isInsertableInput, useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
+import { isInsertableInput, type RawKey } from "../hooks/useRawKeypress.js";
 
 function renderBuffer(text: string, cursor: number): string {
   const before = text.slice(0, cursor);
@@ -23,7 +24,7 @@ interface InputPromptProps {
 
 export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) {
   const actions = useUIActions();
-  const { running } = useUIState();
+  const { running, isExiting } = useUIState();
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
 
   useEffect(() => {
@@ -31,17 +32,18 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
   }, [composer.slashMatches.length]);
 
   const slashVisible = !dialogsOpen && composer.slashMatches.length > 0;
+  const handleAsyncError = useCallback((error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message : String(error || fallback);
+    actions.setStatus(message && message !== "undefined" ? message : fallback);
+  }, [actions]);
 
   const handleKeypress = useCallback((input: string, key: RawKey) => {
-    if (dialogsOpen) {
+    if (key.ctrl && key.name === "c") {
+      void actions.handleInterrupt();
       return;
     }
 
-    if (key.ctrl && input === "c") {
-      void actions.handleInterrupt({
-        hasInput: composer.buffer.hasText,
-        clearInput: () => composer.clear()
-      });
+    if (dialogsOpen || isExiting) {
       return;
     }
 
@@ -97,22 +99,33 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       if (slashVisible) {
         const selected = composer.slashMatches[selectedSlashIndex]?.command.fullName ?? composer.buffer.text;
         if (selected.startsWith("/") && !composer.parsedSlashInput?.argsText) {
-          void slash.execute(selected);
-          composer.clear();
+          void (async () => {
+            try {
+              await slash.execute(selected);
+            } catch (error) {
+              handleAsyncError(error, `Failed to execute ${selected}`);
+            } finally {
+              composer.clear();
+            }
+          })();
           return;
         }
       }
 
       void (async () => {
-        const handled = await slash.execute(composer.buffer.text);
-        if (handled) {
+        try {
+          const handled = await slash.execute(composer.buffer.text);
+          if (handled) {
+            composer.clear();
+            return;
+          }
+          composer.recordHistory(composer.buffer.text);
+          const raw = composer.buffer.text;
           composer.clear();
-          return;
+          await actions.submitPrompt(raw);
+        } catch (error) {
+          handleAsyncError(error, "Failed to process prompt");
         }
-        composer.recordHistory(composer.buffer.text);
-        const raw = composer.buffer.text;
-        composer.clear();
-        await actions.submitPrompt(raw);
       })();
       return;
     }
@@ -126,12 +139,12 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       composer.deleteForward();
       return;
     }
-    if (key.ctrl && input === "a") {
+    if (key.ctrl && key.name === "a") {
       actions.clearInterruptArming();
       composer.moveHome();
       return;
     }
-    if (key.ctrl && input === "e") {
+    if (key.ctrl && key.name === "e") {
       actions.clearInterruptArming();
       composer.moveEnd();
       return;
@@ -140,13 +153,13 @@ export function InputPrompt({ composer, slash, dialogsOpen }: InputPromptProps) 
       actions.clearInterruptArming();
       composer.insert(input);
     }
-  }, [actions, composer, dialogsOpen, selectedSlashIndex, slash, slashVisible]);
+  }, [actions, composer, dialogsOpen, handleAsyncError, isExiting, selectedSlashIndex, slash, slashVisible]);
 
-  useRawKeypress(handleKeypress, { isActive: !dialogsOpen });
+  useForegroundKeypress(handleKeypress, !dialogsOpen || isExiting);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={running ? "cyan" : "gray"} paddingX={1}>
-      <Text dimColor>{running ? "task running" : "ready"} · Enter submit · Ctrl+J newline · Ctrl+C interrupt · double Ctrl+C exit</Text>
+      <Text dimColor>{isExiting ? "exiting" : running ? "task running" : "ready"} · Enter submit · Ctrl+J newline · Ctrl+C interrupt · double Ctrl+C exit</Text>
       <Text>{renderBuffer(composer.buffer.text, composer.buffer.cursor)}</Text>
       <Text dimColor>width:{stringWidth(composer.buffer.text)}</Text>
       {slashVisible ? (

@@ -186,4 +186,45 @@ describe("session manager", () => {
     const reopened = new SessionManager({ cwd, sessionsDir, sessionId: "session-unknown", branchHeadId: "missing-head" });
     await expect(reopened.initialize(model)).rejects.toThrow("Unknown branch head: missing-head");
   });
+
+  it("reads only entries reachable from the selected branch head", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
+    const sessionsDir = join(cwd, ".sessions");
+    const manager = new SessionManager({ cwd, sessionsDir, sessionId: "session-branches" });
+    await manager.initialize(model);
+    await manager.appendMessage({
+      role: "user",
+      content: "base",
+      timestamp: Date.now()
+    });
+
+    const baseHeadId = manager.getHeadId()!;
+    await manager.appendBranch("feature-a");
+    await manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "branch a" }],
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      stopReason: "stop",
+      timestamp: Date.now()
+    });
+    const branchAHeadId = manager.getHeadId()!;
+
+    await manager.checkout(baseHeadId);
+    await manager.appendBranch("feature-b");
+    await manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "branch b" }],
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      stopReason: "stop",
+      timestamp: Date.now() + 1
+    });
+
+    const reachable = await manager.readEntriesForHead(branchAHeadId);
+    const labels = reachable.map((entry) => entry.entryType === "assistant" ? JSON.stringify(entry.payload) : entry.entryType);
+
+    expect(labels.some((label) => label.includes("branch a"))).toBe(true);
+    expect(labels.some((label) => label.includes("branch b"))).toBe(false);
+  });
 });

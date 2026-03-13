@@ -208,11 +208,17 @@ export class SessionManager {
   }
 
   async loadMessages(branchHeadId = this.headId): Promise<ConversationMessage[]> {
+    const entries = await this.readEntriesForHead(branchHeadId);
+    const orderedEntries = branchHeadId ? [...entries].reverse() : entries;
+    return orderedEntries
+      .filter((entry) => entry.entryType === "user" || entry.entryType === "assistant" || entry.entryType === "tool")
+      .map((entry) => entry.payload as ConversationMessage);
+  }
+
+  async readEntriesForHead(branchHeadId = this.headId): Promise<SessionEntry[]> {
     const entries = await this.readEntries();
     if (!branchHeadId) {
-      return entries
-        .filter((entry) => entry.entryType === "user" || entry.entryType === "assistant" || entry.entryType === "tool")
-        .map((entry) => entry.payload as ConversationMessage);
+      return entries;
     }
 
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
@@ -223,10 +229,7 @@ export class SessionManager {
       current = current.parentId ? byId.get(current.parentId) : undefined;
     }
 
-    return selected
-      .reverse()
-      .filter((entry) => entry.entryType === "user" || entry.entryType === "assistant" || entry.entryType === "tool")
-      .map((entry) => entry.payload as ConversationMessage);
+    return selected;
   }
 
   async checkout(branchHeadId?: string): Promise<ConversationMessage[]> {

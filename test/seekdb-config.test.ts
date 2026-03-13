@@ -93,7 +93,7 @@ describe("SeekDB memory config", () => {
             modelId: "gpt-4.1-mini",
             baseURL: "https://api.openai.com/v1",
             family: "openai-compatible",
-            transport: "xsai-openai-compatible",
+            transport: "openai-compatible",
             providerFactory: "openai",
             apiKeyEnv: "OPENAI_API_KEY",
             supportsTools: true,

@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { UIHistoryItem } from "../types/ui.js";
-import { formatMessage } from "../ui-format.js";
+import { ConversationMessageDisplay } from "./ConversationMessageDisplay.js";
 
 export function HistoryItemDisplay({ item }: { item: UIHistoryItem }) {
   if (item.type === "system") {
@@ -14,8 +14,6 @@ export function HistoryItemDisplay({ item }: { item: UIHistoryItem }) {
   }
 
   return (
-    <Box marginBottom={1}>
-      <Text>{formatMessage(item.message)}</Text>
-    </Box>
+    <ConversationMessageDisplay message={item.message} />
   );
 }

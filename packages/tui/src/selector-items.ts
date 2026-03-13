@@ -5,6 +5,7 @@ function truncateToWidth(value: string, width: number): string {
   return `${value.slice(0, Math.max(0, width - 1))}…`;
 }
 import type { MemoryRecord, SessionNodeSummary, SessionSummary, UnifiedModel } from "@mono/shared";
+import type { ConfiguredModelProfile } from "@mono/agent-core";
 import { formatTime } from "./ui-format.js";
 
 export interface SelectOptionItem {
@@ -15,6 +16,14 @@ export interface SelectOptionItem {
 
 export function createProfileItems(profiles: string[]): SelectOptionItem[] {
   return profiles.map((profile) => ({ value: profile, label: profile }));
+}
+
+export function createConfiguredProfileItems(profiles: ConfiguredModelProfile[]): SelectOptionItem[] {
+  return profiles.map((profile) => ({
+    value: profile.name,
+    label: `${profile.name}  ${profile.model.provider}/${profile.model.modelId}`,
+    description: profile.model.baseURL
+  }));
 }
 
 export function createModelItems(models: UnifiedModel[]): SelectOptionItem[] {

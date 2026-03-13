@@ -15,7 +15,9 @@ export interface UIToolCall {
   callId: string;
   name: string;
   status: "pending" | "running" | "awaiting_approval" | "done" | "error" | "cancelled";
-  output?: string;
+  summary: string;
+  detail?: string;
+  argsText?: string;
 }
 
 export type WaitingStateKind =
@@ -33,8 +35,7 @@ export interface UIWaitingCopy {
 }
 
 export interface InterruptState {
-  lastCtrlCAt?: number;
-  armedAction?: "exit";
+  ctrlCPressedOnce?: boolean;
   hint?: string;
 }
 
@@ -72,26 +73,53 @@ export interface ApprovalDialog extends BaseDialog {
 
 export interface ListDialog extends BaseDialog {
   type: "list";
-  kind: "model" | "profile" | "session" | "memory" | "tree" | "settings" | "theme";
+  kind:
+    | "model"
+    | "profile"
+    | "session"
+    | "memory"
+    | "tree"
+    | "settings"
+    | "theme"
+    | "connect-provider"
+    | "connect-model"
+    | "connect-interface";
   items: ListDialogItem[];
   initialFilter?: string;
   hint?: string;
   onSelect: (value: string) => void | Promise<void>;
 }
 
-export type DialogInstance = HelpDialog | InfoDialog | ApprovalDialog | ListDialog;
+export interface InputDialog extends BaseDialog {
+  type: "input";
+  kind: "connect-key";
+  label: string;
+  hint?: string;
+  initialValue?: string;
+  placeholder?: string;
+  secret?: boolean;
+  onSubmit: (value: string) => void | Promise<void>;
+}
+
+export type DialogInstance = HelpDialog | InfoDialog | ApprovalDialog | ListDialog | InputDialog;
 
 export interface UISettings {
   cleanUiDetailsVisible: boolean;
   footerVisible: boolean;
   alternateBuffer: boolean;
   shortcutsHint: boolean;
+  assistantMarkdownEnabled: boolean;
+  thinkingVisible: boolean;
+  toolDetailsVisible: boolean;
 }
 
 export interface UIState {
   initialized: boolean;
+  startupState: "idle" | "initializing" | "ready" | "init_failed";
   running: boolean;
+  isExiting: boolean;
   status: string;
+  fatalError?: string;
   waitingCopy?: UIWaitingCopy;
   interrupt: InterruptState;
   history: UIHistoryItem[];

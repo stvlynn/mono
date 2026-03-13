@@ -61,11 +61,14 @@ export interface UnifiedToolSpec {
   inputSchema: Record<string, unknown>;
 }
 
+export type ModelTransport = "openai-compatible" | "anthropic" | "gemini";
+
 export interface UnifiedModel {
   provider: string;
   modelId: string;
   family: "openai-compatible" | "anthropic" | "gemini";
-  transport?: "xsai-openai-compatible";
+  transport?: ModelTransport;
+  runtimeProviderKey?: string;
   baseURL: string;
   apiKey?: string;
   apiKeyEnv?: string;
@@ -80,7 +83,8 @@ export interface MonoProfileConfig {
   modelId: string;
   baseURL: string;
   family: "openai-compatible" | "anthropic" | "gemini";
-  transport: "xsai-openai-compatible";
+  transport: ModelTransport;
+  runtimeProviderKey?: string;
   providerFactory?: "openai" | "anthropic" | "openrouter" | "google" | "custom";
   apiKeyRef?: string;
   apiKeyEnv?: string;

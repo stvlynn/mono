@@ -3,6 +3,14 @@ import type { Agent } from "@mono/agent-core";
 import type { RuntimeEvent } from "@mono/shared";
 import type { Dispatch, SetStateAction } from "react";
 import type { DialogInstance, UIHistoryItem, UIState, UIToast } from "../types/ui.js";
+import {
+  stringifyToolContent,
+  summarizeToolContent,
+  summarizeToolInput,
+  summarizeToolResultDetail,
+  summarizeToolUpdateDetail,
+  summarizeToolUpdateLine
+} from "../tool-display.js";
 import { resolveWaitingCopy } from "../waiting-copy.js";
 
 interface UseAgentBridgeOptions {
@@ -14,21 +22,6 @@ interface UseAgentBridgeOptions {
 export function useAgentBridge(options: UseAgentBridgeOptions): void {
   useEffect(() => {
     const { agent, setUiState, pushDialog } = options;
-
-    void agent.initialize().then(() => {
-      setUiState((current) => ({
-        ...current,
-        initialized: true,
-        history: agent.getMessages().map((message) => ({
-          id: `message-${message.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
-          type: "message",
-          message
-        })),
-        currentTask: agent.getCurrentTask(),
-        currentTodoRecord: agent.getCurrentTodoRecord(),
-        status: agent.getConfigSummary().hasAnyProfiles ? "Ready" : "No configured profiles found. Run mono auth login."
-      }));
-    });
 
     agent.setRequestApproval(
       (request) =>
@@ -87,36 +80,59 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
           state.waitingCopy?.kind === "assistant_reasoning" ? state.waitingCopy : resolveWaitingCopy("assistant_reasoning"),
         status: "Reasoning..."
       };
+    case "assistant-tool-call":
+      return {
+        ...state,
+        pendingTools: upsertPendingTool(state.pendingTools, event.toolCallId, (current) => ({
+          callId: event.toolCallId,
+          name: event.toolName,
+          status: current?.status === "running" ? "running" : "pending",
+          summary: current?.summary ?? "Preparing tool call",
+          detail: event.argsText
+            ? `${current?.detail ?? ""}${event.argsText}`.trim()
+            : current?.detail,
+          argsText: event.argsText ? `${current?.argsText ?? ""}${event.argsText}` : current?.argsText
+        })),
+        status: `Preparing ${event.toolName}...`
+      };
     case "tool-start":
       return {
         ...state,
-        pendingTools: [
-          ...state.pendingTools.filter((item) => item.callId !== event.toolCallId),
-          { callId: event.toolCallId, name: event.toolName, status: "running", output: stringify(event.input) }
-        ],
+        pendingTools: upsertPendingTool(state.pendingTools, event.toolCallId, () => ({
+          callId: event.toolCallId,
+          name: event.toolName,
+          status: "running",
+          summary: summarizeToolInput(event.input),
+          detail: stringify(event.input),
+          argsText: undefined
+        })),
         waitingCopy: resolveWaitingCopy("tool_running", { toolName: event.toolName }),
         status: `Running ${event.toolName}...`
       };
     case "tool-update":
       return {
         ...state,
-        pendingTools: state.pendingTools.map((item) =>
-          item.callId === event.toolCallId ? { ...item, output: stringify(event.update.content) } : item
-        )
+        pendingTools: upsertPendingTool(state.pendingTools, event.toolCallId, (current) => ({
+          callId: event.toolCallId,
+          name: current?.name ?? event.toolName,
+          status: current?.status ?? "running",
+          summary: summarizeToolUpdateLine(event.update),
+          detail: summarizeToolUpdateDetail(event.update),
+          argsText: current?.argsText
+        }))
       };
     case "tool-end":
       return updateToolWaitingState(
         {
           ...state,
-          pendingTools: state.pendingTools.map((item) =>
-            item.callId === event.toolCallId
-              ? {
-                  ...item,
-                  status: event.isError ? "error" : "done",
-                  output: stringify(event.result.content)
-                }
-              : item
-          )
+          pendingTools: upsertPendingTool(state.pendingTools, event.toolCallId, (current) => ({
+            callId: event.toolCallId,
+            name: current?.name ?? event.toolName,
+            status: event.isError ? "error" : "done",
+            summary: event.isError ? `Failed · ${summarizeToolContent(event.result.content)}` : `Completed · ${summarizeToolContent(event.result.content)}`,
+            detail: summarizeToolResultDetail(event.result.content),
+            argsText: current?.argsText
+          }))
         },
         event.isError ? `${event.toolName} failed` : `${event.toolName} completed`
       );
@@ -289,10 +305,21 @@ function stringify(value: unknown): string {
     return value;
   }
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value, null, 2);
   } catch {
     return String(value);
   }
+}
+
+function upsertPendingTool(
+  tools: UIState["pendingTools"],
+  callId: string,
+  build: (current?: UIState["pendingTools"][number]) => UIState["pendingTools"][number]
+): UIState["pendingTools"] {
+  const current = tools.find((item) => item.callId === callId);
+  const next = build(current);
+  const remaining = tools.filter((item) => item.callId !== callId);
+  return [...remaining, next];
 }
 
 function currentTaskStatus(task: UIState["currentTask"]): string {
@@ -303,7 +330,9 @@ function currentTaskStatus(task: UIState["currentTask"]): string {
 }
 
 function updateToolWaitingState(state: UIState, fallbackStatus: string): UIState {
-  const activeTool = [...state.pendingTools].reverse().find((item) => item.status === "running" || item.status === "awaiting_approval");
+  const activeTool = [...state.pendingTools].reverse().find((item) =>
+    item.status === "pending" || item.status === "running" || item.status === "awaiting_approval"
+  );
   if (!activeTool) {
     return {
       ...state,

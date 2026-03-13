@@ -9,13 +9,17 @@ import type {
   UnifiedModel
 } from "@mono/shared";
 import { readJsonFile } from "@mono/shared";
+import { catalogModelToUnifiedModel, getCatalogModel, getCatalogProvider, getModelsCatalog, listCatalogModels } from "./catalog.js";
 import {
+  canonicalizeProviderId,
   createDefaultGlobalConfig,
   createDefaultMemoryConfig,
   createDefaultSeekDbConfig,
   createFallbackModel,
   getBuiltinModels,
+  isSupportedUnifiedModel,
   modelToProfile,
+  normalizeModelTransport,
   profileToModel,
   resolveBaseURL
 } from "./defaults.js";
@@ -79,13 +83,22 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
   let model: UnifiedModel;
   let profileName = requestedProfile || "default";
   const profile = requestedProfile ? effectiveGlobal.mono.profiles[requestedProfile] : undefined;
+  let resolvedProfile = profile;
 
   if (requestedModel) {
-    model = selectionToModel(requestedModel, options.baseURLOverride ?? envBaseURL ?? projectConfig?.baseURL);
-    profileName = requestedProfile || `${model.provider}/${model.modelId}`;
+    model = await selectionToModel(cwd, requestedModel, options.baseURLOverride ?? envBaseURL ?? projectConfig?.baseURL);
+    profileName =
+      options.profileSelection
+      ?? envProfile
+      ?? `${model.provider}/${model.modelId}`;
     source = options.modelSelection ? "cli" : envModel ? "env" : source;
   } else if (profile) {
-    model = profileToModel(applyProjectOverride(profile, projectConfig, options.baseURLOverride ?? envBaseURL));
+    resolvedProfile = await normalizeProfileWithCatalog(
+      cwd,
+      applyProjectOverride(profile, projectConfig, options.baseURLOverride ?? envBaseURL),
+      requestedProfile
+    );
+    model = profileToModel(resolvedProfile);
   } else {
     const builtin = getBuiltinModels()[0];
     model = {
@@ -95,22 +108,24 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
     profileName = "default";
   }
 
+  ensureSupportedModel(model, requestedProfile ?? profileName);
+
   const apiKey = directApiKey
-    ?? (profile?.apiKeyRef ? resolveApiKeyRef(profile.apiKeyRef, secrets) : undefined)
+    ?? (resolvedProfile?.apiKeyRef ? resolveApiKeyRef(resolvedProfile.apiKeyRef, secrets) : undefined)
     ?? (projectConfig?.apiKeyRef ? resolveApiKeyRef(projectConfig.apiKeyRef, secrets) : undefined)
     ?? (projectConfig?.apiKeyEnv && looksLikeInlineApiKey(projectConfig.apiKeyEnv) ? projectConfig.apiKeyEnv : undefined)
-    ?? (profile?.apiKeyEnv && looksLikeInlineApiKey(profile.apiKeyEnv) ? profile.apiKeyEnv : undefined)
+    ?? (resolvedProfile?.apiKeyEnv && looksLikeInlineApiKey(resolvedProfile.apiKeyEnv) ? resolvedProfile.apiKeyEnv : undefined)
     ?? (projectConfig?.apiKeyEnv ? process.env[projectConfig.apiKeyEnv] : undefined)
-    ?? (profile?.apiKeyEnv ? process.env[profile.apiKeyEnv] : undefined)
+    ?? (resolvedProfile?.apiKeyEnv ? process.env[resolvedProfile.apiKeyEnv] : undefined)
     ?? (model.apiKeyEnv ? process.env[model.apiKeyEnv] : undefined);
 
   const apiKeySource: ResolvedMonoConfig["source"]["apiKey"] = directApiKey
     ? "env"
-    : profile?.apiKeyRef || projectConfig?.apiKeyRef
+    : resolvedProfile?.apiKeyRef || projectConfig?.apiKeyRef
       ? apiKey ? "local-secrets" : "none"
-      : looksLikeInlineApiKey(projectConfig?.apiKeyEnv) || looksLikeInlineApiKey(profile?.apiKeyEnv)
+      : looksLikeInlineApiKey(projectConfig?.apiKeyEnv) || looksLikeInlineApiKey(resolvedProfile?.apiKeyEnv)
         ? apiKey ? "config-inline" : "none"
-      : profile?.apiKeyEnv || projectConfig?.apiKeyEnv || model.apiKeyEnv
+      : resolvedProfile?.apiKeyEnv || projectConfig?.apiKeyEnv || model.apiKeyEnv
         ? apiKey ? "provider-env" : "none"
         : "none";
 
@@ -137,18 +152,26 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
 export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoConfigSummary> {
   const store = new MonoConfigStore(cwd);
   const sources = await loadResolverSources(store);
-  const resolved = await resolveMonoConfig({ cwd });
+  let resolvedMemoryDir = store.paths.projectMemoryDir;
+  let resolvedProfileName: string | undefined;
+  try {
+    const resolved = await resolveMonoConfig({ cwd });
+    resolvedMemoryDir = resolved.memory.storePath;
+    resolvedProfileName = resolved.profileName;
+  } catch {
+    // Keep config summary available even when the current default profile is invalid.
+  }
   return {
     configDir: store.paths.globalDir,
     globalConfigPath: store.paths.globalConfigPath,
     projectConfigPath: store.paths.projectConfigPath,
     sessionsDir: store.paths.globalSessionsDir,
-    memoryDir: resolved.memory.storePath,
+    memoryDir: resolvedMemoryDir,
     defaultProfile:
       sources.globalConfig?.mono.defaultProfile
       ?? sources.legacyAgentsGlobalConfig?.mono?.defaultProfile
       ?? Object.keys(sources.legacyProfiles ?? {}).at(0),
-    resolvedProfile: resolved.profileName,
+    resolvedProfile: resolvedProfileName,
     hasAnyProfiles:
       Object.keys(resolveProfileMap(sources)).length > 0
   };
@@ -244,13 +267,133 @@ function resolveSelectedProfileSource(options: {
   return "builtin";
 }
 
-function selectionToModel(selection: string, baseURLOverride?: string): UnifiedModel {
+async function selectionToModel(cwd: string, selection: string, baseURLOverride?: string): Promise<UnifiedModel> {
   if (selection.includes("/")) {
     const [provider, ...rest] = selection.split("/");
-    return createFallbackModel(provider, rest.join("/"), baseURLOverride);
+    const canonicalProvider = canonicalizeProviderId(provider);
+    const modelId = rest.join("/");
+    const catalogProvider = await getCatalogProvider(cwd, canonicalProvider);
+    const catalogModel = catalogProvider ? await getCatalogModel(cwd, canonicalProvider, modelId) : undefined;
+    if (catalogProvider && catalogModel) {
+      if (!catalogProvider.supported || !catalogModel.supported) {
+        throw createUnsupportedCatalogModelError(selection, catalogProvider.npm ?? catalogModel.npm);
+      }
+      const normalized = catalogModelToUnifiedModel(catalogProvider, catalogModel);
+      return {
+        ...normalized,
+        baseURL: baseURLOverride ?? normalized.baseURL
+      };
+    }
+    return createFallbackModel(canonicalProvider, modelId, baseURLOverride);
+  }
+
+  for (const catalogModel of await listCatalogModels(cwd)) {
+    if (catalogModel.id === selection) {
+      const catalogProvider = await getCatalogProvider(cwd, catalogModel.providerId);
+      if (catalogProvider) {
+        const normalized = catalogModelToUnifiedModel(catalogProvider, catalogModel);
+        return {
+          ...normalized,
+          baseURL: baseURLOverride ?? normalized.baseURL
+        };
+      }
+    }
+  }
+
+  const catalog = await getModelsCatalog(cwd);
+  for (const provider of Object.values(catalog)) {
+    const catalogModel = provider.models[selection];
+    if (!catalogModel) {
+      continue;
+    }
+    if (!provider.supported || !catalogModel.supported) {
+      throw createUnsupportedCatalogModelError(`${provider.id}/${catalogModel.id}`, provider.npm ?? catalogModel.npm);
+    }
+    const normalized = catalogModelToUnifiedModel(provider, catalogModel);
+    return {
+      ...normalized,
+      baseURL: baseURLOverride ?? normalized.baseURL
+    };
   }
 
   return createFallbackModel("openai", selection, baseURLOverride ?? resolveBaseURL("openai"));
+}
+
+async function normalizeProfileWithCatalog(
+  cwd: string,
+  profile: MonoProfileConfig,
+  profileName: string
+): Promise<MonoProfileConfig> {
+  const provider = await getCatalogProvider(cwd, profile.provider);
+  const model = provider ? await getCatalogModel(cwd, profile.provider, profile.modelId) : undefined;
+
+  if (!provider || !model) {
+    return {
+      ...profile,
+      transport: normalizeModelTransport(profile)
+    };
+  }
+
+  if (!provider.supported || !model.supported) {
+    throw createUnsupportedCatalogModelError(`${profile.provider}/${profile.modelId}`, provider.npm ?? model.npm, profileName);
+  }
+
+  const normalized = catalogModelToUnifiedModel(provider, model, {
+    runtimeProviderKey: profile.runtimeProviderKey
+  });
+  const existingBaseURL = profile.baseURL?.trim();
+  return {
+    ...profile,
+    provider: normalized.provider,
+    modelId: normalized.modelId,
+    family: normalized.family,
+    transport: normalizeModelTransport({
+      family: normalized.family,
+      transport: normalized.transport ?? profile.transport,
+      runtimeProviderKey: normalized.runtimeProviderKey ?? profile.runtimeProviderKey
+    }),
+    runtimeProviderKey: normalized.runtimeProviderKey ?? profile.runtimeProviderKey,
+    providerFactory: normalized.providerFactory ?? profile.providerFactory,
+    baseURL: shouldPreserveProfileBaseURL(profile, normalized, existingBaseURL) ? existingBaseURL : normalized.baseURL,
+    apiKeyEnv: profile.apiKeyEnv ?? normalized.apiKeyEnv,
+    supportsTools: normalized.supportsTools,
+    supportsReasoning: normalized.supportsReasoning,
+    contextWindow: normalized.contextWindow
+  };
+}
+
+function shouldPreserveProfileBaseURL(
+  profile: Pick<MonoProfileConfig, "baseURL" | "runtimeProviderKey">,
+  normalized: Pick<UnifiedModel, "baseURL" | "runtimeProviderKey">,
+  existingBaseURL: string | undefined
+): existingBaseURL is string {
+  if (!existingBaseURL) {
+    return false;
+  }
+
+  if (profile.runtimeProviderKey && profile.runtimeProviderKey === normalized.runtimeProviderKey) {
+    return true;
+  }
+
+  return !profile.runtimeProviderKey && existingBaseURL !== normalized.baseURL;
+}
+
+function ensureSupportedModel(model: UnifiedModel, profileName: string): void {
+  if (isSupportedUnifiedModel(model)) {
+    return;
+  }
+
+  throw new Error(
+    `Profile "${profileName}" uses ${model.provider}/${model.modelId} with unsupported transport ${model.transport ?? "unknown"} (${model.family})`
+  );
+}
+
+function createUnsupportedCatalogModelError(selection: string, npm?: string, profileName?: string): Error {
+  const source = profileName ? `Profile "${profileName}"` : `Model "${selection}"`;
+  const transport = npm ?? "unknown";
+  return new Error(
+    `${source} uses catalog transport ${transport}, which mono cannot route with the current adapters`
+  );
 }
 
 function applyProjectOverride(profile: MonoProfileConfig, projectConfig: MonoProjectConfig | undefined, baseURLOverride?: string): MonoProfileConfig {

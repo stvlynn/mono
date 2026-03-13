@@ -1,14 +1,15 @@
 import { Box, Text } from "ink";
 import { useCallback } from "react";
 import type { ApprovalDialog as ApprovalDialogType } from "../types/ui.js";
+import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
-import { useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
+import type { RawKey } from "../hooks/useRawKeypress.js";
 
 export function ApprovalDialog({ dialog }: { dialog: ApprovalDialogType }) {
   const actions = useUIActions();
 
   const handleKeypress = useCallback((input: string, key: RawKey) => {
-    if (key.ctrl && input === "c") {
+    if (key.ctrl && key.name === "c") {
       void actions.handleInterrupt();
       return;
     }
@@ -25,7 +26,7 @@ export function ApprovalDialog({ dialog }: { dialog: ApprovalDialogType }) {
     }
   }, [actions, dialog]);
 
-  useRawKeypress(handleKeypress, { isActive: true });
+  useForegroundKeypress(handleKeypress);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>

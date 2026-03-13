@@ -1,7 +1,7 @@
 import type { ConversationMessage, UnifiedModel } from "@mono/shared";
-import { xsaiAnthropicAdapter, xsaiOpenAICompatibleAdapter, type LlmRunOptions, type ModelAdapter } from "./adapters/index.js";
+import { xsaiAnthropicAdapter, xsaiGeminiAdapter, xsaiOpenAICompatibleAdapter, type LlmRunOptions, type ModelAdapter } from "./adapters/index.js";
 
-const ADAPTERS: ModelAdapter[] = [xsaiAnthropicAdapter, xsaiOpenAICompatibleAdapter];
+const ADAPTERS: ModelAdapter[] = [xsaiAnthropicAdapter, xsaiGeminiAdapter, xsaiOpenAICompatibleAdapter];
 
 export function getAdapterForModel(model: UnifiedModel): ModelAdapter {
   const adapter = ADAPTERS.find((item) => item.supports(model));

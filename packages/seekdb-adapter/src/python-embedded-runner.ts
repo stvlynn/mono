@@ -9,6 +9,11 @@ interface PythonBridgeResponse {
   error?: string;
 }
 
+interface ProcessErrorWithOutput extends Error {
+  stdout?: string;
+  stderr?: string;
+}
+
 function resolveBridgeScript(): string {
   const distCandidate = fileURLToPath(new URL("./scripts/embedded_bridge.py", import.meta.url));
   if (existsSync(distCandidate)) {
@@ -56,20 +61,43 @@ export class SeekDbPythonEmbeddedRunner implements SeekDbRunner {
   }
 
   private async invoke(payload: { statements?: string[]; query?: string }): Promise<PythonBridgeResponse> {
-    const { stdout } = await runProcess({
-      command: this.config.pythonExecutable,
-      args: [this.bridgeScriptPath],
-      input: JSON.stringify({
-        pythonModule: this.config.pythonModule,
-        embeddedPath: this.config.embeddedPath,
-        ...payload
-      }),
-      timeoutMs: this.config.timeoutMs
+    const rawPayload = JSON.stringify({
+      pythonModule: this.config.pythonModule,
+      embeddedPath: this.config.embeddedPath,
+      ...payload
     });
+
+    let stdout: string;
+    try {
+      ({ stdout } = await runProcess({
+        command: this.config.pythonExecutable,
+        args: [this.bridgeScriptPath],
+        input: rawPayload,
+        timeoutMs: this.config.timeoutMs
+      }));
+    } catch (error) {
+      const bridgeResponse = tryParseBridgeResponse((error as ProcessErrorWithOutput).stdout);
+      if (bridgeResponse && !bridgeResponse.ok) {
+        throw new Error(bridgeResponse.error ?? "SeekDB embedded bridge returned an error");
+      }
+      throw error;
+    }
+
     const response = JSON.parse(stdout) as PythonBridgeResponse;
     if (!response.ok) {
       throw new Error(response.error ?? "SeekDB embedded bridge returned an error");
     }
     return response;
+  }
+}
+
+function tryParseBridgeResponse(stdout: string | undefined): PythonBridgeResponse | null {
+  if (!stdout?.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(stdout) as PythonBridgeResponse;
+  } catch {
+    return null;
   }
 }

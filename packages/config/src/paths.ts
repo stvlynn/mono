@@ -6,6 +6,7 @@ export interface MonoConfigPaths {
   globalConfigPath: string;
   globalSecretsPath: string;
   globalSessionsDir: string;
+  globalModelsCatalogPath: string;
   globalMemoryDir: string;
   globalRulesDir: string;
   globalSkillsDir: string;
@@ -42,6 +43,7 @@ export function getMonoConfigPaths(cwd = process.cwd()): MonoConfigPaths {
     globalConfigPath: join(globalDir, "config.json"),
     globalSecretsPath: join(globalDir, "local", "secrets.json"),
     globalSessionsDir: join(globalDir, "sessions"),
+    globalModelsCatalogPath: join(globalDir, "cache", "models.dev.json"),
     globalMemoryDir: join(globalDir, "memories"),
     globalRulesDir: join(globalDir, "rules"),
     globalSkillsDir: join(globalDir, "skills"),

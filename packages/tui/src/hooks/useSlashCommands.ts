@@ -28,6 +28,9 @@ export function useSlashCommands(actions: UIActions) {
       case "model":
         await actions.openModelDialog(parsed.argsText || undefined);
         return true;
+      case "connect":
+        await actions.openConnectDialog(parsed.argsText || undefined);
+        return true;
       case "auth":
         actions.openAuthInfo();
         return true;
@@ -41,7 +44,7 @@ export function useSlashCommands(actions: UIActions) {
         await actions.openTreeDialog(parsed.argsText || undefined);
         return true;
       case "quit":
-        actions.exitApp();
+        await actions.requestShutdown();
         return true;
       case "settings":
         actions.openSettings();
@@ -54,6 +57,15 @@ export function useSlashCommands(actions: UIActions) {
         return true;
       case "theme":
         actions.openSettings();
+        return true;
+      case "thinking":
+        actions.toggleThinkingVisibility();
+        return true;
+      case "markdown":
+        actions.toggleAssistantMarkdown();
+        return true;
+      case "tools":
+        actions.toggleToolDetails();
         return true;
       default:
         actions.setStatus(`Command not implemented: ${command.fullName}`);

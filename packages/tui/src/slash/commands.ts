@@ -23,9 +23,19 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     name: "model",
     fullName: "/model",
-    description: "Open model selector",
+    description: "Switch among configured models",
     usage: "/model [query]",
     aliases: ["models", "mdl"],
+    kind: "selector",
+    source: "builtin",
+    executeMode: "open-selector"
+  },
+  {
+    name: "connect",
+    fullName: "/connect",
+    description: "Connect a provider and save a model profile",
+    usage: "/connect [query]",
+    aliases: ["login"],
     kind: "selector",
     source: "builtin",
     executeMode: "open-selector"
@@ -113,6 +123,34 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandDefinition[] = [
     fullName: "/theme",
     description: "Open theme preferences",
     usage: "/theme",
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "thinking",
+    fullName: "/thinking",
+    description: "Toggle assistant thinking visibility",
+    usage: "/thinking",
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "markdown",
+    fullName: "/markdown",
+    description: "Toggle assistant Markdown rendering",
+    usage: "/markdown",
+    kind: "action",
+    source: "builtin",
+    executeMode: "direct"
+  },
+  {
+    name: "tools",
+    fullName: "/tools",
+    description: "Toggle tool detail visibility",
+    usage: "/tools",
+    aliases: ["tooldetails"],
     kind: "action",
     source: "builtin",
     executeMode: "direct"

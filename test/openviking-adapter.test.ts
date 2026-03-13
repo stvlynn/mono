@@ -259,7 +259,11 @@ describe("OpenViking shadow exporter", () => {
       input: "inspect package.json",
       compacted: ["Read package.json", "Found scripts"],
       output: "Summarized package metadata.",
-      detailed: [{ type: "user", text: "inspect package.json" }],
+      detailed: [
+        { type: "user", text: "inspect package.json" },
+        { type: "tool_call", toolName: "read", args: { path: "package.json" } },
+        { type: "tool_result", toolName: "read", output: "{\"name\":\"mono\"}" }
+      ],
       tags: [],
       files: ["package.json"],
       tools: ["read"]
@@ -282,6 +286,9 @@ describe("OpenViking shadow exporter", () => {
       role: "assistant",
       content: expect.stringContaining("Execution summary:")
     });
+    expect((postedBodies[1] as { content: string }).content).toContain("Detailed trace:");
+    expect((postedBodies[1] as { content: string }).content).toContain("Tool call read:");
+    expect((postedBodies[1] as { content: string }).content).toContain("Tool result read:");
     expect(calls.some((call) => call.url.endsWith("/api/v1/sessions/ov-shadow-1/extract"))).toBe(true);
     expect(calls.some((call) => call.url.endsWith("/api/v1/sessions/ov-shadow-1") && call.method === "DELETE")).toBe(true);
   });

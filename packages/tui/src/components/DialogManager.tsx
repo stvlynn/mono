@@ -3,6 +3,7 @@ import { useUIState } from "../contexts/UIStateContext.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
 import { HelpDialog } from "./HelpDialog.js";
 import { InfoDialog } from "./InfoDialog.js";
+import { InputDialog } from "./InputDialog.js";
 import { ListDialog } from "./ListDialog.js";
 import { SessionBrowser } from "./SessionBrowser.js";
 
@@ -18,6 +19,7 @@ export function DialogManager() {
       {dialog.type === "help" ? <HelpDialog /> : null}
       {dialog.type === "info" ? <InfoDialog dialog={dialog} /> : null}
       {dialog.type === "approval" ? <ApprovalDialog dialog={dialog} /> : null}
+      {dialog.type === "input" ? <InputDialog dialog={dialog} /> : null}
       {dialog.type === "list" && dialog.kind === "session" ? <SessionBrowser dialog={dialog} /> : null}
       {dialog.type === "list" && dialog.kind !== "session" ? <ListDialog dialog={dialog} /> : null}
     </Box>

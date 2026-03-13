@@ -3,9 +3,12 @@ import { AppHeader } from "./AppHeader.js";
 import { HistoryItemDisplay } from "./HistoryItemDisplay.js";
 import { LoadingIndicator } from "./LoadingIndicator.js";
 import { useUIState } from "../contexts/UIStateContext.js";
+import { useSettings } from "../contexts/SettingsContext.js";
+import { MarkdownRenderer } from "./MarkdownRenderer.js";
 
 function PendingTools() {
   const { pendingTools, waitingCopy } = useUIState();
+  const { settings } = useSettings();
   if (pendingTools.length === 0) {
     return null;
   }
@@ -21,7 +24,8 @@ function PendingTools() {
           <Text>
             {tool.status === "running" ? "…" : tool.status === "done" ? "✓" : tool.status === "error" ? "x" : "-"} {tool.name}
           </Text>
-          {tool.output ? <Text dimColor>{tool.output}</Text> : null}
+          <Text dimColor>{tool.summary}</Text>
+          {settings.toolDetailsVisible && tool.detail ? <Text dimColor>{tool.detail}</Text> : null}
         </Box>
       ))}
     </Box>
@@ -29,7 +33,8 @@ function PendingTools() {
 }
 
 function PendingAssistant() {
-  const { pendingAssistant, running, waitingCopy } = useUIState();
+  const { pendingAssistant, running } = useUIState();
+  const { settings } = useSettings();
   if (!pendingAssistant && !running) {
     return null;
   }
@@ -39,11 +44,13 @@ function PendingAssistant() {
       <Text bold color="cyan">
         Assistant
       </Text>
-      {pendingAssistant?.thinking ? <Text dimColor>{pendingAssistant.thinking}</Text> : null}
+      {pendingAssistant?.thinking ? (
+        settings.thinkingVisible ? <Text dimColor>{pendingAssistant.thinking}</Text> : <Text dimColor>Thinking hidden while streaming</Text>
+      ) : null}
       {pendingAssistant?.text ? (
-        <Text>{pendingAssistant.text}</Text>
+        <MarkdownRenderer content={pendingAssistant.text} enabled={settings.assistantMarkdownEnabled} />
       ) : (
-        <LoadingIndicator label={waitingCopy?.kind === "tool_running" ? "Working..." : waitingCopy?.message ?? "Working..."} />
+        <LoadingIndicator />
       )}
     </Box>
   );

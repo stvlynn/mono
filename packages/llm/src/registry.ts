@@ -1,11 +1,20 @@
-import { getBuiltinModels, getMonoConfigSummary, listProfiles, resolveMonoConfig } from "@mono/config";
+import {
+  canonicalizeProviderId,
+  catalogModelToUnifiedModel,
+  createFallbackModel,
+  getBuiltinModels,
+  getMonoConfigSummary,
+  listCatalogProviders,
+  listProfiles,
+  resolveMonoConfig
+} from "@mono/config";
 import type { MonoConfigSummary, ResolvedMonoConfig, UnifiedModel } from "@mono/shared";
 
 export interface RegistryOptions {
   cwd?: string;
 }
 
-interface LoadedProfile {
+export interface LoadedProfile {
   name: string;
   model: UnifiedModel;
 }
@@ -27,13 +36,24 @@ export class ModelRegistry {
   }
 
   async load(): Promise<void> {
+    this.models.clear();
+    for (const builtin of getBuiltinModels()) {
+      this.models.set(this.keyFor(builtin.provider, builtin.modelId), builtin);
+    }
     this.profiles.clear();
+    for (const provider of await listCatalogProviders(this.cwd)) {
+      for (const catalogModel of Object.values(provider.models).filter((model) => model.supported)) {
+        const model = catalogModelToUnifiedModel(provider, catalogModel);
+        this.models.set(this.keyFor(model.provider, model.modelId), model);
+      }
+    }
     for (const profile of await listProfiles(this.cwd)) {
       const model = {
         provider: profile.profile.provider,
         modelId: profile.profile.modelId,
         family: profile.profile.family,
         transport: profile.profile.transport,
+        runtimeProviderKey: profile.profile.runtimeProviderKey,
         baseURL: profile.profile.baseURL,
         apiKeyEnv: profile.profile.apiKeyEnv,
         providerFactory: profile.profile.providerFactory,
@@ -71,23 +91,18 @@ export class ModelRegistry {
 
     if (selection.includes("/")) {
       const [provider, ...rest] = selection.split("/");
+      const canonicalProvider = canonicalizeProviderId(provider);
       const modelId = rest.join("/");
       const exact = this.models.get(this.keyFor(provider, modelId));
       if (exact) {
         return exact;
       }
+      const canonical = this.models.get(this.keyFor(canonicalProvider, modelId));
+      if (canonical) {
+        return canonical;
+      }
 
-      return {
-        provider,
-        modelId,
-        family: provider === "anthropic" ? "anthropic" : provider === "gemini" ? "gemini" : "openai-compatible",
-        transport: "xsai-openai-compatible",
-        baseURL: baseURLFor(provider),
-        apiKeyEnv: apiKeyEnvFor(provider),
-        providerFactory: providerFactoryFor(provider),
-        supportsTools: true,
-        supportsReasoning: true
-      };
+      return createFallbackModel(canonicalProvider, modelId);
     }
 
     for (const model of this.models.values()) {
@@ -96,17 +111,7 @@ export class ModelRegistry {
       }
     }
 
-    return {
-      provider: "openai",
-      modelId: selection,
-      family: "openai-compatible",
-      transport: "xsai-openai-compatible",
-      baseURL: baseURLFor("openai"),
-      apiKeyEnv: apiKeyEnvFor("openai"),
-      providerFactory: "openai",
-      supportsTools: true,
-      supportsReasoning: true
-    };
+    return createFallbackModel("openai", selection);
   }
 
   list(): UnifiedModel[] {
@@ -119,61 +124,5 @@ export class ModelRegistry {
 
   listProfiles(): LoadedProfile[] {
     return [...this.profiles.entries()].map(([name, model]) => ({ name, model }));
-  }
-}
-
-function baseURLFor(provider: string): string {
-  if (process.env.MONO_BASE_URL) {
-    return process.env.MONO_BASE_URL;
-  }
-
-  switch (provider) {
-    case "moonshot":
-      return "https://api.moonshot.cn/v1";
-    case "anthropic":
-      return "https://api.anthropic.com/v1";
-    case "openrouter":
-      return "https://openrouter.ai/api/v1";
-    case "google":
-    case "gemini":
-      return "https://generativelanguage.googleapis.com/v1beta/openai";
-    case "xai":
-      return "https://api.x.ai/v1";
-    default:
-      return "https://api.openai.com/v1";
-  }
-}
-
-function apiKeyEnvFor(provider: string): string | undefined {
-  switch (provider) {
-    case "moonshot":
-      return "MOONSHOT_API_KEY";
-    case "anthropic":
-      return "ANTHROPIC_API_KEY";
-    case "openrouter":
-      return "OPENROUTER_API_KEY";
-    case "google":
-    case "gemini":
-      return "GEMINI_API_KEY";
-    case "xai":
-      return "XAI_API_KEY";
-    default:
-      return "OPENAI_API_KEY";
-  }
-}
-
-function providerFactoryFor(provider: string): UnifiedModel["providerFactory"] {
-  switch (provider) {
-    case "anthropic":
-      return "anthropic";
-    case "openrouter":
-      return "openrouter";
-    case "openai":
-      return "openai";
-    case "google":
-    case "gemini":
-      return "google";
-    default:
-      return "custom";
   }
 }

@@ -1,10 +1,26 @@
 import { Box, Text } from "ink";
 import { useCallback, useMemo, useState } from "react";
 import type { ListDialog as ListDialogType } from "../types/ui.js";
+import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";
 import { fuzzyScore } from "../slash/fuzzy.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";
 import { isBackwardDeleteInput, isForwardDeleteInput } from "../input-keys.js";
-import { isInsertableInput, useRawKeypress, type RawKey } from "../hooks/useRawKeypress.js";
+import { isInsertableInput, type RawKey } from "../hooks/useRawKeypress.js";
+
+const MAX_VISIBLE_ITEMS = 12;
+
+export function getVisibleListWindow(selectedIndex: number, totalItems: number, windowSize = MAX_VISIBLE_ITEMS): {
+  start: number;
+  end: number;
+} {
+  const safeWindowSize = Math.max(windowSize, 1);
+  const maxStart = Math.max(totalItems - safeWindowSize, 0);
+  const start = Math.max(0, Math.min(Math.max(selectedIndex - safeWindowSize + 1, 0), maxStart));
+  return {
+    start,
+    end: start + safeWindowSize
+  };
+}
 
 export function ListDialog({ dialog }: { dialog: ListDialogType }) {
   const actions = useUIActions();
@@ -21,9 +37,17 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
       .sort((left, right) => (right.match?.score ?? 0) - (left.match?.score ?? 0))
       .map((entry) => entry.item);
   }, [dialog.items, query]);
+  const visibleWindow = useMemo(
+    () => getVisibleListWindow(selectedIndex, filteredItems.length),
+    [filteredItems.length, selectedIndex]
+  );
+  const visibleItems = useMemo(
+    () => filteredItems.slice(visibleWindow.start, visibleWindow.end),
+    [filteredItems, visibleWindow.end, visibleWindow.start]
+  );
 
   const handleKeypress = useCallback((input: string, key: RawKey) => {
-    if (key.ctrl && input === "c") {
+    if (key.ctrl && key.name === "c") {
       void actions.handleInterrupt();
       return;
     }
@@ -34,7 +58,14 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
     if (key.return) {
       const selected = filteredItems[selectedIndex];
       if (selected) {
-        void dialog.onSelect(selected.value);
+        void (async () => {
+          try {
+            await dialog.onSelect(selected.value);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error || "Failed to apply selection");
+            actions.setStatus(message && message !== "undefined" ? message : "Failed to apply selection");
+          }
+        })();
       }
       return;
     }
@@ -57,7 +88,7 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
     }
   }, [actions, dialog, filteredItems, selectedIndex]);
 
-  useRawKeypress(handleKeypress, { isActive: true });
+  useForegroundKeypress(handleKeypress);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
@@ -65,15 +96,19 @@ export function ListDialog({ dialog }: { dialog: ListDialogType }) {
       <Text dimColor>{dialog.hint ?? "Type to filter, Enter select, Esc close"}</Text>
       <Text>filter: {query || "<all>"}</Text>
       <Box flexDirection="column" marginTop={1}>
-        {filteredItems.slice(0, 12).map((item, index) => (
+        {visibleItems.map((item, index) => {
+          const absoluteIndex = visibleWindow.start + index;
+
+          return (
           <Box key={item.value} flexDirection="column" marginBottom={1}>
-            <Text color={index === selectedIndex ? "cyan" : undefined}>
-              {index === selectedIndex ? "› " : "  "}
+            <Text color={absoluteIndex === selectedIndex ? "cyan" : undefined}>
+              {absoluteIndex === selectedIndex ? "› " : "  "}
               {item.label}
             </Text>
             {item.description ? <Text dimColor>{item.description}</Text> : null}
           </Box>
-        ))}
+          );
+        })}
         {filteredItems.length === 0 ? <Text dimColor>No matching items</Text> : null}
       </Box>
     </Box>

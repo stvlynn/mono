@@ -19,7 +19,7 @@ import {
 } from "@mono/shared";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ModelRegistry, runConversation } from "@mono/llm";
+import { ModelRegistry, runConversation, type LoadedProfile } from "@mono/llm";
 import {
   DeterministicMemoryCompactor,
   FolderMemoryStore,
@@ -103,6 +103,11 @@ export interface AgentState {
   currentTodoRecord?: TaskTodoRecord;
 }
 
+export interface ConfiguredModelProfile {
+  name: string;
+  model: UnifiedModel;
+}
+
 async function loadOpenVikingAdapter(): Promise<{
   OpenVikingRetrievalProvider: new (...args: any[]) => MemoryRetrievalProvider;
   OpenVikingShadowExporter: new (...args: any[]) => {
@@ -164,6 +169,7 @@ export class Agent {
   private readonly verificationMode?: VerificationMode;
   private requestApprovalHandler?: (request: ApprovalRequest) => Promise<boolean>;
   private initialized = false;
+  private registryLoaded = false;
   private modelSelection?: string;
   private profileSelection?: string;
   private baseURLOverride?: string;
@@ -196,7 +202,7 @@ export class Agent {
       return;
     }
 
-    await this.registry.load();
+    await this.ensureRegistryLoaded();
     const config = await this.registry.resolveConfig(this.modelSelection, this.profileSelection, this.baseURLOverride);
     const model = config.model;
     const configSummary = await this.registry.getConfigSummary();
@@ -340,17 +346,38 @@ export class Agent {
   }
 
   async listModels(): Promise<UnifiedModel[]> {
-    await this.initialize();
+    await this.ensureRegistryLoaded();
     return this.registry.list();
   }
 
   async listProfiles(): Promise<string[]> {
-    await this.initialize();
+    await this.ensureRegistryLoaded();
     return this.registry.listProfileNames();
   }
 
+  async listConfiguredProfiles(): Promise<ConfiguredModelProfile[]> {
+    await this.ensureRegistryLoaded();
+    return this.registry.listProfiles().map((profile: LoadedProfile) => ({
+      name: profile.name,
+      model: profile.model
+    }));
+  }
+
+  async refreshRegistry(): Promise<void> {
+    await this.registry.load();
+    this.registryLoaded = true;
+    if (this.initialized) {
+      this.state.configSummary = await this.registry.getConfigSummary();
+    }
+  }
+
   async setModel(selection: string): Promise<UnifiedModel> {
-    await this.initialize();
+    await this.ensureRegistryLoaded();
+    if (!this.initialized) {
+      this.modelSelection = selection;
+      await this.initialize();
+      return this.state.model;
+    }
     this.assertIdle("switch model");
     const model = this.registry.resolve(selection);
     this.modelSelection = selection;
@@ -364,7 +391,13 @@ export class Agent {
   }
 
   async setProfile(profile: string): Promise<ResolvedMonoConfig> {
-    await this.initialize();
+    await this.ensureRegistryLoaded();
+    if (!this.initialized) {
+      this.profileSelection = profile;
+      this.modelSelection = undefined;
+      await this.initialize();
+      return this.state.config;
+    }
     this.assertIdle("switch profile");
     this.profileSelection = profile;
     const resolved = await this.registry.resolveConfig(this.modelSelection, profile, this.baseURLOverride);
@@ -547,6 +580,15 @@ export class Agent {
     this.nextRunId += 1;
     this.activeRun = run;
     return run;
+  }
+
+  private async ensureRegistryLoaded(): Promise<void> {
+    if (this.registryLoaded) {
+      return;
+    }
+
+    await this.registry.load();
+    this.registryLoaded = true;
   }
 
   private isRunCurrent(runId: number): boolean {

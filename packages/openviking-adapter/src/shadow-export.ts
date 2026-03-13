@@ -1,5 +1,6 @@
 import type { MemoryRecord } from "@mono/shared";
 import { OpenVikingHttpClient } from "./client.js";
+import { buildAssistantShadowText } from "./shadow-text.js";
 import type { OpenVikingRetrievalOptions, OpenVikingShadowExportResult } from "./types.js";
 
 export class OpenVikingShadowExporter {
@@ -34,16 +35,4 @@ export class OpenVikingShadowExporter {
       await this.client.deleteSession(sessionId).catch(() => undefined);
     }
   }
-}
-
-function buildAssistantShadowText(record: MemoryRecord): string {
-  const compacted = record.compacted.map((line) => `- ${line}`).join("\n");
-  return [
-    record.output.trim(),
-    compacted ? "\nExecution summary:\n" + compacted : "",
-    record.detailed.length > 0 ? `\nDetailed steps captured: ${record.detailed.length}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .trim();
 }

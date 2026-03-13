@@ -64,7 +64,7 @@ class FakeSeekDbRunner implements SeekDbRunner {
       const limit = extractLimit(sql);
       return this.filterMemoryRecords(sessionId)
         .filter((record) =>
-          [record.input, record.output, ...record.compacted].some((line) => line.toLowerCase().includes(query.toLowerCase()))
+          buildSearchLines(record).some((line) => line.toLowerCase().includes(query.toLowerCase()))
         )
         .sort((left, right) => right.createdAt - left.createdAt)
         .slice(0, limit)
@@ -145,6 +145,38 @@ describe("SeekDB execution-memory backend", () => {
     const matches = await backend.searchByKeyword("prompt", { sessionId: "session-a" });
     expect(matches).toHaveLength(1);
     expect(matches[0]?.id).toBe("mem-2");
+  });
+
+  it("finds matches that only appear in detailed trace content", async () => {
+    const runner = new FakeSeekDbRunner();
+    const backend = new SeekDbExecutionMemoryBackend({
+      config: {
+        enabled: true,
+        mode: "mysql",
+        timeoutMs: 30_000,
+        mysqlBinary: "mysql",
+        database: "mono_eval",
+        mirrorSessionsOnly: true
+      },
+      runner
+    });
+
+    await backend.append(
+      createMemoryRecord({
+        id: "mem-detailed",
+        createdAt: 3,
+        sessionId: "session-a",
+        input: "inspect build failures",
+        output: "Summarized the failing command.",
+        compacted: ["Investigated build failure"],
+        detailed: [{ type: "tool_result", toolName: "bash", output: "vitest failed in package/tui" }]
+      })
+    );
+
+    const matches = await backend.searchByKeyword("package/tui", { sessionId: "session-a" });
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.id).toBe("mem-detailed");
+    expect(matches[0]?.matchedLines.some((line) => line.text.includes("package/tui"))).toBe(true);
   });
 });
 
@@ -385,4 +417,29 @@ function extractLimit(sql: string): number {
 function extractLikeFragment(sql: string): string {
   const match = sql.match(/LIKE\s+'%(.+?)%'/i);
   return match?.[1]?.replace(/\\%/g, "%").replace(/\\_/g, "_").replace(/\\\\/g, "\\") ?? "";
+}
+
+function buildSearchLines(record: MemoryRecord): string[] {
+  const lines = [record.input, record.output, ...record.compacted];
+  for (const item of record.detailed) {
+    if (item.type === "user") {
+      lines.push(item.text);
+      continue;
+    }
+    if (item.type === "assistant") {
+      if (item.text) {
+        lines.push(item.text);
+      }
+      if (item.thinking) {
+        lines.push(item.thinking);
+      }
+      continue;
+    }
+    if (item.type === "tool_call") {
+      lines.push(`${item.toolName} ${JSON.stringify(item.args)}`);
+      continue;
+    }
+    lines.push(`${item.toolName} ${item.output}`);
+  }
+  return lines;
 }

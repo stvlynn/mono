@@ -65,6 +65,12 @@ importers:
       '@mono/memory':
         specifier: workspace:*
         version: link:../memory
+      '@mono/openviking-adapter':
+        specifier: workspace:*
+        version: link:../openviking-adapter
+      '@mono/session':
+        specifier: workspace:*
+        version: link:../session
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
@@ -108,6 +114,18 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/openviking-adapter:
+    dependencies:
+      '@mono/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@mono/prompts':
+        specifier: workspace:*
+        version: link:../prompts
+      '@mono/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/pi-tui: {}
 
   packages/prompts:
@@ -115,6 +133,18 @@ importers:
       nunjucks:
         specifier: ^3.2.4
         version: 3.2.4
+
+  packages/seekdb-adapter:
+    dependencies:
+      '@mono/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@mono/prompts':
+        specifier: workspace:*
+        version: link:../prompts
+      '@mono/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/session:
     dependencies:
@@ -159,6 +189,9 @@ importers:
       ink:
         specifier: ^5.1.0
         version: 5.2.1(@types/react@18.3.28)(react@18.3.1)
+      marked:
+        specifier: ^15.0.12
+        version: 15.0.12
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -738,6 +771,11 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  marked@15.0.12:
+    resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
+    engines: {node: '>= 18'}
+    hasBin: true
 
   mimic-fn@2.1.0:
     resolution: {integrity: sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==}
@@ -1489,6 +1527,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  marked@15.0.12: {}
 
   mimic-fn@2.1.0: {}
 

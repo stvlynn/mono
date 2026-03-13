@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useStdin } from "ink";
 import { parseKey } from "../legacy-compat.js";
+import { restoreRawMode } from "../terminal-cleanup.js";
 
 export interface RawKey {
   name: string;
@@ -133,6 +134,80 @@ export function createRawKey(sequence: string): RawKey {
   return key;
 }
 
+export function bindRawKeypressListener(options: {
+  stdin: NodeJS.ReadStream;
+  setRawMode?: ((isEnabled: boolean) => void) | undefined;
+  onKeypress: (input: string, key: RawKey) => void;
+}): () => void {
+  options.setRawMode?.(true);
+
+  const emitSequence = (sequence: string) => {
+    options.onKeypress(sequence, createRawKey(sequence));
+  };
+
+  const handleData = (chunk: Buffer | string) => {
+    const input = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    for (const sequence of splitInputSequences(input)) {
+      emitSequence(sequence);
+    }
+  };
+
+  options.stdin.on("data", handleData);
+  return () => {
+    options.stdin.removeListener("data", handleData);
+    restoreRawMode(options.setRawMode);
+  };
+}
+
+export function splitInputSequences(input: string): string[] {
+  const sequences: string[] = [];
+
+  for (let index = 0; index < input.length;) {
+    if (input[index] !== "\u001b") {
+      const codePoint = input.codePointAt(index);
+      if (codePoint === undefined) {
+        break;
+      }
+      const sequence = String.fromCodePoint(codePoint);
+      sequences.push(sequence);
+      index += sequence.length;
+      continue;
+    }
+
+    const escapeSequence = readEscapeSequence(input, index);
+    sequences.push(escapeSequence.sequence);
+    index = escapeSequence.nextIndex;
+  }
+
+  return sequences;
+}
+
+function readEscapeSequence(input: string, startIndex: number): { sequence: string; nextIndex: number } {
+  const next = input[startIndex + 1];
+  if (!next) {
+    return { sequence: "\u001b", nextIndex: startIndex + 1 };
+  }
+
+  if (next === "[" || next === "O") {
+    let index = startIndex + 2;
+    while (index < input.length) {
+      const char = input[index];
+      if ((char >= "A" && char <= "Z") || (char >= "a" && char <= "z") || char === "~") {
+        return {
+          sequence: input.slice(startIndex, index + 1),
+          nextIndex: index + 1
+        };
+      }
+      index += 1;
+    }
+  }
+
+  return {
+    sequence: input.slice(startIndex, Math.min(startIndex + 2, input.length)),
+    nextIndex: Math.min(startIndex + 2, input.length)
+  };
+}
+
 export function useRawKeypress(
   onKeypress: (input: string, key: RawKey) => void,
   options: { isActive: boolean }
@@ -141,20 +216,15 @@ export function useRawKeypress(
 
   useEffect(() => {
     if (!options.isActive) {
+      restoreRawMode(setRawMode);
       return;
     }
 
-    setRawMode?.(true);
-
-    const handleData = (chunk: Buffer | string) => {
-      const input = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      onKeypress(input, createRawKey(input));
-    };
-
-    stdin.on("data", handleData);
-    return () => {
-      stdin.removeListener("data", handleData);
-    };
+    return bindRawKeypressListener({
+      stdin,
+      setRawMode,
+      onKeypress
+    });
   }, [onKeypress, options.isActive, setRawMode, stdin]);
 }
 

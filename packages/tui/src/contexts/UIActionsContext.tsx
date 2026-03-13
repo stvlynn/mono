@@ -2,20 +2,25 @@ import { createContext, useContext } from "react";
 
 export interface UIActions {
   submitPrompt: (prompt: string) => Promise<void>;
-  handleInterrupt: (context?: { hasInput?: boolean; clearInput?: () => void }) => Promise<void>;
+  handleInterrupt: () => Promise<void>;
   clearInterruptArming: () => void;
   openHelp: () => void;
   openSettings: () => void;
   openAuthInfo: () => void;
+  openConnectDialog: (initialFilter?: string) => Promise<void>;
   openModelDialog: (initialFilter?: string) => Promise<void>;
   openProfileDialog: (initialFilter?: string) => Promise<void>;
   openSessionDialog: (initialFilter?: string) => Promise<void>;
   openMemoryDialog: (initialFilter?: string) => Promise<void>;
   openTreeDialog: (initialFilter?: string) => Promise<void>;
   closeTopDialog: () => void;
-  exitApp: () => void;
+  dismissFatalError: () => void;
+  requestShutdown: () => Promise<void>;
   setStatus: (status: string) => void;
   toggleCleanUi: () => void;
+  toggleAssistantMarkdown: () => void;
+  toggleThinkingVisibility: () => void;
+  toggleToolDetails: () => void;
 }
 
 export const UIActionsContext = createContext<UIActions | null>(null);

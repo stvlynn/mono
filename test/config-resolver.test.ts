@@ -35,7 +35,7 @@ describe("config resolver", () => {
             modelId: "kimi-k2-turbo-preview",
             baseURL: "https://api.moonshot.cn/v1",
             family: "openai-compatible",
-            transport: "xsai-openai-compatible",
+            transport: "openai-compatible",
             providerFactory: "custom",
             apiKeyEnv: "MOONSHOT_API_KEY",
             supportsTools: true,
@@ -51,7 +51,177 @@ describe("config resolver", () => {
     const resolved = await resolveMonoConfig({ cwd });
 
     expect(resolved.profileName).toBe("default");
-    expect(resolved.model.provider).toBe("moonshot");
+    expect(resolved.model.provider).toBe("moonshotai");
     expect(resolved.source.profile).toBe("global-mono");
+  });
+
+  it("self-heals saved profiles to the catalog-declared interface when no runtime interface is pinned", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-minimax-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-minimax-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "cache", "models.dev.json"), {
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        minimax: {
+          id: "minimax",
+          canonicalId: "minimax",
+          name: "MiniMax",
+          env: ["MINIMAX_API_KEY"],
+          api: "https://api.minimax.io/anthropic/v1",
+          npm: "@ai-sdk/anthropic",
+          supported: true,
+          models: {
+            "MiniMax-M2.5-highspeed": {
+              id: "MiniMax-M2.5-highspeed",
+              name: "MiniMax-M2.5-highspeed",
+              providerId: "minimax",
+              canonicalProviderId: "minimax",
+              api: "https://api.minimax.io/anthropic/v1",
+              npm: "@ai-sdk/anthropic",
+              toolCall: true,
+              reasoning: true,
+              temperature: true,
+              attachment: false,
+              supported: true
+            }
+          }
+        }
+      }
+    });
+
+    const config: MonoGlobalConfig = {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "minimax",
+            modelId: "MiniMax-M2.5-highspeed",
+            baseURL: "https://api.minimax.io/anthropic/v1",
+            family: "anthropic",
+            transport: "xsai-openai-compatible" as never,
+            providerFactory: "custom",
+            apiKeyEnv: "MINIMAX_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    };
+
+    await writeJsonFile(join(configDir, "config.json"), config);
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.model.family).toBe("anthropic");
+    expect(resolved.model.runtimeProviderKey).toBe("minimax:anthropic");
+    expect(resolved.model.baseURL).toBe("https://api.minimax.io/anthropic/v1");
+  });
+
+  it("preserves legacy custom base URLs for catalog-backed profiles without a runtime key", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-minimax-proxy-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-minimax-proxy-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "cache", "models.dev.json"), {
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        minimax: {
+          id: "minimax",
+          canonicalId: "minimax",
+          name: "MiniMax",
+          env: ["MINIMAX_API_KEY"],
+          api: "https://api.minimax.io/anthropic/v1",
+          npm: "@ai-sdk/anthropic",
+          supported: true,
+          models: {
+            "MiniMax-M2.5-highspeed": {
+              id: "MiniMax-M2.5-highspeed",
+              name: "MiniMax-M2.5-highspeed",
+              providerId: "minimax",
+              canonicalProviderId: "minimax",
+              api: "https://api.minimax.io/anthropic/v1",
+              npm: "@ai-sdk/anthropic",
+              toolCall: true,
+              reasoning: true,
+              temperature: true,
+              attachment: false,
+              supported: true
+            }
+          }
+        }
+      }
+    });
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "minimax",
+            modelId: "MiniMax-M2.5-highspeed",
+            baseURL: "https://proxy.example/anthropic/v1",
+            family: "anthropic",
+            transport: "xsai-openai-compatible" as never,
+            providerFactory: "custom",
+            apiKeyEnv: "MINIMAX_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.model.runtimeProviderKey).toBe("minimax:anthropic");
+    expect(resolved.model.baseURL).toBe("https://proxy.example/anthropic/v1");
+  });
+
+  it("allows explicit model selection to bypass an unsupported default profile", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-explicit-model-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-explicit-model-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    const config: MonoGlobalConfig = {
+      version: 1,
+      mono: {
+        defaultProfile: "broken",
+        profiles: {
+          broken: {
+            provider: "unsupported",
+            modelId: "unsupported-model",
+            baseURL: "https://unsupported.example/v1",
+            family: "anthropic",
+            transport: "xsai-unsupported" as never,
+            providerFactory: "custom",
+            apiKeyEnv: "UNSUPPORTED_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    };
+
+    await writeJsonFile(join(configDir, "config.json"), config);
+
+    const resolved = await resolveMonoConfig({
+      cwd,
+      modelSelection: "openai/gpt-4.1-mini"
+    });
+
+    expect(resolved.profileName).toBe("openai/gpt-4.1-mini");
+    expect(resolved.model.provider).toBe("openai");
+    expect(resolved.model.modelId).toBe("gpt-4.1-mini");
   });
 });
