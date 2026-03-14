@@ -6,6 +6,7 @@ import {
 } from "@mono/shared";
 import {
   buildTelegramAuthorizedHelpText,
+  buildTelegramAuthorizedStatusText,
   buildTelegramGroupHelpText,
   buildTelegramPendingPairingText,
 } from "./help.js";
@@ -22,12 +23,19 @@ export async function processTelegramIncomingMessage(params: {
   config: MonoTelegramConfig;
   botIdentity: TelegramBotIdentity;
   message: TelegramIncomingMessage;
+  authorizedMessageMode?: "control" | "chat";
 }): Promise<TelegramCommandResult | null> {
   const cwd = params.cwd ?? process.cwd();
   const command = parseTelegramBotCommand(params.message.text, params.botIdentity.username);
 
   if (params.message.chatType === "private") {
-    return handlePrivateMessage({ cwd, config: params.config, message: params.message, command });
+    return handlePrivateMessage({
+      cwd,
+      config: params.config,
+      message: params.message,
+      command,
+      authorizedMessageMode: params.authorizedMessageMode ?? "control",
+    });
   }
 
   return handleGroupMessage({
@@ -65,6 +73,7 @@ async function handlePrivateMessage(params: {
   config: MonoTelegramConfig;
   message: TelegramIncomingMessage;
   command: { name: string; argsText: string } | null;
+  authorizedMessageMode: "control" | "chat";
 }): Promise<TelegramCommandResult | null> {
   const storeAllowFrom = await readTelegramAllowFromStore(params.cwd);
   const effectiveAllowFrom = mergeTelegramAllowFrom(params.config, storeAllowFrom);
@@ -105,19 +114,38 @@ async function handlePrivateMessage(params: {
   }
 
   if (params.command?.name === "help" || !params.command) {
+    if (!params.command && params.authorizedMessageMode === "chat") {
+      return {
+        ok: true,
+        title: "Telegram Chat Handoff",
+        lines: [],
+        status: "Authorized Telegram message handed off to chat",
+        handoffToChat: true,
+      };
+    }
     return {
       ok: true,
-      title: "Telegram Help",
-      lines: [buildTelegramAuthorizedHelpText()],
-      status: "Sent Telegram help",
+      title: "Telegram Control",
+      lines: [params.command ? buildTelegramAuthorizedHelpText() : buildTelegramAuthorizedStatusText()],
+      status: params.command ? "Sent Telegram help" : "Sent Telegram control status",
+    };
+  }
+
+  if (params.authorizedMessageMode === "chat") {
+    return {
+      ok: true,
+      title: "Telegram Chat Handoff",
+      lines: [],
+      status: "Authorized Telegram message handed off to chat",
+      handoffToChat: true,
     };
   }
 
   return {
     ok: true,
-    title: "Telegram Help",
-    lines: [buildTelegramAuthorizedHelpText()],
-    status: "Sent Telegram help",
+    title: "Telegram Control",
+    lines: [buildTelegramAuthorizedStatusText()],
+    status: "Sent Telegram control status",
   };
 }
 

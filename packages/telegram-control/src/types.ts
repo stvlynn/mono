@@ -1,3 +1,5 @@
+import type { TaskInput } from "@mono/shared";
+
 export interface TelegramPairingRequest {
   senderId: string;
   code: string;
@@ -26,6 +28,7 @@ export interface TelegramCommandResult {
   lines: string[];
   status: string;
   shouldReloadRuntime?: boolean;
+  handoffToChat?: boolean;
 }
 
 export interface TelegramControlEvent {
@@ -41,4 +44,9 @@ export interface TelegramIncomingMessage {
   username?: string;
   displayName?: string;
   text?: string;
+}
+
+export interface TelegramChatRequest {
+  input: TaskInput;
+  message: TelegramIncomingMessage;
 }

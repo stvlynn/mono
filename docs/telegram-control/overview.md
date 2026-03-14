@@ -233,7 +233,7 @@ This means the current Telegram control loop is tied to the interactive TUI proc
 
 Important current constraints:
 
-- Telegram control only handles pairing/help workflows, not agent chat execution
+- Telegram chat execution is only available while the interactive TUI process is running
 - the runtime only lives while the TUI process is running
 - there is no webhook mode
 - there is no group allowlist editing command yet; groups are still configured through config files

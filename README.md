@@ -13,6 +13,7 @@ mono is an AI-powered coding agent that provides a command-line interface for in
 - **File system tools**: Read, write, edit files with intelligent context
 - **Shell integration**: Execute bash commands with safety controls
 - **Session management**: Persistent sessions with memory compression
+- **Telegram control runtime**: Bot polling, DM pairing, and local allowlist management
 - **Project configuration**: Per-project profiles and settings
 - **Tool approval system**: Configurable approval flow for protected operations
 
@@ -87,6 +88,56 @@ mono -c "continue working on the feature"
 # Start fresh session (default)
 mono "start new task"
 ```
+
+### Telegram Account Pairing
+
+`mono` supports Telegram DM pairing. The intended flow is:
+
+1. Save the Telegram bot token:
+
+```bash
+mono telegram token <BOT_TOKEN>
+```
+
+2. Start the interactive TUI so the Telegram control runtime begins polling:
+
+```bash
+mono
+```
+
+3. Have the Telegram user send a DM to the bot. If the user is not approved yet, the bot replies with a short pairing code.
+
+4. Approve that code from the operator side:
+
+```bash
+# From the local CLI
+mono pair telegram code <CODE>
+
+# Or inside the mono TUI
+/pair telegram code <CODE>
+```
+
+5. After approval, the Telegram user id is stored in the local DM allowlist. While the `mono` TUI is running, the user can message the bot directly; `/help` is still available for Telegram control commands.
+
+Useful shortcuts and checks:
+
+```bash
+# Inspect Telegram runtime status, token presence, policy, and pending requests
+mono telegram status
+
+# Directly allowlist a Telegram user id without a pairing code
+mono pair telegram userid <USER_ID>
+
+# Optionally save the bot's Telegram user id for diagnostics
+mono pair telegram botid <BOT_ID>
+```
+
+Notes:
+
+- DM pairing is the default policy for Telegram private chats.
+- The polling runtime starts in the TUI, not in one-shot `--print` mode.
+- Telegram chat currently runs through the same in-process agent as the TUI, so only one active task can run at a time.
+- Approved DM users are stored under the local mono state directory.
 
 ## Architecture
 

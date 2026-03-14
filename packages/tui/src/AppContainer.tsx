@@ -5,6 +5,7 @@ import { catalogModelToUnifiedModel, listCatalogModels, listCatalogProviders, up
 import {
   executePairCommand,
   executeTelegramCommand,
+  type TelegramChatRequest,
   TelegramControlRuntime,
   type TelegramControlEvent,
 } from "@mono/telegram-control";
@@ -24,6 +25,7 @@ import { useRepeatedKeyPress } from "./hooks/useRepeatedKeyPress.js";
 import { useTuiShutdown } from "./hooks/useTuiShutdown.js";
 import { useSlashCommands } from "./hooks/useSlashCommands.js";
 import { createConfiguredProfileItems, createMemoryItems, createSessionItems, createSkillItems, createTreeItems } from "./selector-items.js";
+import { formatTelegramChatReply } from "./telegram-chat-reply.js";
 import { FatalScreen } from "./components/FatalScreen.js";
 import { TuiErrorBoundary } from "./components/TuiErrorBoundary.js";
 import { isRecoverableRuntimeError } from "./error-classification.js";
@@ -472,6 +474,27 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
             : "info";
     pushToast(level, event.message);
   }, [pushToast]);
+
+  const handleTelegramChatMessage = useCallback(async (request: TelegramChatRequest): Promise<string | null> => {
+    if (agent.isRunning()) {
+      return "Agent is busy with another task. Try again in a moment.";
+    }
+
+    const senderLabel =
+      request.message.username
+      ? `@${request.message.username}`
+      : request.message.displayName ?? request.message.senderId ?? request.message.chatId;
+    setStatus(`Handling Telegram message from ${senderLabel}`);
+
+    try {
+      const result = await agent.runTask(request.input);
+      return formatTelegramChatReply(result);
+    } catch (error) {
+      const message = errorMessage(error, "Failed to handle Telegram chat");
+      reportUiError(error, "Failed to handle Telegram chat");
+      return `Request failed: ${message}`;
+    }
+  }, [agent, reportUiError, setStatus]);
 
   const formatAttachmentStatus = useCallback((attachments: InputImageAttachment[]): string => {
     if (attachments.length === 0) {
@@ -1093,6 +1116,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     const runtime = new TelegramControlRuntime({
       cwd: process.cwd(),
       onEvent: handleTelegramRuntimeEvent,
+      onChatMessage: handleTelegramChatMessage,
     });
     telegramRuntimeRef.current = runtime;
     void runtime.start().catch((error) => {
@@ -1103,7 +1127,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       telegramRuntimeRef.current = null;
       void runtime.stop();
     };
-  }, [handleTelegramRuntimeEvent, reportUiError]);
+  }, [handleTelegramChatMessage, handleTelegramRuntimeEvent, reportUiError]);
 
   useEffect(() => {
     const handleUnhandledRejection = (reason: unknown) => {

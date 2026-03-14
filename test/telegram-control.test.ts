@@ -199,4 +199,95 @@ describe("telegram control", () => {
     expect(helpResult?.lines.join("\n")).toContain("/pair telegram code <CODE>");
     expect(await readTelegramAllowFromStore(cwd)).toEqual(["1111", "9999"]);
   });
+
+  it("treats code approvals and direct userid approvals as the same authorization outcome", async () => {
+    const { cwd } = await createTempWorkspace("mono-telegram-pairing-equivalence");
+
+    const config = createDefaultTelegramConfig();
+
+    const pendingResult = await processTelegramIncomingMessage({
+      cwd,
+      config,
+      botIdentity: { id: "9001", username: "mono_bot", displayName: "mono" },
+      message: {
+        messageId: 1,
+        chatId: "7001",
+        chatType: "private",
+        senderId: "7001",
+        username: "new_user",
+        displayName: "New User",
+        text: "hello",
+      },
+    });
+
+    const codeMatch = pendingResult?.lines.join("\n").match(/Pairing code: ([A-Z0-9]+)/);
+    expect(codeMatch?.[1]).toBeTruthy();
+
+    await allowTelegramUserId("1111", cwd);
+
+    const approvalResult = await processTelegramIncomingMessage({
+      cwd,
+      config,
+      botIdentity: { id: "9001", username: "mono_bot", displayName: "mono" },
+      message: {
+        messageId: 2,
+        chatId: "1111",
+        chatType: "private",
+        senderId: "1111",
+        username: "owner",
+        displayName: "Owner",
+        text: `/pair telegram code ${codeMatch![1]}`,
+      },
+    });
+
+    expect(approvalResult?.ok).toBe(true);
+    expect(approvalResult?.lines.join("\n")).toContain("Approved Telegram user 7001");
+    expect(await readTelegramAllowFromStore(cwd)).toEqual(["1111", "7001"]);
+
+    const approvedSenderResult = await processTelegramIncomingMessage({
+      cwd,
+      config,
+      botIdentity: { id: "9001", username: "mono_bot", displayName: "mono" },
+      message: {
+        messageId: 3,
+        chatId: "7001",
+        chatType: "private",
+        senderId: "7001",
+        username: "new_user",
+        displayName: "New User",
+        text: "hello again",
+      },
+    });
+
+    expect(approvedSenderResult?.ok).toBe(true);
+    expect(approvedSenderResult?.lines.join("\n")).toContain("Access is approved.");
+    expect(approvedSenderResult?.lines.join("\n")).toContain("Use /help to list the available commands.");
+    expect(approvedSenderResult?.lines.join("\n")).not.toContain("Telegram pairing commands:");
+  });
+
+  it("hands authorized private messages off to chat mode when requested", async () => {
+    const { cwd } = await createTempWorkspace("mono-telegram-chat-handoff");
+
+    const config = createDefaultTelegramConfig();
+    await allowTelegramUserId("7001", cwd);
+
+    const result = await processTelegramIncomingMessage({
+      cwd,
+      config,
+      botIdentity: { id: "9001", username: "mono_bot", displayName: "mono" },
+      message: {
+        messageId: 1,
+        chatId: "7001",
+        chatType: "private",
+        senderId: "7001",
+        username: "alice",
+        displayName: "Alice",
+        text: "explain this repo",
+      },
+      authorizedMessageMode: "chat",
+    });
+
+    expect(result?.handoffToChat).toBe(true);
+    expect(result?.lines).toEqual([]);
+  });
 });

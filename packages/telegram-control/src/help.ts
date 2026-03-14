@@ -55,10 +55,21 @@ export function buildTelegramPendingPairingText(params: {
   ].join("\n");
 }
 
+export function buildTelegramAuthorizedStatusText(): string {
+  return [
+    "mono Telegram control",
+    "",
+    "Access is approved.",
+    "This runtime currently supports Telegram control commands only.",
+    "Use /help to list the available commands.",
+  ].join("\n");
+}
+
 export function buildTelegramApprovedText(): string {
   return [
     "Telegram access approved.",
-    "You can message the bot again now.",
+    "If mono TUI is running, you can message the bot now.",
+    "Use /help to see the available Telegram control commands.",
   ].join("\n");
 }
 

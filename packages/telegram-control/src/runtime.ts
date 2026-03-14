@@ -1,9 +1,10 @@
 import { resolveMonoConfig } from "@mono/config";
-import { createDistributor } from "@mono/im-platform";
-import type { Distributor } from "@mono/im-platform";
+import { createBuiltInProvider, createDistributor, inboundMessageToTaskInput } from "@mono/im-platform";
+import type { Distributor, ImPlatformProvider } from "@mono/im-platform";
 import type { MonoTelegramConfig } from "@mono/shared";
 import type {
   TelegramBotIdentity,
+  TelegramChatRequest,
   TelegramControlEvent,
   TelegramIncomingMessage,
 } from "./types.js";
@@ -31,8 +32,12 @@ interface TelegramApiUser {
 interface TelegramApiMessage {
   message_id: number;
   chat: TelegramApiChat;
+  message_thread_id?: number;
   from?: TelegramApiUser;
   text?: string;
+  caption?: string;
+  photo?: Array<{ file_id?: string }>;
+  document?: { file_id?: string; mime_type?: string; file_name?: string };
 }
 
 interface TelegramApiUpdate {
@@ -49,14 +54,18 @@ export class TelegramControlRuntime {
   #config?: MonoTelegramConfig;
   #botIdentity?: TelegramBotIdentity;
   #distributor?: Distributor;
+  #provider?: ImPlatformProvider;
   #token?: string;
+  readonly #onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
 
   constructor(options: {
     cwd?: string;
     onEvent?: (event: TelegramControlEvent) => void;
+    onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
   } = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#onEvent = options.onEvent;
+    this.#onChatMessage = options.onChatMessage;
   }
 
   async start(): Promise<void> {
@@ -73,15 +82,14 @@ export class TelegramControlRuntime {
 
     this.#config = telegram;
     this.#token = telegram.botToken;
+    this.#provider = createBuiltInProvider({
+      platform: "telegram",
+      id: "telegram-control",
+      botToken: telegram.botToken,
+      defaultTextFormat: "markdown",
+    });
     this.#distributor = createDistributor({
-      builtInProviders: [
-        {
-          platform: "telegram",
-          id: "telegram-control",
-          botToken: telegram.botToken,
-          defaultTextFormat: "markdown",
-        },
-      ],
+      providers: [this.#provider],
     });
     this.#botIdentity = await this.#fetchBotIdentity();
     this.#abortController = new AbortController();
@@ -105,6 +113,7 @@ export class TelegramControlRuntime {
       await this.#loopPromise.catch(() => {});
     }
     this.#abortController = undefined;
+    this.#provider = undefined;
     this.#emit({ type: "stopped", message: "Telegram runtime stopped." });
   }
 
@@ -123,20 +132,27 @@ export class TelegramControlRuntime {
           if (!message) {
             continue;
           }
-          await this.#handleIncomingMessage(message);
+          await this.#handleIncomingMessage(update, message);
         }
       } catch (error) {
         if (signal.aborted) {
           return;
         }
-        const message = error instanceof Error ? error.message : String(error);
+        if (isTelegramPollingConflict(error)) {
+          this.#emit({
+            type: "warning",
+            message: "Telegram polling stopped: another bot instance is already using getUpdates for this token.",
+          });
+          return;
+        }
+        const message = formatTelegramRuntimeError(error);
         this.#emit({ type: "error", message: `Telegram polling failed: ${message}` });
         await wait(1500, signal).catch(() => {});
       }
     }
   }
 
-  async #handleIncomingMessage(message: TelegramIncomingMessage): Promise<void> {
+  async #handleIncomingMessage(update: TelegramApiUpdate, message: TelegramIncomingMessage): Promise<void> {
     if (!this.#config || !this.#botIdentity || !this.#distributor) {
       return;
     }
@@ -146,12 +162,18 @@ export class TelegramControlRuntime {
       config: this.#config,
       botIdentity: this.#botIdentity,
       message,
+      authorizedMessageMode: this.#onChatMessage ? "chat" : "control",
     });
+
+    const notifier = createNotifierFromDistributor(this.#distributor);
+    if (result?.handoffToChat) {
+      await this.#handleChatHandoff(update, message, notifier);
+      return;
+    }
     if (!result) {
       return;
     }
 
-    const notifier = createNotifierFromDistributor(this.#distributor);
     await notifier.sendText(message.chatId, result.lines.join("\n"));
 
     if (result.title.includes("Pairing")) {
@@ -161,6 +183,37 @@ export class TelegramControlRuntime {
 
     if (result.title.includes("Approved")) {
       this.#emit({ type: "pairing-approved", message: result.status });
+    }
+  }
+
+  async #handleChatHandoff(
+    update: TelegramApiUpdate,
+    message: TelegramIncomingMessage,
+    notifier: ReturnType<typeof createNotifierFromDistributor>,
+  ): Promise<void> {
+    if (!this.#onChatMessage || !this.#provider?.normalizeIncomingMessage) {
+      return;
+    }
+
+    try {
+      const inbound = await this.#provider.normalizeIncomingMessage(update);
+      if (!inbound) {
+        return;
+      }
+
+      const reply = await this.#onChatMessage({
+        input: inboundMessageToTaskInput(inbound),
+        message,
+      });
+      if (!reply?.trim()) {
+        return;
+      }
+
+      await notifier.sendText(message.chatId, reply);
+    } catch (error) {
+      const formatted = formatTelegramRuntimeError(error);
+      this.#emit({ type: "error", message: `Telegram chat handling failed: ${formatted}` });
+      await notifier.sendText(message.chatId, `Request failed: ${formatted}`).catch(() => {});
     }
   }
 
@@ -187,14 +240,21 @@ export class TelegramControlRuntime {
       throw new Error("Telegram runtime token is not configured");
     }
 
-    const response = await fetch(`https://api.telegram.org/bot${this.#token}/${method}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`https://api.telegram.org/bot${this.#token}/${method}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error) {
+      throw new Error(`Telegram ${method} request failed`, {
+        cause: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
     const payload = (await response.json()) as TelegramUpdateResponse<Result>;
     if (!response.ok || !payload.ok) {
       throw new Error(payload.description ?? response.statusText);
@@ -250,4 +310,30 @@ async function wait(ms: number, signal: AbortSignal): Promise<void> {
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function formatTelegramRuntimeError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const cause = error.cause;
+  if (!(cause instanceof Error)) {
+    return error.message;
+  }
+
+  if (!cause.message || cause.message === error.message) {
+    return error.message;
+  }
+
+  return `${error.message}: ${cause.message}`;
+}
+
+export function isTelegramPollingConflict(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = [error.message, error.cause instanceof Error ? error.cause.message : ""].join(" ").toLowerCase();
+  return message.includes("terminated by other getupdates request");
 }
