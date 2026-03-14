@@ -1,0 +1,28 @@
+services:
+  mono:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mono:local
+    env_file:
+      - .env
+    working_dir: /workspace
+    environment:
+      HOME: /data/home
+      MONO_CONFIG_DIR: /data/home/.mono
+      MONO_BOOTSTRAP_PROFILE: ${MONO_BOOTSTRAP_PROFILE:-default}
+      MONO_BOOTSTRAP_PROVIDER: ${MONO_BOOTSTRAP_PROVIDER:-}
+      MONO_BOOTSTRAP_MODEL: ${MONO_BOOTSTRAP_MODEL:-}
+      MONO_BOOTSTRAP_BASE_URL: ${MONO_BOOTSTRAP_BASE_URL:-}
+      MONO_BOOTSTRAP_ALWAYS: ${MONO_BOOTSTRAP_ALWAYS:-0}
+      MONO_API_KEY: ${MONO_API_KEY:-}
+      MONO_TELEGRAM_ENABLED: ${MONO_TELEGRAM_ENABLED:-0}
+      MONO_TELEGRAM_BOT_TOKEN: ${MONO_TELEGRAM_BOT_TOKEN:-}
+      MONO_TELEGRAM_BOT_ID: ${MONO_TELEGRAM_BOT_ID:-}
+      MONO_TELEGRAM_DM_POLICY: ${MONO_TELEGRAM_DM_POLICY:-pairing}
+    volumes:
+      - .:/workspace
+      - ${MONO_CONFIG_DIR_HOST:-${HOME}/.mono}:/data/home/.mono
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

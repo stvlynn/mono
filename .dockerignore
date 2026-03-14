@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+packages/*/dist
+coverage
+.turbo
+.DS_Store
+*.log
+.env
+.mono/memories
+.mono/settings
+.mono/skills
+.mono/rules
