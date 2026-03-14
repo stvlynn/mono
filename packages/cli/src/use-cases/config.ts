@@ -1,4 +1,4 @@
-import { MonoConfigStore, validateChannelsConfig } from "@mono/config";
+import { MonoConfigStore, persistProjectProfileSelection, validateChannelsConfig } from "@mono/config";
 import type { MonoGlobalConfig, MonoProjectConfig } from "@mono/shared";
 import { getPathValue, parseConfigValue, setPathValue } from "../config-utils.js";
 
@@ -40,8 +40,5 @@ export async function runConfigSet(key: string, value: string): Promise<{ key: s
 }
 
 export async function runBindProject(profile: string): Promise<MonoProjectConfig> {
-  const store = new MonoConfigStore(process.cwd());
-  const projectConfig: MonoProjectConfig = { profile };
-  await store.writeProjectConfig(projectConfig);
-  return projectConfig;
+  return persistProjectProfileSelection(profile, process.cwd());
 }

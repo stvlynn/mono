@@ -617,4 +617,21 @@ describe("Agent", () => {
 
     delete process.env.MONO_CONFIG_DIR;
   });
+
+  it("reports whether a model override is active", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+
+    const defaultAgent = new Agent({ cwd });
+    expect(defaultAgent.hasModelSelectionOverride()).toBe(false);
+
+    const overriddenAgent = new Agent({ cwd, model: "openai/gpt-4.1-mini" });
+    expect(overriddenAgent.hasModelSelectionOverride()).toBe(true);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
 });

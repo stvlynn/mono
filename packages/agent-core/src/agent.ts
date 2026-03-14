@@ -557,6 +557,10 @@ export class Agent {
     return this.state.model;
   }
 
+  hasModelSelectionOverride(): boolean {
+    return this.modelSelection !== undefined;
+  }
+
   getProfileName(): string {
     return this.state.profileName;
   }

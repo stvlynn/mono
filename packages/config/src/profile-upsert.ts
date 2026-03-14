@@ -5,6 +5,7 @@ import {
   getCatalogProvider
 } from "./catalog.js";
 import { canonicalizeProviderId, createFallbackModel, normalizeModelTransport } from "./defaults.js";
+import { persistProjectProfileSelection } from "./project-profile.js";
 import { MonoConfigStore } from "./store.js";
 
 export async function upsertProfile(options: {
@@ -47,14 +48,7 @@ export async function upsertProfile(options: {
     await store.setProfileSecret(options.profile, options.apiKey);
   }
   if (options.bindProject) {
-    await store.writeProjectConfig({
-      profile: options.profile,
-      provider,
-      modelId: options.model,
-      baseURL: options.baseURL,
-      apiKeyEnv: options.apiKey ? undefined : options.apiKeyEnv,
-      apiKeyRef: options.apiKey ? `local:${options.profile}` : undefined
-    });
+    await persistProjectProfileSelection(options.profile, cwd);
   }
 }
 

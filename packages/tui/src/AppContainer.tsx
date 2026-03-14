@@ -1,7 +1,15 @@
 import { Box, Text, useApp, useStdin } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatContextReportLines, loadAvailableSkills, type Agent } from "@mono/agent-core";
-import { catalogModelToUnifiedModel, listCatalogModels, listCatalogProviders, upsertProfile, type CatalogProvider, type CatalogTransportCandidate } from "@mono/config";
+import {
+  catalogModelToUnifiedModel,
+  listCatalogModels,
+  listCatalogProviders,
+  persistProjectProfileSelection,
+  upsertProfile,
+  type CatalogProvider,
+  type CatalogTransportCandidate
+} from "@mono/config";
 import {
   executePairCommand,
   executeTelegramCommand,
@@ -559,6 +567,14 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     }));
   }, []);
 
+  const setSelectedProfile = useCallback(async (profileName: string) => {
+    const resolved = await agent.setProfile(profileName);
+    if (!agent.hasModelSelectionOverride()) {
+      await persistProjectProfileSelection(resolved.profileName, process.cwd());
+    }
+    return resolved;
+  }, [agent]);
+
   const openConfiguredProfileSelector = useCallback(async (
     kind: "model" | "profile",
     initialFilter?: string
@@ -589,7 +605,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
         kind === "model" ? "Configured Models" : "Profiles",
         items,
         async (value) => {
-          const resolved = await agent.setProfile(value);
+          const resolved = await setSelectedProfile(value);
           closeTopDialog();
           setUiState((current) => ({
             ...current,
@@ -608,7 +624,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
           : "Type to filter profiles, Enter switch, Esc close"
       );
     }, kind === "model" ? "Failed to open configured models" : "Failed to open profile list");
-  }, [agent, closeTopDialog, openSafeListDialog, runUiAction]);
+  }, [agent, closeTopDialog, openSafeListDialog, runUiAction, setSelectedProfile]);
 
   const finishConnectFlow = useCallback(async (
     provider: CatalogProvider,
@@ -649,7 +665,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     });
 
     await agent.refreshRegistry();
-    const resolved = await agent.setProfile(profileName);
+    const resolved = await setSelectedProfile(profileName);
     setUiState((current) => ({
       ...current,
       initialized: true,
@@ -657,7 +673,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       fatalError: undefined,
       status: `Connected ${resolved.model.provider}/${resolved.model.modelId} as ${profileName}`
     }));
-  }, [agent]);
+  }, [agent, setSelectedProfile]);
 
   const openConnectKeyDialog = useCallback((
     provider: CatalogProvider,

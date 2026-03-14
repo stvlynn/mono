@@ -62,6 +62,14 @@ describe("tui app bootstrap", () => {
     expect(appContainer).not.toContain("setDefault: configuredProfiles.length === 0");
   });
 
+  it("persists the selected profile back into project config", () => {
+    const appContainer = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
+
+    expect(appContainer).toContain("persistProjectProfileSelection");
+    expect(appContainer).toContain("if (!agent.hasModelSelectionOverride())");
+    expect(appContainer).toContain("await persistProjectProfileSelection(resolved.profileName, process.cwd())");
+  });
+
   it("keeps runtime request errors out of the fatal path", () => {
     const source = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
 
