@@ -132,6 +132,8 @@ Inside the container, `MONO_CONFIG_DIR` defaults to `/data/home/.mono`, so sessi
 
 If `.env` provides `MONO_BOOTSTRAP_PROVIDER`, `MONO_BOOTSTRAP_MODEL`, and `MONO_API_KEY`, the container will create a default `mono` profile on first boot.
 
+If `.env` also sets `MONO_TELEGRAM_ENABLED=1` and `MONO_TELEGRAM_BOT_TOKEN`, the bootstrap config will include `mono.channels.telegram` so Telegram control can start immediately.
+
 ### One-shot commands
 
 ```bash
