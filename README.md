@@ -111,6 +111,42 @@ The system implements a multi-layer approval system:
 - **Intelligent compression**: Summarizes older messages to stay within token limits
 - **File tracking**: Records which files were accessed or modified
 
+## Docker
+
+mono can also run in Docker with a persistent `~/.mono` config volume.
+
+### Quick start
+
+```bash
+docker compose build
+cp .env.example .env
+docker compose up -d
+```
+
+The compose file mounts:
+
+- the repository into `/workspace`
+- `${HOME}/.mono` into `/data/home/.mono`
+
+Inside the container, `MONO_CONFIG_DIR` defaults to `/data/home/.mono`, so sessions, memory, cache, state, and local secrets survive container restarts.
+
+If `.env` provides `MONO_BOOTSTRAP_PROVIDER`, `MONO_BOOTSTRAP_MODEL`, and `MONO_API_KEY`, the container will create a default `mono` profile on first boot.
+
+### One-shot commands
+
+```bash
+docker compose run --rm mono "node /app/packages/cli/dist/bin.js --help"
+docker compose run --rm mono "node /app/packages/cli/dist/bin.js --print hello"
+```
+
+### Interactive attach
+
+```bash
+docker attach $(docker compose ps -q mono)
+```
+
+For more detail, see [docs/operations/docker.md](docs/operations/docker.md).
+
 ## Development
 
 ### Project Structure
