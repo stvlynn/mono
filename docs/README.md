@@ -47,6 +47,18 @@ The root [`README.md`](../README.md) stays intentionally lightweight. The detail
 11. [`cli/commands.md`](./cli/commands.md)
 12. [`architecture/skills-system.md`](./architecture/skills-system.md)
 
+
+## Markdown-Only Docs Framework
+
+The docs in this repository are intentionally **plain Markdown** so they stay easy to read for agents and contributors in terminals.
+
+- Entry point: [`docs/index.md`](./index.md)
+- Agent repo index: [`AGENTS.md`](../AGENTS.md)
+- Directory map and maintenance notes: this file (`docs/README.md`)
+- Section-level entry docs: `overview.md` or `README.md` within each folder
+
+When adding new docs, update `docs/index.md` and the relevant section index so navigation remains explicit without a site generator.
+
 ## Writing Rules
 
 When extending this doc set:
