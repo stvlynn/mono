@@ -5,6 +5,14 @@ packages/*/dist
 .xagent
 *.log
 
+# TypeScript build artifacts emitted into package source trees
+packages/*/src/*.js
+packages/*/src/*.js.map
+packages/*/src/*.d.ts
+packages/*/src/*.d.ts.map
+!packages/prompts/src/nunjucks.d.ts
+!packages/tools/src/diff.d.ts
+
 .agents
 .mono
 !.mono/
