@@ -34,11 +34,23 @@ cp .env.example .env
 Fill in at least:
 
 - `MONO_API_KEY`
-- `MONO_BOOTSTRAP_PROVIDER`
+- `MONO_BOOTSTRAP_PROVIDER` (`openai`, `openrouter`, `anthropic`, `google`/`gemini`)
 - `MONO_BOOTSTRAP_MODEL`
 - optional `MONO_BOOTSTRAP_BASE_URL`
 
 On startup, the entrypoint will create a default profile if `config.json` does not already exist in the mounted config directory.
+
+
+## Telegram channel bootstrap
+
+To bring Telegram channel capability online at container startup, set:
+
+- `MONO_TELEGRAM_ENABLED=1`
+- `MONO_TELEGRAM_BOT_TOKEN=<your_bot_token>`
+- optional `MONO_TELEGRAM_BOT_ID=<bot_user_id>`
+- optional `MONO_TELEGRAM_DM_POLICY=pairing|allowlist|open|disabled`
+
+These values are written into `mono.channels.telegram` during first-boot bootstrap.
 
 ## Run
 
