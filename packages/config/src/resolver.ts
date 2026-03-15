@@ -8,6 +8,7 @@ import type {
   MonoProjectConfig,
   MonoSecretsConfig,
   ResolvedMonoConfig,
+  MonoSettingsConfig,
   UnifiedModel
 } from "@mono/shared";
 import { readJsonFile } from "@mono/shared";
@@ -18,6 +19,7 @@ import {
   createDefaultContextConfig,
   createDefaultGlobalConfig,
   createDefaultMemoryConfig,
+  createDefaultSettingsConfig,
   createDefaultMemoryV2Config,
   createDefaultSeekDbConfig,
   createFallbackModel,
@@ -141,6 +143,7 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
       apiKey,
       baseURL: options.baseURLOverride ?? envBaseURL ?? model.baseURL
     },
+    settings: resolveSettingsConfig(effectiveGlobal),
     memory: resolveMemoryConfig({
       globalConfig: effectiveGlobal,
       projectConfig,
@@ -163,6 +166,14 @@ function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChan
   const resolved = resolveChannelsConfig(globalConfig);
   validateTelegramConfig(resolved.telegram);
   return resolved;
+}
+
+function resolveSettingsConfig(globalConfig: MonoGlobalConfig): MonoSettingsConfig {
+  const defaults = createDefaultSettingsConfig();
+  return {
+    ...defaults,
+    ...(globalConfig.mono.settings ?? {})
+  };
 }
 
 export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoConfigSummary> {

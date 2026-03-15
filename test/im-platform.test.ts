@@ -171,6 +171,41 @@ describe("@mono/im-platform", () => {
     expect(body.direct_messages_topic_id).toBe(9001);
   });
 
+  it("maps platform actions to Telegram inline keyboard buttons", async () => {
+    const { fetchImpl, calls } = createFetchStub([
+      { ok: true, result: { message_id: 104, chat: { id: 77 } } },
+    ]);
+    const distributor = createDistributor({
+      builtInProviders: [createTelegramConfig(fetchImpl)],
+    });
+
+    await distributor.dispatch({
+      provider: "primary-dispatch",
+      target: {
+        kind: "dm",
+        address: 77,
+      },
+      content: {
+        type: "text",
+        text: "Approve bash?",
+      },
+      options: {
+        actions: [[
+          { id: "approval:a1:approve", label: "Approve", style: "primary" },
+          { id: "approval:a1:deny", label: "Deny", style: "danger" },
+        ]],
+      },
+    });
+
+    const body = await readJsonBody(calls[0]!);
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [[
+        { text: "Approve", callback_data: "approval:a1:approve" },
+        { text: "Deny", callback_data: "approval:a1:deny" },
+      ]],
+    });
+  });
+
   it("dispatches media groups through sendMediaGroup", async () => {
     const { fetchImpl, calls } = createFetchStub([
       {
@@ -350,6 +385,50 @@ describe("@mono/im-platform", () => {
     });
     expect(calls[0]?.url.endsWith("/getFile")).toBe(true);
     expect(calls[1]?.url).toContain("/file/botbot-token/photos/file_10.jpg");
+  });
+
+  it("normalizes Telegram callback queries into platform-agnostic actions", async () => {
+    const { fetchImpl } = createTelegramInboundFetchStub();
+    const provider = createBuiltInProvider(createTelegramConfig(fetchImpl));
+
+    const action = await provider.normalizeIncomingAction?.({
+      update_id: 3,
+      callback_query: {
+        id: "callback-1",
+        data: "approval:a1:approve",
+        from: {
+          id: 7,
+          username: "alice",
+          first_name: "Alice",
+        },
+        message: {
+          message_id: 25,
+          chat: {
+            id: 42,
+            type: "private",
+          },
+        },
+      },
+    });
+
+    expect(action).toEqual({
+      provider: "primary-dispatch",
+      platform: "telegram",
+      interactionId: "callback-1",
+      actionId: "approval:a1:approve",
+      sender: {
+        id: "7",
+        username: "alice",
+        displayName: "Alice",
+      },
+      target: {
+        kind: "dm",
+        address: 42,
+        topicId: undefined,
+      },
+      remoteMessageId: "25",
+      raw: expect.any(Object),
+    });
   });
 
   it("ignores unsupported inbound Telegram media payloads", async () => {

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDefaultContextConfig, createDefaultMemoryConfig } from "../packages/config/src/defaults.js";
+import { createDefaultContextConfig, createDefaultMemoryConfig, createDefaultSettingsConfig } from "../packages/config/src/defaults.js";
 import { assemblePromptContext } from "../packages/agent-core/src/context-assembly.js";
 import type { ResolvedMonoConfig, UnifiedModel } from "../packages/shared/src/index.js";
 
@@ -26,8 +26,23 @@ function createResolvedConfig(): ResolvedMonoConfig {
   return {
     profileName: "default",
     model,
+    settings: createDefaultSettingsConfig(),
     memory: createDefaultMemoryConfig(),
     context: createDefaultContextConfig(),
+    channels: {
+      telegram: {
+        enabled: false,
+        allowFrom: [],
+        groupAllowFrom: [],
+        groups: {},
+        approval: {
+          allowChats: [],
+          commandDenylist: [],
+        },
+        dmPolicy: "pairing",
+        pollingTimeoutSeconds: 20,
+      },
+    },
     source: {
       profile: "builtin",
       apiKey: "none"

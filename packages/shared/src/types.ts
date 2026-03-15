@@ -122,6 +122,7 @@ export interface MonoProjectConfig {
 }
 
 export type MonoTelegramDmPolicy = "pairing" | "allowlist" | "open" | "disabled";
+export type MonoSensitiveActionMode = "allow_all" | "blacklist" | "strict";
 
 export interface MonoTelegramApprovalConfig {
   allowChats: string[];
@@ -148,6 +149,12 @@ export interface MonoTelegramConfig {
 
 export interface MonoChannelsConfig {
   telegram: MonoTelegramConfig;
+}
+
+export interface MonoSettingsConfig {
+  approvalMode: "default" | "always-ask" | "auto-approve-safe";
+  theme: string;
+  sensitiveActionMode: MonoSensitiveActionMode;
 }
 
 export interface MonoMemoryConfig {
@@ -493,10 +500,7 @@ export interface MonoGlobalConfig {
   mono: {
     defaultProfile: string;
     profiles: Record<string, MonoProfileConfig>;
-    settings?: {
-      approvalMode?: "default" | "always-ask" | "auto-approve-safe";
-      theme?: string;
-    };
+    settings?: Partial<MonoSettingsConfig>;
     memory?: Partial<MonoMemoryConfig>;
     context?: Partial<MonoContextConfig>;
     channels?: Partial<MonoChannelsConfig>;
@@ -512,6 +516,7 @@ export interface MonoSecretsConfig {
 export interface ResolvedMonoConfig {
   profileName: string;
   model: UnifiedModel;
+  settings: MonoSettingsConfig;
   memory: MonoMemoryConfig;
   context: MonoContextConfig;
   channels: MonoChannelsConfig;

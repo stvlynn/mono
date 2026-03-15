@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { createInputImageAttachment, guessImageMimeTypeFromPath, type UserInputOrigin } from "@mono/shared";
-import type { DispatchTarget, InboundMessage, InboundMessageSender } from "../../types.js";
+import type { DispatchTarget, InboundAction, InboundMessage, InboundMessageSender } from "../../types.js";
 import { TelegramBotApiClient } from "./telegram-bot-api-client.js";
 
 interface TelegramFileDescriptor {
@@ -48,6 +48,15 @@ interface TelegramUpdate {
   edited_message?: TelegramIncomingMessage;
   channel_post?: TelegramIncomingMessage;
   edited_channel_post?: TelegramIncomingMessage;
+  callback_query?: TelegramCallbackQuery;
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramSender;
+  data?: string;
+  message?: TelegramIncomingMessage;
+  inline_message_id?: string;
 }
 
 interface TelegramGetFileResult {
@@ -83,12 +92,42 @@ export async function normalizeTelegramIncomingMessage(options: {
   };
 }
 
+export async function normalizeTelegramIncomingAction(options: {
+  providerId: string;
+  platform: string;
+  payload: unknown;
+}): Promise<InboundAction | null> {
+  const query = extractCallbackQuery(options.payload);
+  if (!query?.data || !query.message) {
+    return null;
+  }
+
+  return {
+    provider: options.providerId,
+    platform: options.platform,
+    interactionId: query.id,
+    actionId: query.data,
+    sender: resolveSenderFromUser(query.from),
+    target: resolveTarget(query.message),
+    remoteMessageId: String(query.message.message_id),
+    raw: options.payload,
+  };
+}
+
 function extractIncomingMessage(payload: unknown): TelegramIncomingMessage | undefined {
   if (!payload || typeof payload !== "object") {
     return undefined;
   }
   const update = payload as TelegramUpdate;
   return update.message ?? update.edited_message ?? update.channel_post ?? update.edited_channel_post;
+}
+
+function extractCallbackQuery(payload: unknown): TelegramCallbackQuery | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+  const update = payload as TelegramUpdate;
+  return update.callback_query;
 }
 
 async function extractIncomingAttachments(
@@ -152,18 +191,9 @@ async function downloadIncomingAttachment(
 
 function resolveSender(message: TelegramIncomingMessage): InboundMessageSender {
   const sender = message.from ?? message.sender_chat;
-  if (!sender) {
-    return {
-      id: "unknown",
-      displayName: "unknown",
-    };
-  }
-
-  const displayName = [sender.first_name, sender.last_name].filter(Boolean).join(" ").trim() || sender.title;
-  return {
-    id: String(sender.id),
-    username: sender.username,
-    displayName: displayName || sender.username,
+  return sender ? resolveSenderFromUser(sender) : {
+    id: "unknown",
+    displayName: "unknown",
   };
 }
 
@@ -172,5 +202,14 @@ function resolveTarget(message: TelegramIncomingMessage): DispatchTarget {
     kind: message.chat.type === "private" ? "dm" : "channel",
     address: message.chat.id,
     topicId: message.message_thread_id,
+  };
+}
+
+function resolveSenderFromUser(sender: TelegramSender): InboundMessageSender {
+  const displayName = [sender.first_name, sender.last_name].filter(Boolean).join(" ").trim() || sender.title;
+  return {
+    id: String(sender.id),
+    username: sender.username,
+    displayName: displayName || sender.username,
   };
 }

@@ -27,10 +27,11 @@ It currently owns:
 - provider registration and lookup
 - the generic dispatch request and result model
 - the generic inbound message model used by platform-native inputs
+- the generic inbound action model used by platform-native button callbacks
 - normalization of provider results into a stable package-level contract
 - one built-in Telegram provider
 - Telegram-specific validation, request mapping, formatting, and HTTP transport
-- Telegram-specific inbound update normalization for image-bearing messages
+- Telegram-specific inbound update normalization for image-bearing messages and callback actions
 
 It does not currently own:
 
@@ -60,6 +61,7 @@ The core contracts are:
 - `DispatchRequest`
 - `DispatchResult`
 - `InboundMessage`
+- `InboundAction`
 - `ImPlatformProvider`
 - `PlatformRegistry`
 - `createDistributor()`
@@ -112,6 +114,7 @@ interface ImPlatformProvider {
   supportsContent(content: DispatchContent): boolean;
   dispatch(request: DispatchRequest): Promise<DispatchResult>;
   normalizeIncomingMessage?(payload: unknown): Promise<InboundMessage | null>;
+  normalizeIncomingAction?(payload: unknown): Promise<InboundAction | null>;
 }
 ```
 

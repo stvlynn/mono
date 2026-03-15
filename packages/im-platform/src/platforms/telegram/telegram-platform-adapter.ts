@@ -1,6 +1,6 @@
 import { assertImmediateDelivery, assertSupportedTelegramContent, assertSupportedTelegramTarget, isSupportedTelegramContent, isSupportedTelegramTarget } from "./telegram-capabilities.js";
 import { TelegramBotApiClient } from "./telegram-bot-api-client.js";
-import { normalizeTelegramIncomingMessage } from "./telegram-incoming.js";
+import { normalizeTelegramIncomingAction, normalizeTelegramIncomingMessage } from "./telegram-incoming.js";
 import { mapTelegramDispatchRequest } from "./telegram-request-mapper.js";
 import type { TelegramPlatformAdapterConfig } from "./types.js";
 import type { DispatchContent, DispatchRequest, DispatchResult, DispatchTarget, ImPlatformProvider } from "../../types.js";
@@ -82,6 +82,14 @@ export class TelegramPlatformAdapter implements ImPlatformProvider {
       providerId: this.id,
       platform: this.platform,
       client: this.#client,
+      payload,
+    });
+  }
+
+  async normalizeIncomingAction(payload: unknown) {
+    return normalizeTelegramIncomingAction({
+      providerId: this.id,
+      platform: this.platform,
       payload,
     });
   }

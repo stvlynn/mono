@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import type { Agent } from "@mono/agent-core";
 import type { RuntimeEvent } from "@mono/shared";
 import type { Dispatch, SetStateAction } from "react";
-import type { DialogInstance, UIHistoryItem, UIState, UIToast } from "../types/ui.js";
+import type { UIHistoryItem, UIState, UIToast } from "../types/ui.js";
 import {
   stringifyToolContent,
   summarizeToolContent,
@@ -16,27 +16,11 @@ import { resolveWaitingCopy } from "../waiting-copy.js";
 interface UseAgentBridgeOptions {
   agent: Agent;
   setUiState: Dispatch<SetStateAction<UIState>>;
-  pushDialog: (dialog: DialogInstance) => void;
 }
 
 export function useAgentBridge(options: UseAgentBridgeOptions): void {
   useEffect(() => {
-    const { agent, setUiState, pushDialog } = options;
-
-    agent.setRequestApproval(
-      (request) =>
-        new Promise<boolean>((resolve) => {
-          pushDialog({
-            id: `approval-${Date.now()}`,
-            type: "approval",
-            title: `Approve ${request.toolName}`,
-            toolName: request.toolName,
-            reason: request.reason,
-            input: JSON.stringify(request.input, null, 2),
-            resolve
-          });
-        })
-    );
+    const { agent, setUiState } = options;
 
     const unsubscribe = agent.subscribe((event) => {
       setUiState((current) => reduceEvent(current, event, agent));
@@ -45,7 +29,7 @@ export function useAgentBridge(options: UseAgentBridgeOptions): void {
     return () => {
       unsubscribe();
     };
-  }, [options.agent, options.pushDialog, options.setUiState]);
+  }, [options.agent, options.setUiState]);
 }
 
 export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState {

@@ -4,6 +4,7 @@ export type DispatchTargetKind = "channel" | "dm";
 export type DispatchTextFormat = "plain" | "markdown" | "html";
 export type DispatchDeliveryMode = "immediate" | "native-draft";
 export type DispatchContentType = "text" | "photo" | "video" | "document" | "media-group";
+export type DispatchActionStyle = "default" | "primary" | "danger";
 
 export interface DispatchBinaryFile {
   filename: string;
@@ -19,11 +20,20 @@ export interface DispatchTarget {
   topicId?: number;
 }
 
+export interface DispatchAction {
+  id: string;
+  label: string;
+  style?: DispatchActionStyle;
+}
+
+export type DispatchActionRow = DispatchAction[];
+
 export interface DispatchOptions {
   silent?: boolean;
   protectContent?: boolean;
   allowPaidBroadcast?: boolean;
   deliveryMode?: DispatchDeliveryMode;
+  actions?: DispatchActionRow[];
 }
 
 export interface TextDispatchContent {
@@ -105,6 +115,17 @@ export interface InboundMessage {
   raw?: unknown;
 }
 
+export interface InboundAction {
+  provider: string;
+  platform: string;
+  interactionId: string;
+  actionId: string;
+  sender: InboundMessageSender;
+  target: DispatchTarget;
+  remoteMessageId?: string;
+  raw?: unknown;
+}
+
 export interface ImPlatformProvider {
   readonly id: string;
   readonly platform: string;
@@ -112,6 +133,7 @@ export interface ImPlatformProvider {
   supportsContent(content: DispatchContent): boolean;
   dispatch(request: DispatchRequest): Promise<DispatchResult>;
   normalizeIncomingMessage?(payload: unknown): Promise<InboundMessage | null>;
+  normalizeIncomingAction?(payload: unknown): Promise<InboundAction | null>;
 }
 
 export function inboundMessageToTaskInput(message: InboundMessage): TaskInput {

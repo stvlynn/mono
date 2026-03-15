@@ -48,12 +48,17 @@ Default policy:
 - `read`: allow
 - `bash`: ask, with denylist for destructive commands
 - other mutating tools: ask
+- `mono.settings.sensitiveActionMode` defaults to `blacklist`
+- in `blacklist` mode, allowlisted channels must still confirm sensitive bash commands
+- in `strict` mode, allowlisted channels must confirm every bash command
+- in `allow_all` mode, allowlisted channels bypass sensitive-command interception but still respect hard deny rules
 
 Channel-aware behavior:
 
 - permission requests may include an optional channel context
 - the current Telegram integration can allow specific chat ids to bypass interactive approval
 - authorized Telegram private chats also bypass interactive approval through the same allowlist path used by pairing and `allowFrom`
+- Telegram direct-message approvals can be resolved remotely through platform action buttons when the runtime supports them
 - destructive bash commands still hard-deny even on allowlisted channels
 - Telegram-specific bash command denylist entries can deny commands before approval is considered
 

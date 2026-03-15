@@ -1,8 +1,8 @@
 import { resolveMonoConfig } from "@mono/config";
-import { createDistributor, type Distributor } from "@mono/im-platform";
+import { createDistributor, type DispatchOptions, type Distributor } from "@mono/im-platform";
 
 export interface TelegramNotifier {
-  sendText(chatId: string, text: string): Promise<void>;
+  sendText(chatId: string, text: string, options?: DispatchOptions): Promise<void>;
 }
 
 export async function createTelegramNotifier(
@@ -30,7 +30,7 @@ export async function createTelegramNotifier(
 
 export function createNotifierFromDistributor(distributor: Distributor): TelegramNotifier {
   return {
-    async sendText(chatId: string, text: string): Promise<void> {
+    async sendText(chatId: string, text: string, options?: DispatchOptions): Promise<void> {
       await distributor.dispatch({
         provider: "telegram-control",
         target: {
@@ -42,6 +42,7 @@ export function createNotifierFromDistributor(distributor: Distributor): Telegra
           text,
           format: "markdown",
         },
+        options,
       });
     },
   };

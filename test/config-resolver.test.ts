@@ -19,6 +19,64 @@ afterEach(async () => {
 });
 
 describe("config resolver", () => {
+  it("defaults sensitive action mode to blacklist and resolves explicit overrides", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-settings-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-settings-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    } satisfies MonoGlobalConfig);
+
+    const defaultResolved = await resolveMonoConfig({ cwd });
+    expect(defaultResolved.settings.sensitiveActionMode).toBe("blacklist");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        },
+        settings: {
+          sensitiveActionMode: "strict"
+        }
+      },
+      projects: {}
+    } satisfies MonoGlobalConfig);
+
+    const strictResolved = await resolveMonoConfig({ cwd });
+    expect(strictResolved.settings.sensitiveActionMode).toBe("strict");
+  });
+
   it("resolves default context settings and applies project overrides", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-context-cwd-"));
     const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-context-config-"));

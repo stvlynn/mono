@@ -18,6 +18,7 @@ import {
   type TelegramControlEvent,
 } from "@mono/telegram-control";
 import {
+  type ApprovalRequest,
   readInputImageAttachmentFromPath,
   telegramChatIdToToolExecutionChannel,
   type ConversationMessage,
@@ -528,6 +529,36 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       unsubscribe();
     }
   }, [agent, reportUiError, setStatus]);
+
+  const requestLocalApproval = useCallback((request: ApprovalRequest) =>
+    new Promise<boolean>((resolve) => {
+      pushDialog({
+        id: `approval-${Date.now()}`,
+        type: "approval",
+        title: `Approve ${request.toolName}`,
+        toolName: request.toolName,
+        reason: request.reason,
+        input: JSON.stringify(request.input, null, 2),
+        resolve,
+      });
+    }), [pushDialog]);
+
+  const handleApprovalRequest = useCallback(async (request: ApprovalRequest): Promise<boolean> => {
+    const runtime = telegramRuntimeRef.current;
+    if (request.channel?.platform === "telegram" && request.channel.kind === "dm" && runtime) {
+      try {
+        setStatus(`Waiting for Telegram approval for ${request.toolName}...`);
+        const remoteApproval = await runtime.requestApproval(request);
+        if (remoteApproval !== null) {
+          return remoteApproval;
+        }
+      } catch {
+        setStatus("Telegram approval unavailable. Falling back to local approval.");
+      }
+    }
+
+    return requestLocalApproval(request);
+  }, [requestLocalApproval, setStatus]);
 
   const formatAttachmentStatus = useCallback((attachments: InputImageAttachment[]): string => {
     if (attachments.length === 0) {
@@ -1147,7 +1178,11 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     isActive: true,
     enableMouseTracking: settings.alternateBuffer
   });
-  useAgentBridge({ agent, setUiState, pushDialog });
+  useAgentBridge({ agent, setUiState });
+
+  useEffect(() => {
+    agent.setRequestApproval(handleApprovalRequest);
+  }, [agent, handleApprovalRequest]);
 
   useEffect(() => {
     void initializeAgent();

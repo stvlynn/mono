@@ -71,4 +71,51 @@ describe("tool permission policy", () => {
       reason: "bash commands require confirmation by default",
     });
   });
+
+  it("asks for sensitive bash commands on allowlisted channels in blacklist mode", () => {
+    const policy = new DefaultPermissionPolicy({
+      allowlistedChannels: [telegramDmChannel],
+      sensitiveActionMode: "blacklist",
+    });
+
+    expect(policy.evaluate(createRequest({
+      input: { command: "rm notes.txt" },
+      channel: telegramDmChannel,
+    }))).toEqual({
+      type: "ask",
+      reason: "Sensitive bash command requires confirmation",
+    });
+
+    expect(policy.evaluate(createRequest({
+      input: { command: "pwd" },
+      channel: telegramDmChannel,
+    }))).toEqual({ type: "allow" });
+  });
+
+  it("asks for every bash command on allowlisted channels in strict mode", () => {
+    const policy = new DefaultPermissionPolicy({
+      allowlistedChannels: [telegramDmChannel],
+      sensitiveActionMode: "strict",
+    });
+
+    expect(policy.evaluate(createRequest({
+      input: { command: "pwd" },
+      channel: telegramDmChannel,
+    }))).toEqual({
+      type: "ask",
+      reason: "Strict mode requires confirmation for every bash command",
+    });
+  });
+
+  it("keeps allow-all mode as a pure bypass for allowlisted channels", () => {
+    const policy = new DefaultPermissionPolicy({
+      allowlistedChannels: [telegramDmChannel],
+      sensitiveActionMode: "allow_all",
+    });
+
+    expect(policy.evaluate(createRequest({
+      input: { command: "mv draft.txt archive.txt" },
+      channel: telegramDmChannel,
+    }))).toEqual({ type: "allow" });
+  });
 });

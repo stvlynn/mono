@@ -1,21 +1,30 @@
+import { randomUUID } from "node:crypto";
 import { resolveMonoConfig } from "@mono/config";
 import {
   createBuiltInProvider,
   createDistributor,
+  type InboundAction,
   inboundMessageToTaskInput,
   prepareTelegramSingleText,
 } from "@mono/im-platform";
 import type { Distributor, ImPlatformProvider } from "@mono/im-platform";
-import type { MonoTelegramConfig } from "@mono/shared";
+import type { ApprovalRequest, MonoTelegramConfig } from "@mono/shared";
 import type {
   TelegramBotIdentity,
   TelegramChatRequest,
   TelegramControlEvent,
   TelegramIncomingMessage,
 } from "./types.js";
+import {
+  buildTelegramApprovalActions,
+  buildTelegramApprovalPrompt,
+  parseTelegramApprovalActionId,
+} from "./approval-buttons.js";
 import { createTelegramDraftPreviewStream } from "./draft-stream.js";
 import { createNotifierFromDistributor } from "./outbound.js";
 import { processTelegramIncomingMessage } from "./inbound.js";
+
+const TELEGRAM_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface TelegramUpdateResponse<T> {
   ok: boolean;
@@ -49,6 +58,19 @@ interface TelegramApiMessage {
 interface TelegramApiUpdate {
   update_id: number;
   message?: TelegramApiMessage;
+  callback_query?: {
+    id: string;
+  };
+}
+
+interface PendingTelegramApproval {
+  approvalId: string;
+  chatId: string;
+  senderId: string;
+  timeout: NodeJS.Timeout;
+  resolve: (approved: boolean) => void;
+  settled: boolean;
+  messageId?: string;
 }
 
 export class TelegramControlRuntime {
@@ -63,15 +85,20 @@ export class TelegramControlRuntime {
   #provider?: ImPlatformProvider;
   #token?: string;
   readonly #onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
+  readonly #fetchImpl: typeof fetch;
+  readonly #pendingApprovals = new Map<string, PendingTelegramApproval>();
+  readonly #inFlightChatHandoffs = new Set<Promise<void>>();
 
   constructor(options: {
     cwd?: string;
     onEvent?: (event: TelegramControlEvent) => void;
     onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
+    fetchImpl?: typeof fetch;
   } = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#onEvent = options.onEvent;
     this.#onChatMessage = options.onChatMessage;
+    this.#fetchImpl = options.fetchImpl ?? fetch;
   }
 
   async start(): Promise<void> {
@@ -93,6 +120,7 @@ export class TelegramControlRuntime {
       id: "telegram-control",
       botToken: telegram.botToken,
       defaultTextFormat: "markdown",
+      fetchImpl: this.#fetchImpl,
     });
     this.#distributor = createDistributor({
       providers: [this.#provider],
@@ -118,9 +146,29 @@ export class TelegramControlRuntime {
     if (this.#loopPromise) {
       await this.#loopPromise.catch(() => {});
     }
+    this.#clearPendingApprovals(false);
     this.#abortController = undefined;
     this.#provider = undefined;
     this.#emit({ type: "stopped", message: "Telegram runtime stopped." });
+  }
+
+  async requestApproval(request: ApprovalRequest): Promise<boolean | null> {
+    if (!this.canHandleTelegramApproval(request)) {
+      return null;
+    }
+
+    const chatId = request.channel.id;
+    const approvalId = this.#allocateApprovalId();
+
+    return new Promise<boolean>((resolve, reject) => {
+      const pending = this.createPendingApproval(approvalId, chatId, resolve);
+      this.#pendingApprovals.set(approvalId, pending);
+
+      void this.sendApprovalPrompt(pending, request).catch((error) => {
+        this.clearPendingApproval(pending);
+        reject(error);
+      });
+    });
   }
 
   async #pollLoop(signal: AbortSignal): Promise<void> {
@@ -129,11 +177,14 @@ export class TelegramControlRuntime {
         const updates = await this.#callTelegram<TelegramApiUpdate[]>("getUpdates", {
           offset: this.#offset,
           timeout: this.#config?.pollingTimeoutSeconds ?? 20,
-          allowed_updates: ["message"],
+          allowed_updates: ["message", "callback_query"],
         }, signal);
 
         for (const update of updates) {
           this.#offset = update.update_id + 1;
+          if (await this.#handleIncomingAction(update)) {
+            continue;
+          }
           const message = toIncomingMessage(update.message);
           if (!message) {
             continue;
@@ -158,6 +209,42 @@ export class TelegramControlRuntime {
     }
   }
 
+  async #handleIncomingAction(update: TelegramApiUpdate): Promise<boolean> {
+    const action = await this.#provider?.normalizeIncomingAction?.(update);
+    if (!action) {
+      return false;
+    }
+
+    const decision = parseTelegramApprovalActionId(action.actionId);
+    if (!decision) {
+      await this.#answerCallbackQuery(action.interactionId);
+      return true;
+    }
+
+    const pending = this.#pendingApprovals.get(decision.approvalId);
+    if (!pending) {
+      await this.#answerCallbackQuery(action.interactionId, "Approval request expired.");
+      return true;
+    }
+
+    if (action.sender.id !== pending.senderId) {
+      await this.#answerCallbackQuery(action.interactionId, "You are not allowed to answer this request.");
+      return true;
+    }
+
+    if (pending.settled) {
+      await this.#answerCallbackQuery(action.interactionId, "Approval already resolved.");
+      return true;
+    }
+
+    await this.#answerCallbackQuery(
+      action.interactionId,
+      decision.decision === "approve" ? "Approved." : "Denied."
+    );
+    await this.#finalizeApproval(decision.approvalId, decision.decision === "approve", action);
+    return true;
+  }
+
   async #handleIncomingMessage(update: TelegramApiUpdate, message: TelegramIncomingMessage): Promise<void> {
     if (!this.#config || !this.#botIdentity || !this.#distributor) {
       return;
@@ -173,7 +260,7 @@ export class TelegramControlRuntime {
 
     const notifier = createNotifierFromDistributor(this.#distributor);
     if (result?.handoffToChat) {
-      await this.#handleChatHandoff(update, message, notifier);
+      this.#startChatHandoff(update, message, notifier);
       return;
     }
     if (!result) {
@@ -229,6 +316,17 @@ export class TelegramControlRuntime {
       this.#emit({ type: "error", message: `Telegram chat handling failed: ${formatted}` });
       await notifier.sendText(message.chatId, `Request failed: ${formatted}`).catch(() => {});
     }
+  }
+
+  #startChatHandoff(
+    update: TelegramApiUpdate,
+    message: TelegramIncomingMessage,
+    notifier: ReturnType<typeof createNotifierFromDistributor>,
+  ): void {
+    const handoff = this.#handleChatHandoff(update, message, notifier).finally(() => {
+      this.#inFlightChatHandoffs.delete(handoff);
+    });
+    this.#inFlightChatHandoffs.add(handoff);
   }
 
   #createReplyPreview(message: TelegramIncomingMessage) {
@@ -287,7 +385,7 @@ export class TelegramControlRuntime {
 
     let response: Response;
     try {
-      response = await fetch(`https://api.telegram.org/bot${this.#token}/${method}`, {
+      response = await this.#fetchImpl(`https://api.telegram.org/bot${this.#token}/${method}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -309,6 +407,112 @@ export class TelegramControlRuntime {
 
   #emit(event: TelegramControlEvent): void {
     this.#onEvent?.(event);
+  }
+
+  async #answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    await this.#callTelegram("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+    }).catch(() => {});
+  }
+
+  async #finalizeApproval(
+    approvalId: string,
+    approved: boolean,
+    action?: InboundAction,
+  ): Promise<void> {
+    const pending = this.#pendingApprovals.get(approvalId);
+    if (!pending || pending.settled) {
+      return;
+    }
+
+    pending.settled = true;
+    clearTimeout(pending.timeout);
+    this.#pendingApprovals.delete(approvalId);
+
+    const messageId = pending.messageId ?? action?.remoteMessageId;
+    if (messageId) {
+      await this.removeApprovalButtons(pending.chatId, messageId);
+    }
+
+    pending.resolve(approved);
+  }
+
+  #clearPendingApprovals(approved: boolean): void {
+    for (const pending of this.#pendingApprovals.values()) {
+      clearTimeout(pending.timeout);
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.resolve(approved);
+      }
+    }
+    this.#pendingApprovals.clear();
+  }
+
+  #allocateApprovalId(): string {
+    return randomUUID();
+  }
+
+  private canHandleTelegramApproval(request: ApprovalRequest): request is ApprovalRequest & {
+    channel: { platform: "telegram"; kind: "dm"; id: string };
+  } {
+    return Boolean(this.#distributor)
+      && request.channel?.platform === "telegram"
+      && request.channel.kind === "dm";
+  }
+
+  private createPendingApproval(
+    approvalId: string,
+    chatId: string,
+    resolve: (approved: boolean) => void,
+  ): PendingTelegramApproval {
+    const timeout = setTimeout(() => {
+      this.#finalizeApproval(approvalId, false).catch(() => {});
+    }, TELEGRAM_APPROVAL_TIMEOUT_MS);
+
+    return {
+      approvalId,
+      chatId,
+      senderId: chatId,
+      timeout,
+      resolve,
+      settled: false,
+    };
+  }
+
+  private async sendApprovalPrompt(
+    pending: PendingTelegramApproval,
+    request: ApprovalRequest,
+  ): Promise<void> {
+    const result = await this.#distributor!.dispatch({
+      provider: "telegram-control",
+      target: {
+        kind: "dm",
+        address: pending.chatId,
+      },
+      content: {
+        type: "text",
+        text: buildTelegramApprovalPrompt(request),
+        format: "plain",
+      },
+      options: {
+        actions: buildTelegramApprovalActions(pending.approvalId),
+      },
+    });
+    pending.messageId = result.remoteMessageIds[0];
+  }
+
+  private clearPendingApproval(pending: PendingTelegramApproval): void {
+    clearTimeout(pending.timeout);
+    this.#pendingApprovals.delete(pending.approvalId);
+  }
+
+  private async removeApprovalButtons(chatId: string, messageId: string): Promise<void> {
+    await this.#callTelegram("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: Number(messageId),
+      reply_markup: { inline_keyboard: [] },
+    }).catch(() => {});
   }
 }
 

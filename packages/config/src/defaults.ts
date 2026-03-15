@@ -7,6 +7,7 @@ import type {
   MonoOpenVikingConfig,
   MonoProfileConfig,
   MonoSeekDbConfig,
+  MonoSettingsConfig,
   UnifiedModel
 } from "@mono/shared";
 import type { CatalogTransportCandidate, CatalogTransportKind } from "./catalog-types.js";
@@ -121,15 +122,20 @@ export function createDefaultGlobalConfig(): MonoGlobalConfig {
     mono: {
       defaultProfile: "default",
       profiles: getBuiltinProfiles(),
-      settings: {
-        approvalMode: "default",
-        theme: "system"
-      },
+      settings: createDefaultSettingsConfig(),
       memory: createDefaultMemoryConfig(),
       context: createDefaultContextConfig(),
       channels: createDefaultChannelsConfig()
     },
     projects: {}
+  };
+}
+
+export function createDefaultSettingsConfig(): MonoSettingsConfig {
+  return {
+    approvalMode: "default",
+    theme: "system",
+    sensitiveActionMode: "blacklist"
   };
 }
 

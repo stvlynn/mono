@@ -102,6 +102,7 @@ Approval behavior:
 - authorized Telegram private chats also bypass interactive tool approval through `allowFrom` and stored pairing approvals
 - `approval.commandDenylist` is a Telegram-scoped bash denylist checked before allowlist bypass
 - destructive bash commands still hard-deny even when the chat is allowlisted
+- allowlisted Telegram private chats can receive inline approval buttons for sensitive bash commands instead of relying on the local TUI
 
 ## Pairing and Allowlist State
 
@@ -128,6 +129,7 @@ Authorization behavior:
 - `dmPolicy="pairing"` merges config `allowFrom` with stored approvals
 - `dmPolicy="allowlist"` uses config `allowFrom` only
 - group authorization does not inherit DM pairing-store approvals
+- Telegram callback approvals are only honored for the original DM sender who received the approval prompt
 
 ## Command Surface
 

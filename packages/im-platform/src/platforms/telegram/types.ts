@@ -40,3 +40,10 @@ export interface TelegramDispatchContext {
   defaultTextFormat?: DispatchTextFormat;
   defaultDisableNotification?: boolean;
 }
+
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: Array<Array<{
+    text: string;
+    callback_data: string;
+  }>>;
+}

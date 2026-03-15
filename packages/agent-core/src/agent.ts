@@ -1246,8 +1246,9 @@ export class Agent {
   }
 
   private async createPermissionPolicy(channel: ToolExecutionChannel | undefined): Promise<DefaultPermissionPolicy> {
+    const sensitiveActionMode = this.state.config.settings.sensitiveActionMode;
     if (channel?.platform !== "telegram") {
-      return new DefaultPermissionPolicy();
+      return new DefaultPermissionPolicy({ sensitiveActionMode });
     }
 
     const approval = this.state.config.channels.telegram.approval;
@@ -1266,6 +1267,7 @@ export class Agent {
         ...implicitTelegramDmChannels,
       ]),
       commandDenylist: approval.commandDenylist,
+      sensitiveActionMode,
     });
   }
 

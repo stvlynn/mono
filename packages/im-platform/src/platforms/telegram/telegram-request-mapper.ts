@@ -1,4 +1,5 @@
 import type {
+  DispatchActionRow,
   DispatchBinaryFile,
   DispatchContent,
   DispatchMediaSource,
@@ -10,6 +11,7 @@ import type {
   TelegramDispatchContext,
   TelegramMultipartAttachment,
   TelegramOperation,
+  TelegramInlineKeyboardMarkup,
   TelegramTargetParams,
 } from "./types.js";
 import { prepareTelegramCaption, prepareTelegramTextChunks } from "./telegram-text.js";
@@ -17,30 +19,34 @@ import { prepareTelegramCaption, prepareTelegramTextChunks } from "./telegram-te
 export function mapTelegramDispatchRequest(context: TelegramDispatchContext): TelegramOperation[] {
   const targetParams = mapTelegramTarget(context.target);
   const optionFields = mapTelegramOptions(context.options, context.defaultDisableNotification);
+  const replyMarkup = mapTelegramReplyMarkup(context.options?.actions);
 
   switch (context.content.type) {
-    case "text":
-      return prepareTelegramTextChunks(
+    case "text": {
+      const chunks = prepareTelegramTextChunks(
         context.content.text,
         context.content.format,
         context.defaultTextFormat,
-      ).map((chunk) => ({
+      );
+      return chunks.map((chunk, index) => ({
         method: "sendMessage",
         body: {
           ...targetParams,
           ...optionFields,
           text: chunk.text,
           ...(chunk.parseMode ? { parse_mode: chunk.parseMode } : {}),
+          ...(replyMarkup && index === chunks.length - 1 ? { reply_markup: replyMarkup } : {}),
         },
         fallbackText: chunk.fallbackText,
       }));
+    }
     case "photo":
       return [
-        mapSingleMediaOperation("sendPhoto", "photo", context.content, targetParams, optionFields, context.defaultTextFormat),
+        mapSingleMediaOperation("sendPhoto", "photo", context.content, targetParams, optionFields, context.defaultTextFormat, replyMarkup),
       ];
     case "video":
       return [
-        mapSingleMediaOperation("sendVideo", "video", context.content, targetParams, optionFields, context.defaultTextFormat),
+        mapSingleMediaOperation("sendVideo", "video", context.content, targetParams, optionFields, context.defaultTextFormat, replyMarkup),
       ];
     case "document":
       return [
@@ -51,6 +57,7 @@ export function mapTelegramDispatchRequest(context: TelegramDispatchContext): Te
           targetParams,
           optionFields,
           context.defaultTextFormat,
+          replyMarkup,
         ),
       ];
     case "media-group":
@@ -87,6 +94,7 @@ function mapSingleMediaOperation(
   targetParams: TelegramTargetParams,
   optionFields: Record<string, unknown>,
   defaultTextFormat: TelegramDispatchContext["defaultTextFormat"],
+  replyMarkup?: TelegramInlineKeyboardMarkup,
 ): TelegramOperation {
   const caption = prepareTelegramCaption(content.caption, content.format, defaultTextFormat);
 
@@ -98,6 +106,7 @@ function mapSingleMediaOperation(
       ...(caption ? { caption: caption.text } : {}),
       ...(caption?.parseMode ? { parse_mode: caption.parseMode } : {}),
       ...(content.type === "photo" && content.hasSpoiler !== undefined ? { has_spoiler: content.hasSpoiler } : {}),
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
     appendBinaryAttachment(formData, fieldName, content.source);
     return { method, body: formData };
@@ -112,6 +121,7 @@ function mapSingleMediaOperation(
       ...(caption ? { caption: caption.text } : {}),
       ...(caption?.parseMode ? { parse_mode: caption.parseMode } : {}),
       ...(content.type === "photo" && content.hasSpoiler !== undefined ? { has_spoiler: content.hasSpoiler } : {}),
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     },
   };
 }
@@ -199,4 +209,19 @@ function appendTelegramFields(formData: FormData, payload: Record<string, unknow
 
 function isBinaryFile(source: DispatchMediaSource): source is DispatchBinaryFile {
   return typeof source !== "string";
+}
+
+function mapTelegramReplyMarkup(actions: DispatchActionRow[] | undefined): TelegramInlineKeyboardMarkup | undefined {
+  if (!actions || actions.length === 0) {
+    return undefined;
+  }
+
+  return {
+    inline_keyboard: actions.map((row) =>
+      row.map((action) => ({
+        text: action.label,
+        callback_data: action.id,
+      }))
+    ),
+  };
 }

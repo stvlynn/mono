@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   AgentTool,
+  MonoSensitiveActionMode,
   PermissionDecision,
   PermissionPolicy,
   PermissionRequest,
@@ -10,6 +11,7 @@ import type {
 export interface DefaultPermissionPolicyOptions {
   allowlistedChannels?: ToolExecutionChannel[];
   commandDenylist?: string[];
+  sensitiveActionMode?: MonoSensitiveActionMode;
 }
 
 export interface WrappedToolOptions {
@@ -24,38 +26,30 @@ export interface WrappedToolOptions {
 export class DefaultPermissionPolicy implements PermissionPolicy {
   private readonly allowlistedChannels: ToolExecutionChannel[];
   private readonly commandDenylist: string[];
+  private readonly sensitiveActionMode: MonoSensitiveActionMode;
 
   constructor(options: DefaultPermissionPolicyOptions = {}) {
     this.allowlistedChannels = options.allowlistedChannels ?? [];
     this.commandDenylist = options.commandDenylist
       ?.map((value) => normalizeCommand(value))
       .filter(Boolean) ?? [];
+    this.sensitiveActionMode = options.sensitiveActionMode ?? "blacklist";
   }
 
   evaluate(request: PermissionRequest): PermissionDecision {
     if (request.toolName === "read") {
-      return { type: "allow" };
+      return allowDecision();
     }
 
-    if (request.toolName === "bash" && typeof request.input === "object" && request.input !== null) {
-      const command = normalizeCommand(String((request.input as { command?: string }).command ?? ""));
-      if (matchesDestructiveCommand(command)) {
-        return { type: "deny", reason: "Command matches destructive denylist" };
-      }
-      if (this.matchesConfiguredCommandDenylist(command)) {
-        return { type: "deny", reason: "Command matches configured denylist" };
-      }
-      if (this.isAllowlistedChannel(request.channel)) {
-        return { type: "allow" };
-      }
-      return { type: "ask", reason: "bash commands require confirmation by default" };
+    if (isBashPermissionRequest(request)) {
+      return this.evaluateBashRequest(request);
     }
 
     if (this.isAllowlistedChannel(request.channel)) {
-      return { type: "allow" };
+      return allowDecision();
     }
 
-    return { type: "ask", reason: `${request.toolName} requires confirmation by default` };
+    return askDecision(`${request.toolName} requires confirmation by default`);
   }
 
   private matchesConfiguredCommandDenylist(command: string): boolean {
@@ -72,6 +66,37 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
       && candidate.id === channel.id
       && candidate.kind === channel.kind,
     );
+  }
+
+  private evaluateBashRequest(request: PermissionRequest & { toolName: "bash"; input: object }): PermissionDecision {
+    const command = getNormalizedBashCommand(request.input);
+    if (matchesDestructiveCommand(command)) {
+      return denyDecision("Command matches destructive denylist");
+    }
+    if (this.matchesConfiguredCommandDenylist(command)) {
+      return denyDecision("Command matches configured denylist");
+    }
+    if (!this.isAllowlistedChannel(request.channel)) {
+      return askDecision("bash commands require confirmation by default");
+    }
+
+    return this.evaluateSensitiveBashCommand(command) ?? allowDecision();
+  }
+
+  private evaluateSensitiveBashCommand(command: string): PermissionDecision | null {
+    if (this.sensitiveActionMode === "allow_all") {
+      return null;
+    }
+
+    if (this.sensitiveActionMode === "strict") {
+      return askDecision("Strict mode requires confirmation for every bash command");
+    }
+
+    if (matchesSensitiveCommand(command)) {
+      return askDecision("Sensitive bash command requires confirmation");
+    }
+
+    return null;
   }
 }
 
@@ -121,6 +146,32 @@ export function wrapToolWithPermissions<TTool extends AgentTool>(tool: TTool, op
 
 function matchesDestructiveCommand(command: string): boolean {
   return /(^|\s)(rm\s+-rf|git\s+reset\s+--hard|mkfs|dd\s+if=)/.test(command);
+}
+
+function matchesSensitiveCommand(command: string): boolean {
+  return /(^|[;&|]\s*|\s)(rm|rmdir|unlink|mv|chmod|chown|sudo)\b/.test(command)
+    || /(^|[;&|]\s*)git\s+(clean|checkout\s+--|reset\b)/.test(command)
+    || /(^|[;&|]\s*)find\b.*\s-delete(\s|$)/.test(command);
+}
+
+function isBashPermissionRequest(request: PermissionRequest): request is PermissionRequest & { toolName: "bash"; input: object } {
+  return request.toolName === "bash" && typeof request.input === "object" && request.input !== null;
+}
+
+function getNormalizedBashCommand(input: object): string {
+  return normalizeCommand(String((input as { command?: string }).command ?? ""));
+}
+
+function allowDecision(): PermissionDecision {
+  return { type: "allow" };
+}
+
+function denyDecision(reason: string): PermissionDecision {
+  return { type: "deny", reason };
+}
+
+function askDecision(reason: string): PermissionDecision {
+  return { type: "ask", reason };
 }
 
 function normalizeCommand(command: string): string {
