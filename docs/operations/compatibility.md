@@ -2,10 +2,11 @@
 
 ## Provider Compatibility
 
-Current LLM support is centered on OpenAI-compatible `xsai` transports.
+Current LLM support is centered on Vercel AI SDK providers plus one shared OpenAI-compatible transport layer.
 
 Important note:
-- Anthropic support in this repo is routed through an OpenAI-compatible endpoint path, not native Anthropic protocol support.
+- Anthropic support uses the native Anthropic Messages-compatible provider path.
+- OpenAI, OpenRouter, xAI, Moonshot, and similar services can still be routed through the OpenAI-compatible layer.
 
 ## Terminal Compatibility
 

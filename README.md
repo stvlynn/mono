@@ -1,6 +1,6 @@
 # mono
 
-`xsai`-powered coding agent CLI with `read`, `write`, `edit`, and `bash` tools.
+Vercel AI SDK-powered coding agent CLI with `read`, `write`, `edit`, and `bash` tools.
 
 ## Overview
 
@@ -261,7 +261,7 @@ pnpm lint
         "modelId": "gpt-4.1-mini",
         "baseURL": "https://api.openai.com/v1",
         "family": "openai-compatible",
-        "transport": "xsai-openai-compatible",
+        "transport": "openai-compatible",
         "providerFactory": "openai",
         "apiKeyEnv": "OPENAI_API_KEY",
         "supportsTools": true,

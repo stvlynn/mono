@@ -13,10 +13,11 @@ Describe the public responsibilities of the LLM layer.
 
 ## Current Provider Model
 
-`mono` currently routes through OpenAI-compatible `xsai` paths.
+`mono` routes model execution through the Vercel AI SDK provider layer.
 
 Important caveat:
-- Anthropic support in this repo is via an OpenAI-compatible path, not native Anthropic Messages API support.
+- Anthropic models use the native Anthropic provider path.
+- OpenAI-compatible providers still share one compatibility layer driven by `baseURL`, `transport`, and `providerFactory`.
 
 ## Main Files
 

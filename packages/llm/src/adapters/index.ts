@@ -1,4 +1,4 @@
 export * from "./types.js";
-export * from "./xsai-anthropic.js";
-export * from "./xsai-gemini.js";
-export * from "./xsai-openai-compatible.js";
+export * from "./ai-sdk-anthropic.js";
+export * from "./ai-sdk-gemini.js";
+export * from "./ai-sdk-openai-compatible.js";

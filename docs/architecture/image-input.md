@@ -118,7 +118,6 @@ The agent runtime still emits normal `UserMessage` parts:
 
 Provider-specific LLM adapters remain responsible for final wire conversion:
 
-- OpenAI-compatible and Gemini paths emit `image_url` content blocks
-- Anthropic paths emit base64 `image` blocks
+- OpenAI-compatible, Gemini, and Anthropic paths are converted into provider-native image parts by the AI SDK provider layer
 
 This keeps image-input concerns separated from remote API formatting.

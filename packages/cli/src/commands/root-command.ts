@@ -6,7 +6,7 @@ import { runPrint } from "../print-runtime.js";
 export function registerRootCommand(program: Command): void {
   program
     .name("mono")
-    .description("xsai-powered coding agent CLI")
+    .description("AI SDK-powered coding agent CLI")
     .argument("[prompt...]", "initial prompt")
     .option("-p, --print", "run once and exit")
     .option("-m, --model <model>", "provider/model or raw model id")

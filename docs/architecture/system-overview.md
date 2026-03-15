@@ -23,7 +23,7 @@ A typical interactive request follows this path:
 4. `Agent.initialize()` resolves config, profile, model, session, and memory stores
 5. `Agent.runTask()` creates task state and runs task/turn orchestration
 6. the agent assembles prompt context from task state, execution memory, structured memory, skills, docs, and workspace files
-7. `packages/llm` sends prompts through an `xsai` adapter
+7. `packages/llm` sends prompts through an AI SDK-backed provider adapter
 8. tool calls are executed through the batch scheduler
 9. tool results, task state, memory updates, and session entries are appended
 10. runtime events flow back into the TUI or print-mode output

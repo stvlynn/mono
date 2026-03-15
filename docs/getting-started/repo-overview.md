@@ -17,7 +17,7 @@ This is a package-level overview, not a runtime walkthrough.
 
 `mono` is a coding agent CLI built around:
 
-- an LLM execution layer backed by `xsai`
+- an LLM execution layer backed by the Vercel AI SDK
 - a task runtime with memory-backed todo planning
 - protected coding tools (`read`, `write`, `edit`, `bash`)
 - a tree-shaped JSONL session store
@@ -28,7 +28,7 @@ This is a package-level overview, not a runtime walkthrough.
 ### Core runtime packages
 
 - `packages/agent-core`: orchestrates tasks, turns, verification, memory injection, session updates, and approvals
-- `packages/llm`: model registry and adapter/router layer for OpenAI-compatible `xsai` execution
+- `packages/llm`: model registry and adapter/router layer for AI SDK-backed multi-provider execution
 - `packages/tools`: built-in tools and permission wrapping
 - `packages/session`: append-only session storage, branch heads, replay, summaries, and compression entries
 - `packages/memory`: execution memory store, retrieval, compaction, and task todo store

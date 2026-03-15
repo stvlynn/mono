@@ -299,6 +299,18 @@ function resolveTransportFromRuntimeProviderKey(runtimeProviderKey?: string): No
   return undefined;
 }
 
+function normalizeLegacyTransport(transport?: string): NonNullable<UnifiedModel["transport"]> | undefined {
+  if (transport === "xsai-openai-compatible") {
+    return "openai-compatible";
+  }
+
+  if (transport === "openai-compatible" || transport === "anthropic" || transport === "gemini") {
+    return transport;
+  }
+
+  return undefined;
+}
+
 export function normalizeModelTransport(
   model: {
     family: UnifiedModel["family"];
@@ -306,8 +318,9 @@ export function normalizeModelTransport(
     runtimeProviderKey?: string;
   }
 ): NonNullable<UnifiedModel["transport"]> {
-  if (model.transport === "openai-compatible" || model.transport === "anthropic" || model.transport === "gemini") {
-    return model.transport;
+  const normalizedTransport = normalizeLegacyTransport(model.transport);
+  if (normalizedTransport) {
+    return normalizedTransport;
   }
   return resolveTransportFromRuntimeProviderKey(model.runtimeProviderKey) ?? model.family;
 }

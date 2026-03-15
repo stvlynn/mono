@@ -43,8 +43,7 @@ function createScheduler() {
   return {
     scheduler: new ToolBatchScheduler({
       llmOptions: options,
-      toolResultMap,
-      toXsaiContent: (parts) => parts.map((part) => ({ type: part.type }))
+      toolResultMap
     }),
     events,
     toolResultMap

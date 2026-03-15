@@ -10,6 +10,8 @@ interface ToolResultRecord {
   isError: boolean;
 }
 
+export type StoredToolResult = ToolResultRecord;
+
 interface ScheduledToolRequest {
   order: number;
   tool: AgentTool;
@@ -17,14 +19,13 @@ interface ScheduledToolRequest {
   parsedArgs: unknown;
   parseError?: unknown;
   toolCallId: string;
-  resolve: (value: string | Array<Record<string, unknown>>) => void;
+  resolve: (value: string | ToolResultPart[]) => void;
   reject: (reason?: unknown) => void;
 }
 
 interface ToolBatchSchedulerOptions {
   llmOptions: LlmRunOptions;
   toolResultMap: Map<string, ToolResultRecord>;
-  toXsaiContent: (parts: ToolResultPart[]) => Array<Record<string, unknown>>;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -87,7 +88,7 @@ export class ToolBatchScheduler {
     this.options = options;
   }
 
-  schedule(tool: AgentTool, input: unknown, toolCallId: string): Promise<string | Array<Record<string, unknown>>> {
+  schedule(tool: AgentTool, input: unknown, toolCallId: string): Promise<string | ToolResultPart[]> {
     let parsedArgs: unknown = input;
     let parseError: unknown;
 
@@ -186,8 +187,8 @@ export class ToolBatchScheduler {
     return true;
   }
 
-  private async executeRequest(request: ScheduledToolRequest): Promise<string | Array<Record<string, unknown>>> {
-    const { llmOptions, toolResultMap, toXsaiContent } = this.options;
+  private async executeRequest(request: ScheduledToolRequest): Promise<string | ToolResultPart[]> {
+    const { llmOptions, toolResultMap } = this.options;
     const inputSignature = request.parseError
       ? createInputSignature(request.tool, request.input)
       : createInputSignature(request.tool, request.parsedArgs);
@@ -237,7 +238,7 @@ export class ToolBatchScheduler {
         isError: false
       });
 
-      return typeof result.content === "string" ? result.content : toXsaiContent(result.content);
+      return result.content;
     } catch (error) {
       if (llmOptions.signal?.aborted || isAbortError(error)) {
         throw error;

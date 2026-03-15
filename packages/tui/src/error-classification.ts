@@ -22,7 +22,12 @@ export function isRecoverableRuntimeError(error: unknown, state: Pick<UIState, "
   const name = errorName(error);
   const message = errorMessage(error);
 
-  if (name === "XSAIError") {
+  if (
+    name === "XSAIError"
+    || name === "AI_APICallError"
+    || name === "AI_RetryError"
+    || name === "AI_UnsupportedModelVersionError"
+  ) {
     return true;
   }
 

@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { isRecoverableRuntimeError } from "../packages/tui/src/error-classification.js";
 
 describe("tui error classification", () => {
-  it("treats xsai transport failures as recoverable runtime errors", () => {
+  it("treats AI transport failures as recoverable runtime errors", () => {
     const error = Object.assign(new Error('Remote sent 401 response: {"error":"Invalid Authentication"}'), {
-      name: "XSAIError"
+      name: "AI_APICallError"
     });
 
     expect(isRecoverableRuntimeError(error, {
