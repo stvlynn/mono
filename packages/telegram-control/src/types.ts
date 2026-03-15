@@ -46,7 +46,12 @@ export interface TelegramIncomingMessage {
   text?: string;
 }
 
+export interface TelegramReplyPreview {
+  update(text: string): void;
+}
+
 export interface TelegramChatRequest {
   input: TaskInput;
   message: TelegramIncomingMessage;
+  preview?: TelegramReplyPreview;
 }

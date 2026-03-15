@@ -123,6 +123,11 @@ export interface MonoProjectConfig {
 
 export type MonoTelegramDmPolicy = "pairing" | "allowlist" | "open" | "disabled";
 
+export interface MonoTelegramApprovalConfig {
+  allowChats: string[];
+  commandDenylist: string[];
+}
+
 export interface MonoTelegramGroupConfig {
   allow?: boolean;
   requireMention?: boolean;
@@ -136,6 +141,7 @@ export interface MonoTelegramConfig {
   allowFrom: string[];
   groupAllowFrom: string[];
   groups: Record<string, MonoTelegramGroupConfig>;
+  approval: MonoTelegramApprovalConfig;
   dmPolicy: MonoTelegramDmPolicy;
   pollingTimeoutSeconds: number;
 }
@@ -608,11 +614,18 @@ export interface AgentTool<TArgs = unknown, TDetails = unknown> extends UnifiedT
   parseArgs?(args: unknown): TArgs;
 }
 
+export interface ToolExecutionChannel {
+  platform: string;
+  kind: "dm" | "channel";
+  id: string;
+}
+
 export interface PermissionRequest {
   toolName: string;
   input: unknown;
   cwd: string;
   sessionId: string;
+  channel?: ToolExecutionChannel;
 }
 
 export type PermissionDecision =

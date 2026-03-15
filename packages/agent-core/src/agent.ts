@@ -19,6 +19,7 @@ import {
   taskInputToPlainText,
   taskInputToUserMessage,
   type ThinkingLevel,
+  type ToolExecutionChannel,
   type UnifiedModel,
   userContentToPlainText,
   type UserMessage,
@@ -83,11 +84,16 @@ interface TaskRunContext {
   controller: AbortController;
   session: SessionManager;
   model: UnifiedModel;
+  channel?: ToolExecutionChannel;
   userMessage: UserMessage;
   taskMessages: ConversationMessage[];
   recallAccumulator: RecallAccumulator;
   taskTodoRecord: TaskTodoRecord | null;
   taskTodosDirty: boolean;
+}
+
+export interface RunTaskOptions {
+  channel?: ToolExecutionChannel;
 }
 
 export interface AgentOptions {
@@ -271,12 +277,12 @@ export class Agent {
     this.requestApprovalHandler = handler;
   }
 
-  async prompt(input: string | TaskInput): Promise<ConversationMessage[]> {
-    const result = await this.runTask(input);
+  async prompt(input: string | TaskInput, options: RunTaskOptions = {}): Promise<ConversationMessage[]> {
+    const result = await this.runTask(input, options);
     return result.messages;
   }
 
-  async runTask(input: string | TaskInput): Promise<TaskResult> {
+  async runTask(input: string | TaskInput, options: RunTaskOptions = {}): Promise<TaskResult> {
     await this.initialize();
     if (!hasTaskInputContent(input)) {
       throw new Error("Task input requires text or at least one image attachment");
@@ -287,7 +293,7 @@ export class Agent {
       throw new Error(`Model ${this.state.model.provider}/${this.state.model.modelId} does not support image attachments`);
     }
 
-    const runContext = this.createTaskRunContext(normalizedInput);
+    const runContext = this.createTaskRunContext(normalizedInput, options);
     const goal = taskInputToPlainText(normalizedInput);
 
     try {
@@ -1002,13 +1008,14 @@ export class Agent {
     return record;
   }
 
-  private createTaskRunContext(input: string | TaskInput): TaskRunContext {
+  private createTaskRunContext(input: string | TaskInput, options: RunTaskOptions): TaskRunContext {
     const run = this.startRun();
     return {
       runId: run.id,
       controller: run.controller,
       session: this.state.session,
       model: this.state.model,
+      channel: options.channel,
       userMessage: taskInputToUserMessage(input),
       taskMessages: [],
       recallAccumulator: createRecallAccumulator(),
@@ -1188,11 +1195,13 @@ export class Agent {
   }
 
   private createToolsForRun(context: TaskRunContext, task: TaskState) {
+    const policy = this.createPermissionPolicy(context.channel);
     const protectedTools = createProtectedCodingTools(this.cwd, {
       sessionId: context.session.sessionId,
+      channel: context.channel,
       requestApproval: (request) => this.requestApproval(request),
       emit: (event) => this.emitIfCurrent(context.runId, event),
-      policy: new DefaultPermissionPolicy()
+      policy,
     });
     const writeTodosTool = createWriteTodosTool({
       cwd: this.cwd,
@@ -1226,6 +1235,25 @@ export class Agent {
       }
     });
     return [writeTodosTool, ...protectedTools];
+  }
+
+  private createPermissionPolicy(channel: ToolExecutionChannel | undefined): DefaultPermissionPolicy {
+    if (channel?.platform !== "telegram") {
+      return new DefaultPermissionPolicy();
+    }
+
+    const approval = this.state.config.channels.telegram.approval;
+    const allowlistedChannels = approval.allowChats
+      .map((chatId) => ({
+        platform: "telegram",
+        kind: chatId.startsWith("-") ? "channel" : "dm",
+        id: chatId,
+      }) satisfies ToolExecutionChannel);
+
+    return new DefaultPermissionPolicy({
+      allowlistedChannels,
+      commandDenylist: approval.commandDenylist,
+    });
   }
 
   private async appendTurnMessages(context: TaskRunContext, newMessages: ConversationMessage[]): Promise<void> {

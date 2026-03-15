@@ -33,6 +33,15 @@ export function prepareTelegramCaption(
     return undefined;
   }
   const format = resolveTelegramTextFormat(requested, fallback);
+  return prepareTelegramSingleText(text, format);
+}
+
+export function prepareTelegramSingleText(
+  text: string,
+  requested: DispatchTextFormat | undefined,
+  fallback?: DispatchTextFormat | undefined,
+): PreparedTelegramText {
+  const format = resolveTelegramTextFormat(requested, fallback);
   return prepareTelegramText(text, format);
 }
 

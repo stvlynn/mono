@@ -1,4 +1,9 @@
-import type { MonoTelegramConfig, MonoTelegramGroupConfig } from "./types.js";
+import type {
+  MonoTelegramApprovalConfig,
+  MonoTelegramConfig,
+  MonoTelegramGroupConfig,
+  ToolExecutionChannel,
+} from "./types.js";
 
 const TELEGRAM_PREFIX_RE = /^(telegram|tg):/i;
 
@@ -75,6 +80,15 @@ export function normalizeTelegramGroupsConfig(
   return normalized;
 }
 
+export function normalizeTelegramApprovalConfig(
+  approval: Partial<MonoTelegramApprovalConfig> | undefined,
+): MonoTelegramApprovalConfig {
+  return {
+    allowChats: normalizeTelegramChatEntries(approval?.allowChats),
+    commandDenylist: normalizeCommandPatterns(approval?.commandDenylist),
+  };
+}
+
 export function mergeTelegramAllowFrom(
   config: MonoTelegramConfig,
   storeAllowFrom: ReadonlyArray<string>,
@@ -109,4 +123,49 @@ export function isTelegramSenderAllowed(
 ): boolean {
   const normalized = normalizeTelegramUserId(senderId);
   return normalized ? allowFrom.includes(normalized) : false;
+}
+
+export function telegramChatIdToToolExecutionChannel(chatId: string): ToolExecutionChannel | undefined {
+  const normalized = normalizeTelegramChatId(chatId);
+  if (!normalized) {
+    return undefined;
+  }
+
+  return {
+    platform: "telegram",
+    kind: normalized.startsWith("-") ? "channel" : "dm",
+    id: normalized,
+  };
+}
+
+function normalizeTelegramChatEntries(values: ReadonlyArray<string | number> | undefined): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values ?? []) {
+    const next = normalizeTelegramChatId(value);
+    if (!next || seen.has(next)) {
+      continue;
+    }
+    seen.add(next);
+    normalized.push(next);
+  }
+
+  return normalized;
+}
+
+function normalizeCommandPatterns(values: ReadonlyArray<string> | undefined): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values ?? []) {
+    const next = value.trim();
+    if (!next || seen.has(next)) {
+      continue;
+    }
+    seen.add(next);
+    normalized.push(next);
+  }
+
+  return normalized;
 }

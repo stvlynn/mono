@@ -49,4 +49,11 @@ Default policy:
 - `bash`: ask, with denylist for destructive commands
 - other mutating tools: ask
 
+Channel-aware behavior:
+
+- permission requests may include an optional channel context
+- the current Telegram integration can allow specific chat ids to bypass interactive approval
+- destructive bash commands still hard-deny even on allowlisted channels
+- Telegram-specific bash command denylist entries can deny commands before approval is considered
+
 The TUI or CLI approval callback resolves permission requests.

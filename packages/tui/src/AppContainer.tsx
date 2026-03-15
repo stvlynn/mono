@@ -17,7 +17,14 @@ import {
   TelegramControlRuntime,
   type TelegramControlEvent,
 } from "@mono/telegram-control";
-import { readInputImageAttachmentFromPath, type ConversationMessage, type InputImageAttachment, type MemoryRecord, type TaskInput } from "@mono/shared";
+import {
+  readInputImageAttachmentFromPath,
+  telegramChatIdToToolExecutionChannel,
+  type ConversationMessage,
+  type InputImageAttachment,
+  type MemoryRecord,
+  type TaskInput,
+} from "@mono/shared";
 import { RootApp } from "./RootApp.js";
 import { AppContext } from "./contexts/AppContext.js";
 import { ForegroundKeypressContext, type ForegroundKeypressHandler } from "./contexts/ForegroundKeypressContext.js";
@@ -494,13 +501,31 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       : request.message.displayName ?? request.message.senderId ?? request.message.chatId;
     setStatus(`Handling Telegram message from ${senderLabel}`);
 
+    let streamedReply = "";
+    const unsubscribe = request.preview
+      ? agent.subscribe((event) => {
+        if (event.type === "assistant-start") {
+          streamedReply = "";
+          return;
+        }
+        if (event.type === "assistant-text-delta") {
+          streamedReply += event.delta;
+          request.preview?.update(streamedReply);
+        }
+      })
+      : () => {};
+
     try {
-      const result = await agent.runTask(request.input);
+      const result = await agent.runTask(request.input, {
+        channel: telegramChatIdToToolExecutionChannel(request.message.chatId),
+      });
       return formatTelegramChatReply(result);
     } catch (error) {
       const message = errorMessage(error, "Failed to handle Telegram chat");
       reportUiError(error, "Failed to handle Telegram chat");
       return `Request failed: ${message}`;
+    } finally {
+      unsubscribe();
     }
   }, [agent, reportUiError, setStatus]);
 

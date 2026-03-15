@@ -5,4 +5,5 @@ export * from "./help.js";
 export * from "./inbound.js";
 export * from "./outbound.js";
 export * from "./pairing-store.js";
+export * from "./draft-stream.js";
 export * from "./runtime.js";

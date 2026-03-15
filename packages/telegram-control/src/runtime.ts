@@ -1,5 +1,10 @@
 import { resolveMonoConfig } from "@mono/config";
-import { createBuiltInProvider, createDistributor, inboundMessageToTaskInput } from "@mono/im-platform";
+import {
+  createBuiltInProvider,
+  createDistributor,
+  inboundMessageToTaskInput,
+  prepareTelegramSingleText,
+} from "@mono/im-platform";
 import type { Distributor, ImPlatformProvider } from "@mono/im-platform";
 import type { MonoTelegramConfig } from "@mono/shared";
 import type {
@@ -8,6 +13,7 @@ import type {
   TelegramControlEvent,
   TelegramIncomingMessage,
 } from "./types.js";
+import { createTelegramDraftPreviewStream } from "./draft-stream.js";
 import { createNotifierFromDistributor } from "./outbound.js";
 import { processTelegramIncomingMessage } from "./inbound.js";
 
@@ -195,6 +201,7 @@ export class TelegramControlRuntime {
       return;
     }
 
+    const preview = this.#createReplyPreview(message);
     try {
       const inbound = await this.#provider.normalizeIncomingMessage(update);
       if (!inbound) {
@@ -204,17 +211,55 @@ export class TelegramControlRuntime {
       const reply = await this.#onChatMessage({
         input: inboundMessageToTaskInput(inbound),
         message,
+        preview: preview ? { update: (text) => preview.update(text) } : undefined,
       });
       if (!reply?.trim()) {
+        await preview?.clear();
         return;
       }
 
-      await notifier.sendText(message.chatId, reply);
+      const materialized = await preview?.materialize(reply);
+      if (!materialized) {
+        await notifier.sendText(message.chatId, reply);
+        await preview?.clear();
+      }
     } catch (error) {
+      await preview?.clear().catch(() => {});
       const formatted = formatTelegramRuntimeError(error);
       this.#emit({ type: "error", message: `Telegram chat handling failed: ${formatted}` });
       await notifier.sendText(message.chatId, `Request failed: ${formatted}`).catch(() => {});
     }
+  }
+
+  #createReplyPreview(message: TelegramIncomingMessage) {
+    if (message.chatType !== "private") {
+      return undefined;
+    }
+
+    const chatId = Number(message.chatId);
+    if (!Number.isInteger(chatId) || chatId <= 0) {
+      return undefined;
+    }
+
+    return createTelegramDraftPreviewStream({
+      renderText: (text) => prepareTelegramSingleText(text, "markdown", "markdown"),
+      sendDraft: async (draftId, text, parseMode) => {
+        await this.#callTelegram("sendMessageDraft", {
+          chat_id: chatId,
+          draft_id: draftId,
+          text,
+          ...(parseMode ? { parse_mode: parseMode } : {}),
+        });
+      },
+      sendFinal: async (text, parseMode) => {
+        const result = await this.#callTelegram<{ message_id?: number }>("sendMessage", {
+          chat_id: chatId,
+          text,
+          ...(parseMode ? { parse_mode: parseMode } : {}),
+        });
+        return typeof result.message_id === "number" ? result.message_id : undefined;
+      },
+    });
   }
 
   async #fetchBotIdentity(): Promise<TelegramBotIdentity> {

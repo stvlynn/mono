@@ -37,6 +37,8 @@ export interface VerificationOutcome {
   evidence: string[];
 }
 
+const MISSING_VERIFICATION_EVIDENCE_REASON = "No strong verification evidence was collected.";
+
 export function createTaskState(options: TaskRuntimeOptions): TaskState {
   const verificationMode = inferVerificationMode(options.goal);
 
@@ -81,6 +83,19 @@ export function buildTaskTurnPlan(task: TaskState, todoRecord?: TaskTodoRecord |
     };
   }
 
+  if (isDirectResponseTask(task)) {
+    return {
+      phase: "execute",
+      prompt: [
+        "You are handling a direct user question or lightweight request.",
+        `Goal: ${task.goal}`,
+        "Answer directly.",
+        "Use read or bash tools only when they provide concrete evidence you need for the reply.",
+        "Do not create or refine todo plans unless the user explicitly asked for implementation work."
+      ].join("\n")
+    };
+  }
+
   return {
     phase: "execute",
     prompt: [
@@ -120,6 +135,13 @@ export function updateTaskAfterTurn(context: CompletedTurnContext): {
       evidence: verification.evidence,
       lastCheckedAt: Date.now()
     };
+    if (shouldConcludeWithoutVerification(context.turnMessages, next.verification.mode, verification)) {
+      return {
+        task: markVerificationNotRequired(next),
+        loopDetected,
+        nextPhase: "summarize"
+      };
+    }
     return {
       task: next,
       verification,
@@ -131,6 +153,14 @@ export function updateTaskAfterTurn(context: CompletedTurnContext): {
   if (next.verification.mode === "none") {
     return {
       task: next,
+      loopDetected,
+      nextPhase: "summarize"
+    };
+  }
+
+  if (shouldSkipVerificationAfterExecute(context.turnMessages, next.verification.mode)) {
+    return {
+      task: markVerificationNotRequired(next),
       loopDetected,
       nextPhase: "summarize"
     };
@@ -157,7 +187,7 @@ export function buildTaskSummary(task: TaskState, messages: ConversationMessage[
       : task.verification.passed
         ? `Verification passed: ${task.verification.reason ?? "sufficient evidence collected."}`
         : `Verification status: ${task.verification.reason ?? "not confirmed."}`;
-  const statusLabel = status ?? (task.verification.passed ? "done" : "incomplete");
+  const statusLabel = status ?? (task.verification.mode === "none" || task.verification.passed ? "done" : "incomplete");
   return [
     `Task status: ${statusLabel}.`,
     latestAssistant ? `Latest outcome: ${latestAssistant}` : "No assistant summary was produced.",
@@ -279,6 +309,18 @@ function currentTaskLine(todoRecord?: TaskTodoRecord | null): string {
   return current ? `Current task: ${current.description}` : "Current task: progress the overall goal.";
 }
 
+function shouldSkipVerificationAfterExecute(messages: ConversationMessage[], mode: VerificationMode): boolean {
+  return mode === "light" && turnHasFinalAssistantReply(messages) && !turnHasToolResults(messages);
+}
+
+function shouldConcludeWithoutVerification(
+  messages: ConversationMessage[],
+  mode: VerificationMode,
+  verification: VerificationOutcome
+): boolean {
+  return mode === "light" && isMissingEvidenceVerification(verification) && !turnHasToolResults(messages);
+}
+
 function detectLoop(messages: ConversationMessage[]): boolean {
   const toolSignatures = messages
     .filter((message): message is Extract<ConversationMessage, { role: "tool" }> => message.role === "tool")
@@ -305,6 +347,24 @@ function detectLoop(messages: ConversationMessage[]): boolean {
   }
 
   return false;
+}
+
+function turnHasFinalAssistantReply(messages: ConversationMessage[]): boolean {
+  const assistantMessages = messages.filter((message): message is AssistantMessage => message.role === "assistant");
+  const latestAssistant = assistantMessages.at(-1);
+  if (!latestAssistant || latestAssistant.stopReason === "tool_use") {
+    return false;
+  }
+
+  return latestAssistant.content.some((part) => part.type === "text" && part.text.trim().length > 0);
+}
+
+function turnHasToolResults(messages: ConversationMessage[]): boolean {
+  return messages.some((message) => message.role === "tool");
+}
+
+function isMissingEvidenceVerification(verification: VerificationOutcome): boolean {
+  return !verification.passed && verification.reason === MISSING_VERIFICATION_EVIDENCE_REASON;
 }
 
 function normalizeToolInput(value: unknown, key?: string): unknown {
@@ -370,9 +430,7 @@ function evaluateVerification(messages: ConversationMessage[], mode: Verificatio
 
   return {
     passed: false,
-    reason: hasFailureSignal
-      ? "Verification found failing evidence in tool output."
-      : "No strong verification evidence was collected.",
+    reason: hasFailureSignal ? "Verification found failing evidence in tool output." : MISSING_VERIFICATION_EVIDENCE_REASON,
     evidence
   };
 }
@@ -414,15 +472,32 @@ function estimateTokenCount(messages: ConversationMessage[]): number {
 }
 
 function inferVerificationMode(goal: string): VerificationMode {
-  if (/\b(explain|summari[sz]e|review|analy[sz]e|inspect|understand|what|why|how)\b/i.test(goal)) {
-    return "none";
-  }
-
-  if (/\b(test|verify|validate|fix|implement|edit|write|refactor|change|update)\b/i.test(goal)) {
+  if (looksLikeExecutionTask(goal)) {
     return "strict";
   }
 
+  if (looksLikeDirectResponseTask(goal)) {
+    return "none";
+  }
+
   return "light";
+}
+
+function isDirectResponseTask(task: Pick<TaskState, "verification">): boolean {
+  return task.verification.mode === "none";
+}
+
+function looksLikeExecutionTask(goal: string): boolean {
+  return /^\s*(please\s+)?(test|verify|validate|fix|implement|edit|write|refactor|change|update|create|add|remove|delete|debug|patch)\b/i.test(goal)
+    || /\b(can you|could you|please)\s+(test|verify|validate|fix|implement|edit|write|refactor|change|update|create|add|remove|delete|debug|patch)\b/i.test(goal)
+    || /^\s*(修复|实现|编写|修改|更新|重构|新增|添加|删除|调试|排查|测试|验证)/.test(goal)
+    || /(帮我|请|把|给我).*(修复|实现|编写|修改|更新|重构|新增|添加|删除|调试|排查|测试|验证|补上|改一下|写一个|做一个)/.test(goal);
+}
+
+function looksLikeDirectResponseTask(goal: string): boolean {
+  return /\b(explain|summari[sz]e|review|analy[sz]e|inspect|understand|what|why|how|which|where|list|show|tell me)\b/i.test(goal)
+    || /[?？]/.test(goal)
+    || /(什么|怎么|为什么|哪些|哪儿|哪里|有吗|最近|介绍|解释|总结|分析|看看|列出|展示|闲聊|聊聊|hi|hello|你好|嗨|哈喽)/i.test(goal);
 }
 
 function createTaskId(goal: string): string {
@@ -437,4 +512,13 @@ function cloneTask(task: TaskState): TaskState {
       evidence: [...task.verification.evidence]
     }
   };
+}
+
+function markVerificationNotRequired(task: TaskState): TaskState {
+  const next = cloneTask(task);
+  next.verification = {
+    mode: "none",
+    evidence: []
+  };
+  return next;
 }

@@ -51,6 +51,8 @@ describe("telegram control", () => {
     expect(resolved.channels.telegram.dmPolicy).toBe("pairing");
     expect(resolved.channels.telegram.allowFrom).toEqual([]);
     expect(resolved.channels.telegram.groups).toEqual({});
+    expect(resolved.channels.telegram.approval.allowChats).toEqual([]);
+    expect(resolved.channels.telegram.approval.commandDenylist).toEqual([]);
   });
 
   it("rejects allowlist mode without a configured allowFrom entry", async () => {
@@ -88,6 +90,47 @@ describe("telegram control", () => {
     await expect(resolveMonoConfig({ cwd })).rejects.toThrow(
       "Telegram dmPolicy=allowlist requires at least one mono.channels.telegram.allowFrom entry",
     );
+  });
+
+  it("normalizes telegram approval channel config", async () => {
+    const { cwd, configDir } = await createTempWorkspace("mono-telegram-approval");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true,
+          },
+        },
+        channels: {
+          telegram: {
+            ...createDefaultTelegramConfig(),
+            approval: {
+              allowChats: ["123456", "-1009876543210", "123456", "invalid"],
+              commandDenylist: [" pnpm publish ", "", "git push"],
+            },
+          },
+        },
+      },
+      projects: {},
+    } satisfies MonoGlobalConfig);
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.channels.telegram.approval).toEqual({
+      allowChats: ["123456", "-1009876543210"],
+      commandDenylist: ["pnpm publish", "git push"],
+    });
   });
 
   it("persists pairing requests and approvals in the Telegram store", async () => {

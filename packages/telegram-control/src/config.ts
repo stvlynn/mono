@@ -99,6 +99,8 @@ export async function buildTelegramStatusResult(
       `Configured bot id: ${config.botId ?? "<not set>"}`,
       `DM policy: ${config.dmPolicy}`,
       `Config allowFrom: ${config.allowFrom.length > 0 ? config.allowFrom.join(", ") : "<none>"}`,
+      `Approval allowChats: ${config.approval.allowChats.length > 0 ? config.approval.allowChats.join(", ") : "<none>"}`,
+      `Approval command denylist: ${config.approval.commandDenylist.length > 0 ? config.approval.commandDenylist.join(", ") : "<none>"}`,
       `Stored approvals: ${allowFromStore.length > 0 ? allowFromStore.join(", ") : "<none>"}`,
       `Pending pairing requests: ${pending.length}`,
       `Config file: ${store.paths.globalConfigPath}`,

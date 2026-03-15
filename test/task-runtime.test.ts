@@ -325,6 +325,7 @@ describe("task runtime", () => {
       }
     ]);
 
+    expect(summary).toContain("Task status: done.");
     expect(summary).toContain("Latest outcome");
     expect(buildTaskTurnPlan(task).phase).toBe("execute");
   });
@@ -341,6 +342,117 @@ describe("task runtime", () => {
     const overridden = applyVerificationMode(task, "strict");
 
     expect(overridden.verification.mode).toBe("strict");
+  });
+
+  it("treats casual Chinese questions as direct-response tasks", () => {
+    const task = createTaskState({
+      goal: "最近有什么有意思的事情吗",
+      model,
+      existingMessages: []
+    });
+
+    expect(task.verification.mode).toBe("none");
+    expect(buildTaskTurnPlan(task).phase).toBe("execute");
+  });
+
+  it("summarizes after one turn for lightweight Chinese queries", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "你在本地有哪些代码",
+        model,
+        existingMessages: []
+      }),
+      "execute"
+    );
+
+    const update = updateTaskAfterTurn({
+      task,
+      turnMessages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "stop",
+          timestamp: Date.now(),
+          content: [{ type: "text", text: "我列出了当前仓库的主要包。" }]
+        }
+      ]
+    });
+
+    expect(update.nextPhase).toBe("summarize");
+    expect(update.verification).toBeUndefined();
+  });
+
+  it("summarizes light conversational turns without a verification pass when no tools ran", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "just checking in",
+        model,
+        existingMessages: []
+      }),
+      "execute"
+    );
+
+    expect(task.verification.mode).toBe("light");
+
+    const update = updateTaskAfterTurn({
+      task,
+      turnMessages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "stop",
+          timestamp: Date.now(),
+          content: [{ type: "text", text: "I'm here and ready to help." }]
+        }
+      ]
+    });
+
+    expect(update.nextPhase).toBe("summarize");
+    expect(update.task.verification.mode).toBe("none");
+    expect(update.verification).toBeUndefined();
+  });
+
+  it("does not bounce light verification back into execute when no evidence was needed", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "just checking in",
+        model,
+        existingMessages: []
+      }),
+      "verify"
+    );
+
+    expect(task.verification.mode).toBe("light");
+
+    const update = updateTaskAfterTurn({
+      task,
+      turnMessages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "stop",
+          timestamp: Date.now(),
+          content: [{ type: "text", text: "Everything is fine." }]
+        }
+      ]
+    });
+
+    expect(update.verification).toBeUndefined();
+    expect(update.nextPhase).toBe("summarize");
+    expect(update.task.verification.mode).toBe("none");
+  });
+
+  it("keeps Chinese implementation requests on the verified execution path", () => {
+    const task = createTaskState({
+      goal: "修复这个测试并验证结果",
+      model,
+      existingMessages: []
+    });
+
+    expect(task.verification.mode).toBe("strict");
   });
 
   it("keeps incomplete as a distinct terminal phase", () => {

@@ -70,6 +70,14 @@ describe("tui app bootstrap", () => {
     expect(appContainer).toContain("await persistProjectProfileSelection(resolved.profileName, process.cwd())");
   });
 
+  it("streams Telegram chat replies from assistant text deltas", () => {
+    const appContainer = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
+
+    expect(appContainer).toContain("request.preview");
+    expect(appContainer).toContain('event.type === "assistant-text-delta"');
+    expect(appContainer).toContain("request.preview?.update(streamedReply)");
+  });
+
   it("keeps runtime request errors out of the fatal path", () => {
     const source = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
 

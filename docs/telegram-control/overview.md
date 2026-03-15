@@ -33,13 +33,12 @@ Today it owns:
 
 It does not currently own:
 
-- general-purpose Telegram chat replies from the coding agent
 - webhook mode
 - background daemon/service management outside the TUI process
 - persistent group conversation routing
 - a web control panel
 
-The current runtime is control-oriented, not a full Telegram chat assistant.
+The current runtime is still control-oriented, but it can now hand authorized private-chat messages off to the coding agent and stream reply previews through Telegram drafts before sending the final message.
 
 ## Package Surface
 
@@ -77,6 +76,8 @@ The resolved config shape is:
 - `allowFrom`
 - `groupAllowFrom`
 - `groups`
+- `approval.allowChats`
+- `approval.commandDenylist`
 - `dmPolicy`
 - `pollingTimeoutSeconds`
 
@@ -84,6 +85,8 @@ Default behavior:
 
 - Telegram is disabled by default
 - DM policy defaults to `pairing`
+- approval allowChats defaults to empty
+- approval commandDenylist defaults to empty
 - the runtime polls with a 20 second Bot API timeout
 
 Validation rules enforced during config resolution:
@@ -92,6 +95,12 @@ Validation rules enforced during config resolution:
 - the token must look like a Bot API token
 - `botId`, when present, must be a positive numeric Telegram user id
 - `dmPolicy="allowlist"` requires at least one `allowFrom` entry
+
+Approval behavior:
+
+- `approval.allowChats` is a Telegram chat-id allowlist for bypassing interactive tool approval
+- `approval.commandDenylist` is a Telegram-scoped bash denylist checked before allowlist bypass
+- destructive bash commands still hard-deny even when the chat is allowlisted
 
 ## Pairing and Allowlist State
 
@@ -213,6 +222,12 @@ Per-message behavior:
 - for groups:
   - only `/help` is currently handled
   - the reply includes the current group chat id and whether the group is already configured
+- for authorized chat handoff:
+  - the runtime forwards Telegram channel context into the agent permission policy
+  - allowlisted chats can run protected tools without approval prompts
+  - private chats can preview streamed answer text through Bot API `sendMessageDraft`
+  - the draft preview is materialized into a final message when generation completes
+  - if draft transport is unavailable or rejected, delivery falls back to the normal final message path
 
 Outbound control replies use `@mono/im-platform` rather than duplicating Telegram send logic in the control runtime.
 

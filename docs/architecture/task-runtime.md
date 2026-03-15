@@ -10,6 +10,11 @@ Describe how `mono` executes a user request as a task.
 
 The main entrypoint is `Agent.runTask()` in `packages/agent-core/src/agent.ts`.
 
+Not every request follows the same verification path:
+
+- direct questions, explain/summarize-style prompts, and lightweight repository queries default to single-pass execution with `verification=none`
+- implementation and change-oriented requests still use the execute/verify loop
+
 ## Task Shell
 
 A task starts with a lightweight `TaskState`:
@@ -62,6 +67,14 @@ Verification mode is one of:
 - `strict`
 
 Verification is still runtime-controlled. The model can update the todo list if verification finds missing work.
+
+Current direct-response behavior:
+
+- `verification=none` skips the verify phase entirely
+- the execute prompt tells the model to answer directly and only use tools when they provide concrete evidence
+- this keeps casual chat and lightweight questions from generating extra verifier-only assistant turns
+- `verification=light` can also short-circuit to summarize when a turn produced a normal assistant reply and no tool evidence was needed
+- light verification that only failed due to missing evidence does not re-open execution if the verify turn also produced no tool evidence
 
 ## Loop Detection
 
