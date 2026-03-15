@@ -123,6 +123,7 @@ export interface MonoProjectConfig {
 
 export type MonoTelegramDmPolicy = "pairing" | "allowlist" | "open" | "disabled";
 export type MonoSensitiveActionMode = "allow_all" | "blacklist" | "strict";
+export type MonoRuntimeEnvironment = "prod" | "dev";
 
 export interface MonoTelegramApprovalConfig {
   allowChats: string[];
@@ -155,6 +156,7 @@ export interface MonoSettingsConfig {
   approvalMode: "default" | "always-ask" | "auto-approve-safe";
   theme: string;
   sensitiveActionMode: MonoSensitiveActionMode;
+  environment: MonoRuntimeEnvironment;
 }
 
 export interface MonoMemoryConfig {
@@ -834,7 +836,19 @@ export type RuntimeEvent =
   | { type: "memory-persisted"; record: MemoryRecord }
   | { type: "run-aborted"; reason: "user" | "superseded" }
   | { type: "run-end"; messages: ConversationMessage[] }
-  | { type: "error"; error: Error };
+  | {
+      type: "error";
+      error: Error;
+      task?: TaskState;
+      phase?: TaskPhase;
+      userFacingMessage?: string;
+      details?: {
+        causeName?: string;
+        causeCode?: string;
+        causeMessage?: string;
+        contextTokens?: number;
+      };
+    };
 
 export interface RunPromptOptions {
   maxSteps?: number;

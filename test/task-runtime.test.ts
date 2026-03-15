@@ -8,6 +8,7 @@ import {
   buildTaskTurnPlan,
   compressConversation,
   createTaskState,
+  runLocalVerification,
   shouldCompressMessages,
   updateTaskAfterTurn
 } from "../packages/agent-core/src/task-runtime.js";
@@ -34,7 +35,7 @@ describe("task runtime", () => {
     expect(task.currentTodoMemoryId).toBeUndefined();
   });
 
-  it("moves from execute to verify and then to summarize with verification evidence", () => {
+  it("moves from execute to verify and then summarizes after local verification passes", () => {
     let task = createTaskState({
       goal: "fix the build and verify it",
       model,
@@ -49,7 +50,7 @@ describe("task runtime", () => {
           role: "assistant",
           provider: "openai",
           model: "gpt-4.1-mini",
-          stopReason: "tool_use",
+          stopReason: "stop",
           timestamp: Date.now(),
           content: [{ type: "text", text: "I updated the failing code path." }]
         }
@@ -58,9 +59,7 @@ describe("task runtime", () => {
     expect(executeUpdate.nextPhase).toBe("verify");
 
     task = advanceTaskPhase(executeUpdate.task, "verify");
-    const verifyUpdate = updateTaskAfterTurn({
-      task,
-      turnMessages: [
+    const verifyUpdate = runLocalVerification(task, [
         {
           role: "tool",
           toolCallId: "tool-1",
@@ -69,11 +68,45 @@ describe("task runtime", () => {
           isError: false,
           timestamp: Date.now()
         }
-      ]
-    });
+      ]);
 
     expect(verifyUpdate.verification?.passed).toBe(true);
     expect(verifyUpdate.nextPhase).toBe("summarize");
+  });
+
+  it("stays in execute when the turn only produced tool-use output", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "inspect the Telegram markdown implementation",
+        model,
+        existingMessages: []
+      }),
+      "execute"
+    );
+
+    const update = updateTaskAfterTurn({
+      task,
+      turnMessages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: Date.now(),
+          content: [{ type: "text", text: "Let me inspect one more file." }]
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-1",
+          toolName: "read",
+          content: "export function markdownToTelegramHtml() {}",
+          isError: false,
+          timestamp: Date.now()
+        }
+      ]
+    });
+
+    expect(update.nextPhase).toBe("execute");
   });
 
   it("detects loops when the same tool signature repeats", () => {
@@ -167,7 +200,7 @@ describe("task runtime", () => {
     });
 
     expect(update.loopDetected).toBe(false);
-    expect(update.nextPhase).toBe("summarize");
+    expect(update.nextPhase).toBe("execute");
   });
 
   it("compresses long conversations into a session summary", () => {

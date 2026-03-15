@@ -126,7 +126,7 @@ export class AgentEventCoordinator {
         break;
       case "error":
         this.actions.setRunning(false);
-        this.actions.setStatus(event.error.message);
+        this.actions.setStatus(event.userFacingMessage ?? event.error.message);
         break;
       default:
         break;

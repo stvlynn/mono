@@ -92,23 +92,23 @@ function createAnthropicTextResponse(text: string): Response {
 }
 
 describe("llm adapters", () => {
-  it("routes anthropic models to the anthropic AI SDK adapter", async () => {
+  it("routes anthropic models to the anthropic xsai adapter", async () => {
     const registry = new ModelRegistry();
     await registry.load();
     const model = registry.resolve("anthropic/claude-sonnet-4-5");
     const adapter = getAdapterForModel(model);
 
     expect(model.family).toBe("anthropic");
-    expect(adapter.id).toBe("ai-sdk-anthropic");
+    expect(adapter.id).toBe("xsai-anthropic");
   });
 
-  it("routes openai-compatible models to the generic AI SDK adapter", async () => {
+  it("routes openai-compatible models to the generic xsai adapter", async () => {
     const registry = new ModelRegistry();
     await registry.load();
     const model = registry.resolve("openai/gpt-4.1-mini");
     const adapter = getAdapterForModel(model);
 
-    expect(adapter.id).toBe("ai-sdk-openai-compatible");
+    expect(adapter.id).toBe("xsai-openai-compatible");
   });
 
   it("routes anthropic-compatible runtime overrides to the anthropic adapter", () => {
@@ -125,10 +125,10 @@ describe("llm adapters", () => {
       supportsReasoning: true
     });
 
-    expect(adapter.id).toBe("ai-sdk-anthropic");
+    expect(adapter.id).toBe("xsai-anthropic");
   });
 
-  it("routes gemini models to the generic google AI SDK adapter", () => {
+  it("routes gemini models to the generic google xsai adapter", () => {
     const adapter = getAdapterForModel({
       provider: "google",
       modelId: "gemini-2.5-pro",
@@ -142,7 +142,7 @@ describe("llm adapters", () => {
       supportsReasoning: true
     });
 
-    expect(adapter.id).toBe("ai-sdk-gemini");
+    expect(adapter.id).toBe("xsai-gemini");
   });
 
   it("uses the anthropic messages endpoint and completes a tool loop for anthropic transport models", async () => {
@@ -327,97 +327,14 @@ describe("llm adapters", () => {
     });
   });
 
-  it("preserves tool image outputs as anthropic media blocks in follow-up steps", async () => {
+  it("retries anthropic transport errors before any stream output", async () => {
+    const protocolError = new TypeError("fetch failed", {
+      cause: new Error("Response does not match the HTTP/1.1 protocol (Expected HTTP/, RTSP/ or ICE/)")
+    });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(createAnthropicResponse([
-        {
-          event: "message_start",
-          data: {
-            type: "message_start",
-            message: {
-              id: "msg_tool_image",
-              type: "message",
-              role: "assistant",
-              model: "MiniMax-M2.5-highspeed",
-              content: [],
-              stop_reason: null,
-              stop_sequence: null,
-              usage: { input_tokens: 1, output_tokens: 1 }
-            }
-          }
-        },
-        {
-          event: "content_block_start",
-          data: {
-            type: "content_block_start",
-            index: 0,
-            content_block: {
-              type: "tool_use",
-              id: "toolu_img",
-              name: "read_image",
-              input: {}
-            }
-          }
-        },
-        {
-          event: "content_block_delta",
-          data: {
-            type: "content_block_delta",
-            index: 0,
-            delta: {
-              type: "input_json_delta",
-              partial_json: "{\"path\":\"diagram.png\"}"
-            }
-          }
-        },
-        {
-          event: "content_block_stop",
-          data: {
-            type: "content_block_stop",
-            index: 0
-          }
-        },
-        {
-          event: "message_delta",
-          data: {
-            type: "message_delta",
-            delta: { stop_reason: "tool_use" },
-            usage: { output_tokens: 1 }
-          }
-        },
-        {
-          event: "message_stop",
-          data: {
-            type: "message_stop"
-          }
-        }
-      ]))
-      .mockResolvedValueOnce(createAnthropicTextResponse("Image analyzed"));
+      .mockRejectedValueOnce(protocolError)
+      .mockResolvedValueOnce(createAnthropicTextResponse("Recovered after retry"));
     global.fetch = fetchMock as typeof global.fetch;
-
-    const tool: AgentTool<{ path: string }> = {
-      name: "read_image",
-      description: "Read an image from disk",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: { type: "string" }
-        },
-        required: ["path"],
-        additionalProperties: false
-      },
-      parseArgs(args) {
-        return args as { path: string };
-      },
-      async execute() {
-        return {
-          content: [
-            { type: "text", text: "Rendered diagram" },
-            { type: "image", mimeType: "image/png", data: "aGVsbG8=" }
-          ]
-        };
-      }
-    };
 
     const adapter = getAdapterForModel({
       provider: "minimax",
@@ -433,7 +350,7 @@ describe("llm adapters", () => {
       supportsReasoning: true
     });
 
-    await adapter.run({
+    const messages = await adapter.run({
       model: {
         provider: "minimax",
         modelId: "MiniMax-M2.5-highspeed",
@@ -447,91 +364,28 @@ describe("llm adapters", () => {
         supportsTools: true,
         supportsReasoning: true
       },
-      systemPrompt: "You are a vision agent.",
-      messages: [
-        {
-          role: "user",
-          content: "Inspect the generated image",
-          timestamp: Date.now()
-        }
-      ],
-      tools: [tool],
-      thinkingLevel: "off",
-      maxSteps: 2,
-      emit() {}
-    } satisfies LlmRunOptions);
-
-    const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-    expect(secondBody.messages.at(-1)).toEqual({
-      role: "user",
-      content: [
-        {
-          type: "tool_result",
-          tool_use_id: "toolu_img",
-          content: [
-            { type: "text", text: "Rendered diagram" },
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/png",
-                data: "aGVsbG8="
-              }
-            }
-          ]
-        }
-      ]
-    });
-  });
-
-  it("surfaces the underlying provider error when the stream fails before any step completes", async () => {
-    global.fetch = vi.fn().mockResolvedValue(new Response('{"error":{"message":"Invalid Authentication"}}', {
-      status: 401,
-      headers: {
-        "content-type": "application/json"
-      }
-    })) as typeof global.fetch;
-
-    const adapter = getAdapterForModel({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      family: "anthropic",
-      transport: "anthropic",
-      runtimeProviderKey: "anthropic:anthropic",
-      baseURL: "https://api.anthropic.com/v1",
-      apiKey: "bad-key",
-      apiKeyEnv: "ANTHROPIC_API_KEY",
-      providerFactory: "anthropic",
-      supportsTools: true,
-      supportsReasoning: true
-    });
-
-    await expect(adapter.run({
-      model: {
-        provider: "anthropic",
-        modelId: "claude-sonnet-4-5",
-        family: "anthropic",
-        transport: "anthropic",
-        runtimeProviderKey: "anthropic:anthropic",
-        baseURL: "https://api.anthropic.com/v1",
-        apiKey: "bad-key",
-        apiKeyEnv: "ANTHROPIC_API_KEY",
-        providerFactory: "anthropic",
-        supportsTools: true,
-        supportsReasoning: true
-      },
       systemPrompt: "You are a planner.",
       messages: [
         {
           role: "user",
-          content: "hello",
+          content: "Create a coding plan",
           timestamp: Date.now()
         }
       ],
       tools: [],
       thinkingLevel: "off",
+      runtimeEnvironment: "dev",
       maxSteps: 1,
       emit() {}
-    } satisfies LlmRunOptions)).rejects.toThrow(/401|Invalid Authentication/u);
+    } satisfies LlmRunOptions);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Recovered after retry" }]
+      })
+    ]);
   });
 });

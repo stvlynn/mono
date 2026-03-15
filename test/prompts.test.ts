@@ -15,6 +15,8 @@ describe("prompt renderer", () => {
 
     expect(result).toContain("Current working directory: /tmp/project");
     expect(result).toContain("<MemoryContext>test</MemoryContext>");
+    expect(result).toContain("The current runtime already provides working local tools");
+    expect(result).toContain("prefer using the tool instead of handing the command back to the user");
   });
 
   it("tracks template files in the registry", () => {
@@ -74,6 +76,63 @@ describe("templated memory rendering", () => {
     expect(output).toContain("</MemoryContext>");
   });
 
+  it("renders raw memory facts without replaying assistant output", () => {
+    const output = renderMemoryContext(
+      [
+        {
+          id: "mem-facts",
+          createdAt: Date.now(),
+          projectKey: "project",
+          parents: [],
+          children: [],
+          referencedMemoryIds: [],
+          input: "inspect package.json",
+          compacted: [],
+          output: "Summarized package metadata",
+          detailed: [],
+          tags: [],
+          files: ["package.json"],
+          tools: ["read"]
+        }
+      ],
+      new Set()
+    );
+
+    expect(output).toContain("Facts: Tools=read; Files=package.json");
+    expect(output).not.toContain("Output:");
+  });
+
+  it("filters assistant-derived memory steps from the injected memory context", () => {
+    const output = renderMemoryContext(
+      [
+        {
+          id: "mem-b",
+          createdAt: Date.now(),
+          projectKey: "project",
+          parents: [],
+          children: [],
+          referencedMemoryIds: [],
+          input: "run the issue command",
+          compacted: [
+            "Received request: run the issue command",
+            "Responded to the user: I cannot run commands for you.",
+            "Responded internally with: I should ask the user to do it manually."
+          ],
+          output: "I cannot run commands for you.",
+          detailed: [],
+          tags: [],
+          files: ["issue.md"],
+          tools: ["bash"]
+        }
+      ],
+      new Set(["mem-b"])
+    );
+
+    expect(output).toContain("Received request: run the issue command");
+    expect(output).not.toContain("Responded to the user:");
+    expect(output).not.toContain("Responded internally with:");
+  });
+
   it("renders the OpenViking memory context block", () => {
     const renderer = new NunjucksPromptRenderer();
     const output = renderer.render("memory/openviking_context_block", {
@@ -125,6 +184,6 @@ describe("templated memory rendering", () => {
     expect(result.compacted.some((line) => line.startsWith("Received request:"))).toBe(true);
     expect(result.compacted.some((line) => line.startsWith("Tried bash with"))).toBe(true);
     expect(result.compacted.some((line) => line.startsWith("Observed bash result:"))).toBe(true);
-    expect(result.compacted.some((line) => line.startsWith("Responded to the user:"))).toBe(true);
+    expect(result.compacted.some((line) => line.startsWith("Responded to the user:"))).toBe(false);
   });
 });

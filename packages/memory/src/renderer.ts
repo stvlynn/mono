@@ -2,6 +2,11 @@ import { defaultPromptRenderer, type PromptRenderer } from "@mono/prompts";
 import type { MemoryDetailedTrace, MemoryRecord } from "@mono/shared";
 import { sanitizeStructuredValue, summarizeText } from "./entities.js";
 
+const ASSISTANT_MEMORY_PREFIXES = [
+  "Responded internally with:",
+  "Responded to the user:"
+];
+
 export function renderTraceForCompaction(
   trace: MemoryDetailedTrace[],
   renderer: PromptRenderer = defaultPromptRenderer
@@ -43,11 +48,11 @@ export function renderMemoryContext(
   }
 
   const compactedItems: Array<{ id: string; text: string }> = [];
-  const rawPairItems: Array<{ id: string; input: string; output: string }> = [];
+  const rawPairItems: Array<{ id: string; input: string; facts: string }> = [];
 
   for (const record of records) {
     if (compactedIds.has(record.id)) {
-      for (const step of record.compacted.slice(0, 6)) {
+      for (const step of record.compacted.filter((item) => !isAssistantDerivedMemoryStep(item)).slice(0, 6)) {
         compactedItems.push({ id: record.id, text: step });
       }
       continue;
@@ -55,7 +60,7 @@ export function renderMemoryContext(
     rawPairItems.push({
       id: record.id,
       input: summarizeText(record.input, 180),
-      output: summarizeText(record.output, 180)
+      facts: buildRawMemoryFacts(record)
     });
   }
 
@@ -67,4 +72,21 @@ export function renderMemoryContext(
     compacted_items: compactedItems,
     raw_pair_items: rawPairItems
   });
+}
+
+function isAssistantDerivedMemoryStep(step: string): boolean {
+  return ASSISTANT_MEMORY_PREFIXES.some((prefix) => step.startsWith(prefix));
+}
+
+function buildRawMemoryFacts(record: MemoryRecord): string {
+  const facts = [
+    record.tools.length > 0 ? `Tools=${record.tools.join(", ")}` : "",
+    record.files.length > 0 ? `Files=${record.files.join(", ")}` : ""
+  ].filter(Boolean);
+
+  if (facts.length === 0) {
+    return "<none>";
+  }
+
+  return summarizeText(facts.join("; "), 180);
 }

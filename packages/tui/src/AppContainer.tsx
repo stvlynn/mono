@@ -91,6 +91,20 @@ function infoDialog(title: string, body: string[]): DialogInstance {
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
+    const cause = error.cause;
+    const causeCode = cause && typeof cause === "object" && typeof (cause as { code?: unknown }).code === "string"
+      ? (cause as { code: string }).code
+      : undefined;
+    const causeMessage = cause instanceof Error && cause.message && cause.message !== error.message
+      ? cause.message
+      : undefined;
+
+    if (causeCode) {
+      return `${error.message} (${causeCode})`;
+    }
+    if (causeMessage && error.message === "fetch failed") {
+      return `${error.message}: ${causeMessage}`;
+    }
     return error.message;
   }
   if (typeof error === "string" && error.trim()) {

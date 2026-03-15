@@ -165,4 +165,26 @@ describe("waiting copy reducer", () => {
     }));
     expect(state.pendingTools[0]?.summary).toContain("todos=");
   });
+
+  it("prefers a user-facing runtime error message when one is provided", () => {
+    const agent = createAgentStub();
+    let state = createUiState();
+
+    state = reduceEvent(
+      state,
+      {
+        type: "error",
+        error: new Error("fetch failed"),
+        phase: "verify",
+        userFacingMessage: "Verification could not finish because the model request failed (ECONNRESET).",
+        details: {
+          causeCode: "ECONNRESET",
+          contextTokens: 6200
+        }
+      },
+      agent
+    );
+
+    expect(state.status).toBe("Verification could not finish because the model request failed (ECONNRESET).");
+  });
 });

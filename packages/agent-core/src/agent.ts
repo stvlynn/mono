@@ -15,6 +15,7 @@ import {
   mergeTelegramAllowFrom,
   supportsImageAttachments,
   type TaskInput,
+  type TaskPhase,
   type TaskResult,
   type TaskState,
   type TaskTodoRecord,
@@ -32,7 +33,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ModelRegistry, runConversation, type LoadedProfile } from "@mono/llm";
+import { ModelRegistry, normalizeProviderError, runConversation, type LoadedProfile } from "@mono/llm";
 import {
   DeterministicMemoryCompactor,
   FolderMemoryStore,
@@ -77,6 +78,8 @@ import {
   buildTaskTurnPlan,
   compressConversation,
   createTaskState,
+  hasAnyFinalAssistantReply,
+  runLocalVerification,
   shouldCompressMessages,
   updateTaskAfterTurn
 } from "./task-runtime.js";
@@ -93,6 +96,28 @@ interface TaskRunContext {
   recallAccumulator: RecallAccumulator;
   taskTodoRecord: TaskTodoRecord | null;
   taskTodosDirty: boolean;
+}
+
+interface RuntimeErrorDetails {
+  causeName?: string;
+  causeCode?: string;
+  causeMessage?: string;
+  contextTokens?: number;
+}
+
+interface ClassifiedRuntimeError {
+  error: Error;
+  phase?: TaskPhase;
+  details: RuntimeErrorDetails;
+  userFacingMessage: string;
+  isProviderTransportFailure: boolean;
+}
+
+function writeDevNetworkLog(enabled: boolean, message: string): void {
+  if (!enabled) {
+    return;
+  }
+  process.stderr.write(`[mono:debug] ${message}\n`);
 }
 
 export interface RunTaskOptions {
@@ -329,6 +354,30 @@ export class Agent {
           return this.buildAbortedTaskResult(runContext.taskMessages);
         }
 
+        if (task.phase === "verify") {
+          this.emitIfCurrent(runContext.runId, { type: "task-verify-start", task });
+          const update = runLocalVerification(task, runContext.taskMessages);
+          task = update.task;
+          if (runContext.taskTodoRecord) {
+            task.currentTodoMemoryId = runContext.taskTodoRecord.id;
+          }
+          this.state.currentTask = task;
+          this.emitIfCurrent(runContext.runId, {
+            type: "task-verify-result",
+            task,
+            passed: update.verification.passed,
+            reason: update.verification.reason
+          });
+
+          if (update.nextPhase === "summarize") {
+            task = await this.transitionTaskPhase(runContext.runId, runContext.session, task, "summarize");
+            break;
+          }
+
+          task = await this.transitionTaskPhase(runContext.runId, runContext.session, task, update.nextPhase);
+          continue;
+        }
+
         await this.compressSessionIfNeeded(runContext);
         const newMessages = await this.runTaskTurn(runContext, task);
         if (!this.isRunCurrent(runContext.runId)) {
@@ -341,15 +390,6 @@ export class Agent {
           task.currentTodoMemoryId = runContext.taskTodoRecord.id;
         }
         this.state.currentTask = task;
-
-        if (update.verification) {
-          this.emitIfCurrent(runContext.runId, {
-            type: "task-verify-result",
-            task,
-            passed: update.verification.passed,
-            reason: update.verification.reason
-          });
-        }
 
         if (update.loopDetected) {
           loopDetected = true;
@@ -383,7 +423,35 @@ export class Agent {
       }
 
       const resolvedError = error instanceof Error ? error : new Error(String(error));
-      this.emitIfCurrent(runContext.runId, { type: "error", error: resolvedError });
+      const classified = this.classifyRuntimeError(resolvedError, this.state.currentTask);
+      writeDevNetworkLog(
+        this.state.config.settings.environment === "dev",
+        `runtime error phase=${classified.phase ?? "unknown"} provider=${this.state.model.provider}/${this.state.model.modelId} causeCode=${classified.details.causeCode ?? "-"} causeMessage=${classified.details.causeMessage ?? "-"} contextTokens=${classified.details.contextTokens ?? 0} message=${classified.error.message}`
+      );
+
+      if (this.shouldDowngradeVerifyFailure(runContext, classified)) {
+        const result = await this.completeTaskWithVerifyFailure(runContext, classified);
+        this.emitIfCurrent(runContext.runId, {
+          type: "error",
+          error: classified.error,
+          task: this.state.currentTask,
+          phase: classified.phase,
+          userFacingMessage: classified.userFacingMessage,
+          details: classified.details
+        });
+        this.emitIfCurrent(runContext.runId, { type: "task-summary", result });
+        this.emitIfCurrent(runContext.runId, { type: "run-end", messages: runContext.taskMessages });
+        return result;
+      }
+
+      this.emitIfCurrent(runContext.runId, {
+        type: "error",
+        error: resolvedError,
+        task: this.state.currentTask,
+        phase: classified.phase,
+        userFacingMessage: classified.userFacingMessage,
+        details: classified.details
+      });
       throw resolvedError;
     } finally {
       this.finishRun(runContext.runId);
@@ -719,6 +787,87 @@ export class Agent {
     return error instanceof Error && error.name === "AbortError";
   }
 
+  private classifyRuntimeError(error: Error, task?: TaskState): ClassifiedRuntimeError {
+    const cause = this.extractErrorCause(error);
+    const normalized = normalizeProviderError(error);
+    const details: RuntimeErrorDetails = {
+      causeName: cause?.name,
+      causeCode: normalized.code ?? this.readErrorCode(cause),
+      causeMessage: normalized.message,
+      contextTokens: this.state.latestContextReport?.estimatedTokens
+    };
+
+    return {
+      error,
+      phase: task?.phase,
+      details,
+      userFacingMessage: this.buildUserFacingRuntimeErrorMessage(task?.phase, error, details, normalized.retryable),
+      isProviderTransportFailure: normalized.retryable
+    };
+  }
+
+  private extractErrorCause(error: Error): Error | undefined {
+    const cause = error.cause;
+    if (cause instanceof Error) {
+      return cause;
+    }
+    if (!cause || typeof cause !== "object") {
+      return undefined;
+    }
+
+    const name = typeof (cause as { name?: unknown }).name === "string"
+      ? (cause as { name: string }).name
+      : "Error";
+    const message = typeof (cause as { message?: unknown }).message === "string"
+      ? (cause as { message: string }).message
+      : JSON.stringify(cause);
+    const wrapped = new Error(message);
+    wrapped.name = name;
+    const code = this.readErrorCode(cause);
+    if (code) {
+      (wrapped as Error & { code?: string }).code = code;
+    }
+    return wrapped;
+  }
+
+  private readErrorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== "object") {
+      return undefined;
+    }
+
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" && code.trim() ? code : undefined;
+  }
+
+  private buildUserFacingRuntimeErrorMessage(
+    phase: TaskPhase | undefined,
+    error: Error,
+    details: RuntimeErrorDetails,
+    isProviderTransportFailure: boolean
+  ): string {
+    const reason = details.causeCode
+      ?? (details.causeMessage && details.causeMessage !== error.message ? details.causeMessage : error.message);
+
+    if (isProviderTransportFailure) {
+      const prefix = phase === "verify"
+        ? "Verification could not finish because the model request failed"
+        : "The model request failed";
+      return reason ? `${prefix} (${reason}).` : `${prefix}.`;
+    }
+
+    if (phase === "verify") {
+      return `Verification could not finish because the task failed: ${error.message}`;
+    }
+
+    return error.message;
+  }
+
+  private shouldDowngradeVerifyFailure(context: TaskRunContext, classified: ClassifiedRuntimeError): boolean {
+    return classified.phase === "verify"
+      && classified.isProviderTransportFailure
+      && context.taskMessages.some((message) => message.role === "assistant" || message.role === "tool");
+  }
+
   private markTaskAborted(): void {
     if (!this.state.currentTask) {
       return;
@@ -734,6 +883,39 @@ export class Agent {
       verification: this.state.currentTask?.verification,
       messages
     };
+  }
+
+  private async completeTaskWithVerifyFailure(
+    context: TaskRunContext,
+    classified: ClassifiedRuntimeError
+  ): Promise<TaskResult> {
+    if (!this.state.currentTask) {
+      throw classified.error;
+    }
+
+    const task: TaskState = {
+      ...this.state.currentTask,
+      verification: {
+        ...this.state.currentTask.verification,
+        passed: false,
+        reason: `Main execution completed, but verification could not finish because the model request failed (${classified.details.causeCode ?? classified.error.message}).`,
+        lastCheckedAt: Date.now()
+      }
+    };
+    this.state.currentTask = task;
+
+    const result: TaskResult = {
+      taskId: task.taskId,
+      todoMemoryId: task.currentTodoMemoryId,
+      status: "incomplete",
+      summary: buildTaskSummary(task, context.taskMessages, "incomplete"),
+      turns: task.attempts,
+      verification: task.verification,
+      messages: context.taskMessages
+    };
+    await this.persistTaskMemory(context);
+    await this.finishTask(context.runId, context.session, task, result);
+    return result;
   }
 
   private async seedStructuredMemoryStore(): Promise<void> {
@@ -1108,9 +1290,6 @@ export class Agent {
     const tools = await this.createToolsForRun(context, task);
     const turnPlan = buildTaskTurnPlan(task, todoRecord);
 
-    if (turnPlan.phase === "verify") {
-      this.emitIfCurrent(context.runId, { type: "task-verify-start", task });
-    }
     this.emitIfCurrent(context.runId, { type: "assistant-start" });
     const taskContext = `${buildTaskContext(task, todoRecord)}\n${turnPlan.prompt}`;
     const assembledPrompt = await assemblePromptContext({
@@ -1129,13 +1308,19 @@ export class Agent {
       memoryPlan: collapseRecallAccumulator(context.recallAccumulator)
     });
     this.state.latestContextReport = assembledPrompt.report;
+    const preparedMessages = this.prepareMessagesForModel(this.state.messages);
+    writeDevNetworkLog(
+      this.state.config.settings.environment === "dev",
+      `prepared model messages total=${preparedMessages.length} tool_messages=${preparedMessages.filter((message) => message.role === "tool").length} tool_chars=${preparedMessages.filter((message) => message.role === "tool" && typeof message.content === "string").reduce((sum, message) => sum + message.content.length, 0)}`
+    );
 
     const newMessages = await runConversation({
       model: context.model,
       systemPrompt: assembledPrompt.systemPrompt,
-      messages: [...this.state.messages],
+      messages: preparedMessages,
       tools,
       thinkingLevel: this.state.thinkingLevel,
+      runtimeEnvironment: this.state.config.settings.environment,
       maxSteps: this.maxSteps,
       emit: (event) => this.emitIfCurrent(context.runId, event),
       signal: context.controller.signal
@@ -1143,6 +1328,73 @@ export class Agent {
 
     await this.appendTurnMessages(context, newMessages);
     return newMessages;
+  }
+
+  private prepareMessagesForModel(messages: ConversationMessage[]): ConversationMessage[] {
+    const MAX_TOOL_MESSAGES_WITH_FULL_CONTEXT = 4;
+    const MAX_TOTAL_TOOL_CHARS = 6_000;
+    const FULL_TOOL_RESULT_CHAR_LIMIT = 1_200;
+    const COMPACT_TOOL_RESULT_CHAR_LIMIT = 240;
+
+    const result = [...messages];
+    let toolMessagesKept = 0;
+    let totalToolChars = 0;
+
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      const message = result[index];
+      if (!message || message.role !== "tool" || typeof message.content !== "string") {
+        continue;
+      }
+
+      const content = message.content.trim();
+      const useCompactSummary =
+        toolMessagesKept >= MAX_TOOL_MESSAGES_WITH_FULL_CONTEXT
+        || totalToolChars >= MAX_TOTAL_TOOL_CHARS;
+      const normalized = useCompactSummary
+        ? this.compactToolMessageContent(message, content, COMPACT_TOOL_RESULT_CHAR_LIMIT)
+        : this.trimToolMessageContent(content, FULL_TOOL_RESULT_CHAR_LIMIT);
+
+      totalToolChars += normalized.length;
+      toolMessagesKept += 1;
+
+      result[index] = {
+        ...message,
+        content: normalized
+      };
+    }
+
+    return result;
+  }
+
+  private trimToolMessageContent(content: string, limit: number): string {
+    if (content.length <= limit) {
+      return content;
+    }
+
+    const head = content.slice(0, Math.min(800, Math.floor(limit * 0.65))).trimEnd();
+    const tail = content.slice(-Math.min(250, Math.floor(limit * 0.2))).trimStart();
+    return [
+      head,
+      `...[truncated ${content.length - head.length - tail.length} chars]...`,
+      tail
+    ].join("\n");
+  }
+
+  private compactToolMessageContent(
+    message: Extract<ConversationMessage, { role: "tool" }>,
+    content: string,
+    limit: number
+  ): string {
+    const firstLine = content
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ?? "<empty>";
+    const prefix = `[compact tool output] ${message.toolName}${message.inputSignature ? ` ${message.inputSignature}` : ""}`;
+    const compact = `${prefix}\n${firstLine}`;
+    if (compact.length <= limit) {
+      return compact;
+    }
+    return `${compact.slice(0, Math.max(0, limit - 16)).trimEnd()}...[truncated]`;
   }
 
   private async loadMemoryContextForTaskTurn(context: TaskRunContext): Promise<string> {
@@ -1301,9 +1553,12 @@ export class Agent {
   }
 
   private createTaskResult(task: TaskState, messages: ConversationMessage[], loopDetected: boolean): TaskResult {
+    const hasFinalAssistantReply = hasAnyFinalAssistantReply(messages);
     const status = loopDetected
       ? "blocked"
-      : task.verification.mode === "none" || task.verification.passed
+      : !hasFinalAssistantReply
+        ? "incomplete"
+        : task.verification.mode === "none" || task.verification.passed
         ? "done"
         : task.attempts >= this.maxTurns
           ? "incomplete"

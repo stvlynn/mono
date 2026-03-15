@@ -60,6 +60,8 @@ describe("structured memory", () => {
 
     expect(memoryPackage.entries.some((entry) => entry.title.includes("Preference"))).toBe(true);
     expect(memoryPackage.evidence.length).toBeGreaterThan(0);
+    const episodicEntry = memoryPackage.entries.find((entry) => entry.scope === "episodic");
+    expect(episodicEntry?.summary).not.toContain("Assistant outcome:");
     expect(rendered).toContain("<StructuredMemoryContext");
     expect(rendered).toContain("prefers_directness");
   });

@@ -135,7 +135,8 @@ export function createDefaultSettingsConfig(): MonoSettingsConfig {
   return {
     approvalMode: "default",
     theme: "system",
-    sensitiveActionMode: "blacklist"
+    sensitiveActionMode: "blacklist",
+    environment: "prod"
   };
 }
 

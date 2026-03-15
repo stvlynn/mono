@@ -31,7 +31,7 @@ export interface StructuredMemoryTurnResult {
 
 export async function persistStructuredMemoryTurn(input: StructuredMemoryTurnInput): Promise<StructuredMemoryTurnResult> {
   await input.store.ensureLayout();
-  const summaries = collectAssistantSummaries(input.assistantMessages);
+  const observations = collectToolObservations(input.assistantMessages);
   const extracted = extractPreferenceEvidence(input.userMessage, input.entityId, input.sessionId);
   const event = await input.store.appendEpisodicEvent({
     createdAt: Date.now(),
@@ -39,8 +39,8 @@ export async function persistStructuredMemoryTurn(input: StructuredMemoryTurnInp
     sessionId: input.sessionId,
     branchHeadId: input.branchHeadId,
     queryText: input.userMessage,
-    summary: buildEventSummary(input.userMessage, summaries),
-    messages: [input.userMessage, ...summaries].slice(0, 4),
+    summary: buildEventSummary(input.userMessage, observations),
+    messages: [input.userMessage, ...observations].slice(0, 4),
     salience: extracted.length > 0 ? 0.9 : 0.4,
     extractedPreferenceKeys: extracted.map((item) => item.preference.key)
   });
@@ -90,24 +90,22 @@ export async function persistStructuredMemoryTurn(input: StructuredMemoryTurnInp
   };
 }
 
-function collectAssistantSummaries(messages: ConversationMessage[]): string[] {
+function collectToolObservations(messages: ConversationMessage[]): string[] {
   return messages
-    .filter((message): message is Extract<ConversationMessage, { role: "assistant" }> => message.role === "assistant")
+    .filter((message): message is Extract<ConversationMessage, { role: "tool" }> => message.role === "tool")
     .map((message) =>
-      message.content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text.trim())
-        .filter(Boolean)
-        .join(" ")
+      typeof message.content === "string"
+        ? `${message.toolName}: ${summarize(message.content, 180)}`
+        : `${message.toolName}: [structured output]`
     )
     .filter(Boolean)
     .slice(-2);
 }
 
-function buildEventSummary(userMessage: string, assistantSummaries: string[]): string {
+function buildEventSummary(userMessage: string, observations: string[]): string {
   const parts = [
     `User request: ${summarize(userMessage, 180)}`,
-    assistantSummaries[0] ? `Assistant outcome: ${summarize(assistantSummaries[0], 180)}` : ""
+    observations[0] ? `Observed result: ${summarize(observations[0], 180)}` : ""
   ];
   return parts.filter(Boolean).join("\n");
 }

@@ -5,7 +5,11 @@ ENV PATH=$PNPM_HOME:$PATH
 ENV HOME=/data/home
 ENV MONO_CONFIG_DIR=/data/home/.mono
 
-RUN corepack enable
+RUN corepack enable \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && update-ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

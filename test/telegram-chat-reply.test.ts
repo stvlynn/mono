@@ -83,4 +83,30 @@ describe("telegram chat reply formatting", () => {
 
     expect(formatTelegramChatReply(result)).toBe("I couldn't verify that yet.");
   });
+
+  it("uses the verification reason when an incomplete task has no final assistant reply", () => {
+    const result = createTaskResult({
+      status: "incomplete",
+      verification: {
+        mode: "light",
+        evidence: [],
+        passed: false,
+        reason: "Main execution completed, but verification could not finish because the model request failed (ECONNRESET)."
+      },
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [{ type: "text", text: "I'll run a verification command." }],
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe(
+      "Main execution completed, but verification could not finish because the model request failed (ECONNRESET)."
+    );
+  });
 });

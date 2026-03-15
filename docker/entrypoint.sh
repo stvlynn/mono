@@ -8,6 +8,7 @@ BOOTSTRAP_MODEL="${MONO_BOOTSTRAP_MODEL:-}"
 BOOTSTRAP_BASE_URL="${MONO_BOOTSTRAP_BASE_URL:-}"
 BOOTSTRAP_PROFILE="${MONO_BOOTSTRAP_PROFILE:-default}"
 BOOTSTRAP_ALWAYS="${MONO_BOOTSTRAP_ALWAYS:-0}"
+BOOTSTRAP_ENVIRONMENT="${MONO_BOOTSTRAP_ENVIRONMENT:-prod}"
 CONFIG_PATH="${MONO_CONFIG_DIR:-/data/home/.mono}/config.json"
 
 TELEGRAM_ENABLED="${MONO_TELEGRAM_ENABLED:-0}"
@@ -76,7 +77,8 @@ if [[ "$should_bootstrap" == "1" ]]; then
     },
     "settings": {
       "approvalMode": "default",
-      "theme": "system"
+      "theme": "system",
+      "environment": "${BOOTSTRAP_ENVIRONMENT}"
     },
     "memory": {
       "enabled": true,

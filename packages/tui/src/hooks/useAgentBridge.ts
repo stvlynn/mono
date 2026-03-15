@@ -253,7 +253,7 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
         waitingCopy: undefined,
         pendingAssistant: null,
         pendingTools: [],
-        status: event.error.message
+        status: event.userFacingMessage ?? event.error.message
       };
     default:
       return state;

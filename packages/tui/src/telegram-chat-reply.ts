@@ -38,6 +38,9 @@ function buildTelegramChatFallback(result: TaskResult): string {
   }
 
   if (result.status === "incomplete") {
+    if (result.verification?.reason?.trim()) {
+      return result.verification.reason.trim();
+    }
     return "I couldn't verify that yet.";
   }
 

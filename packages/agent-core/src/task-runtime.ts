@@ -110,7 +110,6 @@ export function buildTaskTurnPlan(task: TaskState, todoRecord?: TaskTodoRecord |
 
 export function updateTaskAfterTurn(context: CompletedTurnContext): {
   task: TaskState;
-  verification?: VerificationOutcome;
   loopDetected: boolean;
   nextPhase: TaskPhase;
 } {
@@ -126,35 +125,11 @@ export function updateTaskAfterTurn(context: CompletedTurnContext): {
     };
   }
 
-  if (context.task.phase === "verify") {
-    const verification = evaluateVerification(context.turnMessages, next.verification.mode);
-    next.verification = {
-      ...next.verification,
-      passed: verification.passed,
-      reason: verification.reason,
-      evidence: verification.evidence,
-      lastCheckedAt: Date.now()
-    };
-    if (shouldConcludeWithoutVerification(context.turnMessages, next.verification.mode, verification)) {
-      return {
-        task: markVerificationNotRequired(next),
-        loopDetected,
-        nextPhase: "summarize"
-      };
-    }
-    return {
-      task: next,
-      verification,
-      loopDetected,
-      nextPhase: verification.passed ? "summarize" : "execute"
-    };
-  }
-
   if (next.verification.mode === "none") {
     return {
       task: next,
       loopDetected,
-      nextPhase: "summarize"
+      nextPhase: turnHasFinalAssistantReply(context.turnMessages) ? "summarize" : "execute"
     };
   }
 
@@ -166,10 +141,50 @@ export function updateTaskAfterTurn(context: CompletedTurnContext): {
     };
   }
 
+  if (!turnHasFinalAssistantReply(context.turnMessages)) {
+    return {
+      task: next,
+      loopDetected,
+      nextPhase: "execute"
+    };
+  }
+
   return {
     task: next,
     loopDetected,
     nextPhase: "verify"
+  };
+}
+
+export function runLocalVerification(task: TaskState, messages: ConversationMessage[]): {
+  task: TaskState;
+  verification: VerificationOutcome;
+  nextPhase: TaskPhase;
+} {
+  const next = cloneTask(task);
+  next.attempts += 1;
+
+  const verification = evaluateVerification(messages, next.verification.mode);
+  next.verification = {
+    ...next.verification,
+    passed: verification.passed,
+    reason: verification.reason,
+    evidence: verification.evidence,
+    lastCheckedAt: Date.now()
+  };
+
+  if (shouldConcludeWithoutVerification(messages, next.verification.mode, verification)) {
+    return {
+      task: markVerificationNotRequired(next),
+      verification,
+      nextPhase: "summarize"
+    };
+  }
+
+  return {
+    task: next,
+    verification,
+    nextPhase: verification.passed ? "summarize" : "execute"
   };
 }
 
@@ -349,7 +364,7 @@ function detectLoop(messages: ConversationMessage[]): boolean {
   return false;
 }
 
-function turnHasFinalAssistantReply(messages: ConversationMessage[]): boolean {
+export function turnHasFinalAssistantReply(messages: ConversationMessage[]): boolean {
   const assistantMessages = messages.filter((message): message is AssistantMessage => message.role === "assistant");
   const latestAssistant = assistantMessages.at(-1);
   if (!latestAssistant || latestAssistant.stopReason === "tool_use") {
@@ -357,6 +372,15 @@ function turnHasFinalAssistantReply(messages: ConversationMessage[]): boolean {
   }
 
   return latestAssistant.content.some((part) => part.type === "text" && part.text.trim().length > 0);
+}
+
+export function hasAnyFinalAssistantReply(messages: ConversationMessage[]): boolean {
+  return messages
+    .filter((message): message is AssistantMessage => message.role === "assistant")
+    .some((message) =>
+      message.stopReason !== "tool_use"
+      && message.content.some((part) => part.type === "text" && part.text.trim().length > 0)
+    );
 }
 
 function turnHasToolResults(messages: ConversationMessage[]): boolean {

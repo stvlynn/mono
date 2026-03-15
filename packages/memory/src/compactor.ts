@@ -47,21 +47,7 @@ export class DeterministicMemoryCompactor implements MemoryCompactor {
             output: summarizeText(item.output, 220)
           })
         );
-      } else if (item.type === "assistant" && item.text) {
-        compacted.push(
-          this.renderer.render("memory/compacted_step_assistant", {
-            text: summarizeText(item.text, 220)
-          })
-        );
       }
-    }
-
-    if (input.assistantOutput.trim()) {
-      compacted.push(
-        this.renderer.render("memory/compacted_step_user_response", {
-          text: summarizeText(input.assistantOutput, 220)
-        })
-      );
     }
 
     return {

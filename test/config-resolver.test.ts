@@ -48,6 +48,7 @@ describe("config resolver", () => {
 
     const defaultResolved = await resolveMonoConfig({ cwd });
     expect(defaultResolved.settings.sensitiveActionMode).toBe("blacklist");
+    expect(defaultResolved.settings.environment).toBe("prod");
 
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
@@ -67,7 +68,8 @@ describe("config resolver", () => {
           }
         },
         settings: {
-          sensitiveActionMode: "strict"
+          sensitiveActionMode: "strict",
+          environment: "dev"
         }
       },
       projects: {}
@@ -75,6 +77,7 @@ describe("config resolver", () => {
 
     const strictResolved = await resolveMonoConfig({ cwd });
     expect(strictResolved.settings.sensitiveActionMode).toBe("strict");
+    expect(strictResolved.settings.environment).toBe("dev");
   });
 
   it("resolves default context settings and applies project overrides", async () => {

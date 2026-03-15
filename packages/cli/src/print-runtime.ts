@@ -42,6 +42,15 @@ export async function runPrint(
       process.stderr.write(`\n[tool:${event.toolName}] ${event.isError ? "error" : "done"}\n`);
     } else if (event.type === "task-summary") {
       process.stderr.write(`\n[task] ${event.result.summary}\n`);
+    } else if (event.type === "error") {
+      const detailSuffix = [
+        event.details?.causeCode ? `code=${event.details.causeCode}` : "",
+        event.details?.causeMessage ? `cause=${event.details.causeMessage}` : "",
+        typeof event.details?.contextTokens === "number" ? `ctx=~${event.details.contextTokens}tok` : ""
+      ].filter(Boolean).join(" ");
+      process.stderr.write(
+        `\n[error]${event.phase ? ` phase=${event.phase}` : ""} ${event.userFacingMessage ?? event.error.message}${detailSuffix ? ` ${detailSuffix}` : ""}\n`
+      );
     }
   });
   await agent.runTask(inputText);

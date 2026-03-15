@@ -6,6 +6,7 @@ export interface LlmRunOptions {
   messages: ConversationMessage[];
   tools: AgentTool[];
   thinkingLevel: ThinkingLevel;
+  runtimeEnvironment?: "prod" | "dev";
   maxSteps: number;
   emit: (event: RuntimeEvent) => void;
   signal?: AbortSignal;

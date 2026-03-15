@@ -121,7 +121,7 @@ export class StructuredMemoryRetrievalPlanner {
       entries.push({
         scope: "episodic",
         title: `Recent event: ${new Date(item.createdAt).toISOString()}`,
-        summary: item.summary,
+        summary: sanitizeEpisodicSummary(item.summary),
         sourceIds: [item.id]
       });
     }
@@ -204,4 +204,12 @@ function renderKnownFacts(value: Record<string, string>): string {
 
 function compactLines(lines: string[]): string {
   return lines.map((line) => line.trim()).filter(Boolean).join("\n");
+}
+
+function sanitizeEpisodicSummary(summary: string): string {
+  return summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("Assistant outcome:"))
+    .join("\n");
 }
