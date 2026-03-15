@@ -11,6 +11,8 @@ import {
   type RuntimeEvent,
   type SessionNodeSummary,
   type SessionSummary,
+  readJsonFile,
+  mergeTelegramAllowFrom,
   supportsImageAttachments,
   type TaskInput,
   type TaskResult,
@@ -25,6 +27,7 @@ import {
   type UserMessage,
   type VerificationMode
 } from "@mono/shared";
+import { MonoConfigStore } from "@mono/config";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -131,6 +134,11 @@ export interface AgentState {
 export interface ConfiguredModelProfile {
   name: string;
   model: UnifiedModel;
+}
+
+interface TelegramAllowFromStoreFile {
+  version?: number;
+  allowFrom?: string[];
 }
 
 async function loadOpenVikingAdapter(): Promise<{
@@ -1097,7 +1105,7 @@ export class Agent {
     if (todoRecord) {
       task.currentTodoMemoryId = todoRecord.id;
     }
-    const tools = this.createToolsForRun(context, task);
+    const tools = await this.createToolsForRun(context, task);
     const turnPlan = buildTaskTurnPlan(task, todoRecord);
 
     if (turnPlan.phase === "verify") {
@@ -1194,8 +1202,8 @@ export class Agent {
     ].join("\n");
   }
 
-  private createToolsForRun(context: TaskRunContext, task: TaskState) {
-    const policy = this.createPermissionPolicy(context.channel);
+  private async createToolsForRun(context: TaskRunContext, task: TaskState) {
+    const policy = await this.createPermissionPolicy(context.channel);
     const protectedTools = createProtectedCodingTools(this.cwd, {
       sessionId: context.session.sessionId,
       channel: context.channel,
@@ -1237,23 +1245,45 @@ export class Agent {
     return [writeTodosTool, ...protectedTools];
   }
 
-  private createPermissionPolicy(channel: ToolExecutionChannel | undefined): DefaultPermissionPolicy {
+  private async createPermissionPolicy(channel: ToolExecutionChannel | undefined): Promise<DefaultPermissionPolicy> {
     if (channel?.platform !== "telegram") {
       return new DefaultPermissionPolicy();
     }
 
     const approval = this.state.config.channels.telegram.approval;
-    const allowlistedChannels = approval.allowChats
-      .map((chatId) => ({
-        platform: "telegram",
-        kind: chatId.startsWith("-") ? "channel" : "dm",
-        id: chatId,
-      }) satisfies ToolExecutionChannel);
+    const allowlistedChannels = approval.allowChats.map((chatId) => ({
+      platform: "telegram",
+      kind: chatId.startsWith("-") ? "channel" : "dm",
+      id: chatId,
+    }) satisfies ToolExecutionChannel);
+    const implicitTelegramDmChannels = channel.kind === "dm"
+      ? await this.loadTelegramImplicitApprovalChannels()
+      : [];
 
     return new DefaultPermissionPolicy({
-      allowlistedChannels,
+      allowlistedChannels: dedupeToolExecutionChannels([
+        ...allowlistedChannels,
+        ...implicitTelegramDmChannels,
+      ]),
       commandDenylist: approval.commandDenylist,
     });
+  }
+
+  private async loadTelegramImplicitApprovalChannels(): Promise<ToolExecutionChannel[]> {
+    const storeAllowFrom = await this.readTelegramAllowFromStore();
+    return mergeTelegramAllowFrom(this.state.config.channels.telegram, storeAllowFrom).map((senderId) => ({
+        platform: "telegram",
+        kind: "dm",
+        id: senderId,
+      }) satisfies ToolExecutionChannel);
+  }
+
+  private async readTelegramAllowFromStore(): Promise<string[]> {
+    const store = new MonoConfigStore(this.cwd);
+    const file = await readJsonFile<TelegramAllowFromStoreFile>(
+      join(store.paths.globalStateDir, "telegram", "allowFrom.json")
+    );
+    return file?.allowFrom?.map(String).filter(Boolean) ?? [];
   }
 
   private async appendTurnMessages(context: TaskRunContext, newMessages: ConversationMessage[]): Promise<void> {
@@ -1471,4 +1501,14 @@ export class Agent {
 
     return undefined;
   }
+}
+
+function dedupeToolExecutionChannels(channels: ToolExecutionChannel[]): ToolExecutionChannel[] {
+  const unique = new Map<string, ToolExecutionChannel>();
+
+  for (const channel of channels) {
+    unique.set(`${channel.platform}:${channel.kind}:${channel.id}`, channel);
+  }
+
+  return [...unique.values()];
 }

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createTaskTodoRecord } from "../packages/agent-core/src/memory-runtime.js";
 import type { MemoryRecord } from "../packages/shared/src/index.js";
 
-async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean; memory?: Record<string, unknown> }): Promise<string> {
+async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean; memory?: Record<string, unknown>; channels?: Record<string, unknown> }): Promise<string> {
   const configDir = join(rootDir, ".mono");
   await mkdir(configDir, { recursive: true });
   await writeFile(
@@ -36,7 +36,8 @@ async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: bo
           rawPairCapNum: 8,
           keywordSearchLimit: 6,
           ...options?.memory
-        }
+        },
+        channels: options?.channels
       }
     }),
     "utf8"
@@ -196,6 +197,158 @@ describe("Agent", () => {
 
     expect(inspected.systemPrompt).toContain("<StructuredMemoryContext");
     expect(inspected.systemPrompt).toContain("prefers_directness");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("auto-allows paired Telegram DM senders without inheriting that bypass to groups", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-telegram-pairing-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    const configDir = await createAgentConfig(rootDir, {
+      channels: {
+        telegram: {
+          enabled: false,
+          botToken: undefined,
+          botId: undefined,
+          allowFrom: [],
+          groupAllowFrom: [],
+          groups: {},
+          approval: {
+            allowChats: [],
+            commandDenylist: ["pnpm publish"],
+          },
+          dmPolicy: "pairing",
+          pollingTimeoutSeconds: 20,
+        },
+      },
+    });
+    await mkdir(join(configDir, "state", "telegram"), { recursive: true });
+    await writeFile(
+      join(configDir, "state", "telegram", "allowFrom.json"),
+      JSON.stringify({ version: 1, allowFrom: ["7001"] }),
+      "utf8",
+    );
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const policy = await (agent as unknown as {
+      createPermissionPolicy: (channel: { platform: string; kind: "dm" | "channel"; id: string }) => Promise<{
+        evaluate: (request: {
+          toolName: string;
+          input: unknown;
+          cwd: string;
+          sessionId: string;
+          channel?: { platform: string; kind: "dm" | "channel"; id: string };
+        }) => { type: string; reason?: string };
+      }>;
+    }).createPermissionPolicy({
+      platform: "telegram",
+      kind: "dm",
+      id: "7001",
+    });
+
+    expect(policy.evaluate({
+      toolName: "bash",
+      input: { command: "pwd" },
+      cwd,
+      sessionId: "session-1",
+      channel: { platform: "telegram", kind: "dm", id: "7001" },
+    })).toEqual({ type: "allow" });
+    expect(policy.evaluate({
+      toolName: "bash",
+      input: { command: "pnpm publish --tag next" },
+      cwd,
+      sessionId: "session-1",
+      channel: { platform: "telegram", kind: "dm", id: "7001" },
+    })).toEqual({
+      type: "deny",
+      reason: "Command matches configured denylist",
+    });
+
+    const groupPolicy = await (agent as unknown as {
+      createPermissionPolicy: (channel: { platform: string; kind: "dm" | "channel"; id: string }) => Promise<{
+        evaluate: (request: {
+          toolName: string;
+          input: unknown;
+          cwd: string;
+          sessionId: string;
+          channel?: { platform: string; kind: "dm" | "channel"; id: string };
+        }) => { type: string; reason?: string };
+      }>;
+    }).createPermissionPolicy({
+      platform: "telegram",
+      kind: "channel",
+      id: "-1007001",
+    });
+
+    expect(groupPolicy.evaluate({
+      toolName: "bash",
+      input: { command: "pwd" },
+      cwd,
+      sessionId: "session-1",
+      channel: { platform: "telegram", kind: "channel", id: "-1007001" },
+    })).toEqual({
+      type: "ask",
+      reason: "bash commands require confirmation by default",
+    });
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("auto-allows Telegram DMs from config allowFrom in allowlist mode", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-telegram-allowlist-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir, {
+      channels: {
+        telegram: {
+          enabled: false,
+          botToken: undefined,
+          botId: undefined,
+          allowFrom: ["7002"],
+          groupAllowFrom: [],
+          groups: {},
+          approval: {
+            allowChats: [],
+            commandDenylist: [],
+          },
+          dmPolicy: "allowlist",
+          pollingTimeoutSeconds: 20,
+        },
+      },
+    });
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const policy = await (agent as unknown as {
+      createPermissionPolicy: (channel: { platform: string; kind: "dm" | "channel"; id: string }) => Promise<{
+        evaluate: (request: {
+          toolName: string;
+          input: unknown;
+          cwd: string;
+          sessionId: string;
+          channel?: { platform: string; kind: "dm" | "channel"; id: string };
+        }) => { type: string; reason?: string };
+      }>;
+    }).createPermissionPolicy({
+      platform: "telegram",
+      kind: "dm",
+      id: "7002",
+    });
+
+    expect(policy.evaluate({
+      toolName: "write",
+      input: { path: "README.md", content: "hello" },
+      cwd,
+      sessionId: "session-1",
+      channel: { platform: "telegram", kind: "dm", id: "7002" },
+    })).toEqual({ type: "allow" });
 
     delete process.env.MONO_CONFIG_DIR;
   });

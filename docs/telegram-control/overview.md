@@ -99,6 +99,7 @@ Validation rules enforced during config resolution:
 Approval behavior:
 
 - `approval.allowChats` is a Telegram chat-id allowlist for bypassing interactive tool approval
+- authorized Telegram private chats also bypass interactive tool approval through `allowFrom` and stored pairing approvals
 - `approval.commandDenylist` is a Telegram-scoped bash denylist checked before allowlist bypass
 - destructive bash commands still hard-deny even when the chat is allowlisted
 
@@ -225,6 +226,7 @@ Per-message behavior:
 - for authorized chat handoff:
   - the runtime forwards Telegram channel context into the agent permission policy
   - allowlisted chats can run protected tools without approval prompts
+  - authorized private chats inherit the same approval bypass through config `allowFrom` and stored pairing approvals
   - private chats can preview streamed answer text through Bot API `sendMessageDraft`
   - the draft preview is materialized into a final message when generation completes
   - if draft transport is unavailable or rejected, delivery falls back to the normal final message path

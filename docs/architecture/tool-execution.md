@@ -53,6 +53,7 @@ Channel-aware behavior:
 
 - permission requests may include an optional channel context
 - the current Telegram integration can allow specific chat ids to bypass interactive approval
+- authorized Telegram private chats also bypass interactive approval through the same allowlist path used by pairing and `allowFrom`
 - destructive bash commands still hard-deny even on allowlisted channels
 - Telegram-specific bash command denylist entries can deny commands before approval is considered
 
