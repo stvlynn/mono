@@ -451,7 +451,8 @@ export class Agent {
     }
     this.assertIdle("switch profile");
     this.profileSelection = profile;
-    const resolved = await this.registry.resolveConfig(this.modelSelection, profile, this.baseURLOverride);
+    this.modelSelection = undefined;
+    const resolved = await this.registry.resolveConfig(undefined, profile, this.baseURLOverride);
     this.state.profileName = resolved.profileName;
     this.state.model = resolved.model;
     this.state.config = resolved;

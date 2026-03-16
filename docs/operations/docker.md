@@ -63,6 +63,13 @@ The default compose file mounts:
 - the repository into `/workspace`
 - `${HOME}/.mono` into `/data/home/.mono`
 
+That means the container uses:
+
+- machine-level config from the host `~/.mono`
+- project-level overrides from the mounted repository `.mono/config.json`
+
+If the container appears to ignore a new default profile, check whether the project config still pins `mono.profile`.
+
 If you want a different host config directory, override `MONO_CONFIG_DIR_HOST`:
 
 ```bash
@@ -92,6 +99,15 @@ Recommended options:
 
 - reuse an existing host `~/.mono` directory
 - provide provider keys as environment variables when needed
+
+Operational note:
+
+- `MONO_API_KEY=""` should be treated as unset
+- if a wrapper or environment manager injects an empty string, verify the resolved key source from inside the container with:
+
+```bash
+docker compose exec -T mono node /app/packages/cli/dist/bin.js auth status
+```
 
 ## Notes
 

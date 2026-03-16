@@ -12,6 +12,30 @@ Checks:
 - `mono auth status`
 - `mono config list`
 - provider env vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MOONSHOT_API_KEY`
+- verify whether the active profile uses `apiKeyRef` and that `~/.mono/local/secrets.json` contains the expected profile entry
+- when running in Docker, verify from inside the container:
+  - `node /app/packages/cli/dist/bin.js auth status`
+- check whether `.mono/config.json` in the project overrides the global default profile
+- blank env vars such as `MONO_API_KEY=` should be treated as unset; if a container or wrapper injects empty strings, re-check the resolved `API key source`
+
+Common Telegram-specific symptoms:
+
+- Telegram profile save says it succeeded, but the next message fails with missing API key
+  - verify the runtime is using the intended profile, not a project-level override
+  - verify the profile still exists and was not removed in a concurrent Telegram action
+
+## Telegram Button Errors
+
+Symptoms:
+
+- Telegram control replies fail with `BUTTON_DATA_INVALID`
+- menu or second-step profile actions do not appear after tapping a button
+
+Checks:
+
+- verify callback payloads stay within Telegram limits
+- prefer short opaque callback ids over embedding full profile names or long session ids
+- confirm the running container/image includes the latest Telegram model-menu code
 
 ## Provider 400 Errors Around Tool Calls
 

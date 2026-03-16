@@ -11,6 +11,10 @@ const copies = [
   {
     from: resolve(root, "packages/seekdb-adapter/scripts"),
     to: resolve(root, "packages/seekdb-adapter/dist/scripts")
+  },
+  {
+    from: resolve(root, "packages/telegram-control/src/locales"),
+    to: resolve(root, "packages/telegram-control/dist/locales")
   }
 ];
 

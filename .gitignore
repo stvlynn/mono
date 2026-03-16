@@ -20,3 +20,4 @@ packages/*/src/*.d.ts.map
 !.mono/CONTEXT.md
 !.mono/IDENTITY.md
 !.mono/MEMORY.md
+.env

@@ -48,6 +48,17 @@ function resolveApiKey(model: UnifiedModel): string {
   return apiKey;
 }
 
+function isOfficialOpenAiBaseURL(baseURL: string): boolean {
+  try {
+    const normalized = new URL(baseURL.trim());
+    return normalized.protocol === "https:"
+      && normalized.hostname === "api.openai.com"
+      && normalized.pathname.replace(/\/+$/u, "") === "/v1";
+  } catch {
+    return false;
+  }
+}
+
 function mapStopReason(finishReason: string): AssistantMessage["stopReason"] {
   if (finishReason === "tool-calls") {
     return "tool_use";
@@ -165,7 +176,7 @@ function createLanguageModel(model: UnifiedModel): unknown {
     }).languageModel(model.modelId);
   }
 
-  if (model.providerFactory === "openai" || model.provider === "openai") {
+  if (model.providerFactory === "openai" && isOfficialOpenAiBaseURL(model.baseURL)) {
     return createOpenAI({
       apiKey,
       baseURL: model.baseURL

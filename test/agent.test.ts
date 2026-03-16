@@ -787,4 +787,70 @@ describe("Agent", () => {
 
     delete process.env.MONO_CONFIG_DIR;
   });
+
+  it("clears the model override when switching to a profile", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-profile-switch-"));
+    const cwd = join(rootDir, "workspace");
+    const configDir = join(rootDir, ".mono");
+    await mkdir(cwd, { recursive: true });
+    await mkdir(join(configDir, "local"), { recursive: true });
+    await writeFile(
+      join(configDir, "config.json"),
+      JSON.stringify({
+        version: 1,
+        mono: {
+          defaultProfile: "default",
+          profiles: {
+            default: {
+              provider: "openai",
+              modelId: "gpt-4.1-mini",
+              baseURL: "https://api.openai.com/v1",
+              family: "openai-compatible",
+              transport: "openai-compatible",
+              apiKeyRef: "local:default",
+              supportsTools: true,
+              supportsReasoning: true,
+            },
+            telegram: {
+              provider: "anthropic",
+              modelId: "claude-sonnet-4-5",
+              baseURL: "https://api.anthropic.com/v1",
+              family: "anthropic",
+              transport: "anthropic",
+              apiKeyRef: "local:telegram",
+              supportsTools: true,
+              supportsReasoning: true,
+            },
+          },
+        },
+      }),
+      "utf8"
+    );
+    await writeFile(
+      join(configDir, "local", "secrets.json"),
+      JSON.stringify({
+        version: 1,
+        profiles: {
+          default: { apiKey: "openai-key" },
+          telegram: { apiKey: "anthropic-key" },
+        },
+      }),
+      "utf8"
+    );
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+
+    await agent.setModel("openai/gpt-4.1-mini");
+    expect(agent.hasModelSelectionOverride()).toBe(true);
+
+    const resolved = await agent.setProfile("telegram");
+    expect(agent.hasModelSelectionOverride()).toBe(false);
+    expect(resolved.profileName).toBe("telegram");
+    expect(resolved.model.provider).toBe("anthropic");
+    expect(resolved.apiKey).toBe("anthropic-key");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
 });

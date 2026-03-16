@@ -299,6 +299,95 @@ describe("config resolver", () => {
     expect(resolved.model.baseURL).toBe("https://proxy.example/anthropic/v1");
   });
 
+  it("preserves apiKeyRef for catalog-backed profiles after normalization", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-api-key-ref-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-api-key-ref-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyRef: "local:default",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    } satisfies MonoGlobalConfig);
+
+    await writeJsonFile(join(configDir, "local", "secrets.json"), {
+      version: 1,
+      profiles: {
+        default: {
+          apiKey: "openai-test-key"
+        }
+      }
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.profileName).toBe("default");
+    expect(resolved.model.provider).toBe("openai");
+    expect(resolved.apiKey).toBe("openai-test-key");
+    expect(resolved.source.apiKey).toBe("local-secrets");
+  });
+
+  it("ignores empty MONO_API_KEY so local secrets still resolve", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-empty-env-key-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-empty-env-key-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+    process.env.MONO_API_KEY = "";
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+            baseURL: "https://api.anthropic.com/v1",
+            family: "anthropic",
+            transport: "anthropic",
+            providerFactory: "anthropic",
+            apiKeyRef: "local:default",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    } satisfies MonoGlobalConfig);
+
+    await writeJsonFile(join(configDir, "local", "secrets.json"), {
+      version: 1,
+      profiles: {
+        default: {
+          apiKey: "anthropic-test-key"
+        }
+      }
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.apiKey).toBe("anthropic-test-key");
+    expect(resolved.source.apiKey).toBe("local-secrets");
+
+    delete process.env.MONO_API_KEY;
+  });
+
   it("allows explicit model selection to bypass an unsupported default profile", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-explicit-model-cwd-"));
     const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-explicit-model-config-"));

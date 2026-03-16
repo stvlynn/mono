@@ -1,4 +1,5 @@
 import { buildTelegramPairHelpLines, buildTelegramRuntimeHelpLines } from "./help.js";
+import { buildTelegramModelEntryActions, resolveTelegramUiLanguage } from "./model-config.js";
 import { createTelegramNotifier } from "./outbound.js";
 import {
   approveTelegramPairingCode,
@@ -41,7 +42,12 @@ export async function executePairCommand(
 
       const notifier = await createTelegramNotifier(cwd);
       if (notifier) {
-        await notifier.sendText(approved.senderId, buildTelegramApprovedText()).catch(() => {});
+        const language = await resolveTelegramUiLanguage({ cwd, senderId: approved.senderId });
+        await notifier.sendText(
+          approved.senderId,
+          buildTelegramApprovedText(language),
+          { actions: buildTelegramModelEntryActions(language) },
+        ).catch(() => {});
       }
 
       return {

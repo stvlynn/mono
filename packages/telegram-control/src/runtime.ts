@@ -8,11 +8,17 @@ import {
   prepareTelegramSingleText,
 } from "@mono/im-platform";
 import type { Distributor, ImPlatformProvider } from "@mono/im-platform";
-import type { ApprovalRequest, MonoTelegramConfig } from "@mono/shared";
+import {
+  isTelegramSenderAllowed,
+  mergeTelegramAllowFrom,
+  type ApprovalRequest,
+  type MonoTelegramConfig,
+} from "@mono/shared";
 import type {
   TelegramBotIdentity,
   TelegramChatRequest,
   TelegramControlEvent,
+  TelegramCommandResult,
   TelegramIncomingMessage,
 } from "./types.js";
 import {
@@ -20,8 +26,17 @@ import {
   buildTelegramApprovalPrompt,
   parseTelegramApprovalActionId,
 } from "./approval-buttons.js";
+import { parseTelegramBotCommand } from "./bot-command.js";
 import { createTelegramDraftPreviewStream } from "./draft-stream.js";
+import { t } from "./language.js";
+import {
+  buildTelegramModelMenuResult,
+  resolveTelegramUiLanguage,
+  type TelegramSelectableProfile,
+  TelegramModelConfigWizard,
+} from "./model-config.js";
 import { createNotifierFromDistributor } from "./outbound.js";
+import { readTelegramAllowFromStore } from "./pairing-store.js";
 import { processTelegramIncomingMessage } from "./inbound.js";
 
 const TELEGRAM_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -42,6 +57,7 @@ interface TelegramApiUser {
   username?: string;
   first_name?: string;
   last_name?: string;
+  language_code?: string;
 }
 
 interface TelegramApiMessage {
@@ -73,6 +89,11 @@ interface PendingTelegramApproval {
   messageId?: string;
 }
 
+interface PendingTelegramProfileApply {
+  profileName: string;
+  chatId: string;
+}
+
 export class TelegramControlRuntime {
   readonly #cwd: string;
   readonly #onEvent?: (event: TelegramControlEvent) => void;
@@ -85,20 +106,35 @@ export class TelegramControlRuntime {
   #provider?: ImPlatformProvider;
   #token?: string;
   readonly #onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
+  readonly #applyProfile?: (profileName: string) => Promise<void>;
+  readonly #listConfiguredProfiles?: () => Promise<TelegramSelectableProfile[]>;
+  readonly #isAgentBusy?: () => boolean;
   readonly #fetchImpl: typeof fetch;
   readonly #pendingApprovals = new Map<string, PendingTelegramApproval>();
+  readonly #modelConfigWizard: TelegramModelConfigWizard;
   readonly #inFlightChatHandoffs = new Set<Promise<void>>();
+  #pendingProfileApply?: PendingTelegramProfileApply;
 
   constructor(options: {
     cwd?: string;
     onEvent?: (event: TelegramControlEvent) => void;
     onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
+    applyProfile?: (profileName: string) => Promise<void>;
+    listConfiguredProfiles?: () => Promise<TelegramSelectableProfile[]>;
+    isAgentBusy?: () => boolean;
     fetchImpl?: typeof fetch;
   } = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#onEvent = options.onEvent;
     this.#onChatMessage = options.onChatMessage;
+    this.#applyProfile = options.applyProfile;
+    this.#listConfiguredProfiles = options.listConfiguredProfiles;
+    this.#isAgentBusy = options.isAgentBusy;
     this.#fetchImpl = options.fetchImpl ?? fetch;
+    this.#modelConfigWizard = new TelegramModelConfigWizard({
+      cwd: this.#cwd,
+      listConfiguredProfiles: this.#listConfiguredProfiles,
+    });
   }
 
   async start(): Promise<void> {
@@ -126,6 +162,7 @@ export class TelegramControlRuntime {
       providers: [this.#provider],
     });
     this.#botIdentity = await this.#fetchBotIdentity();
+    await this.#syncCommandMenu();
     this.#abortController = new AbortController();
     this.#loopPromise = this.#pollLoop(this.#abortController.signal).finally(() => {
       this.#loopPromise = undefined;
@@ -150,6 +187,43 @@ export class TelegramControlRuntime {
     this.#abortController = undefined;
     this.#provider = undefined;
     this.#emit({ type: "stopped", message: "Telegram runtime stopped." });
+  }
+
+  async flushPendingProfileApplication(): Promise<void> {
+    const pending = this.#pendingProfileApply;
+    if (!pending || !this.#applyProfile || this.#isAgentBusy?.()) {
+      return;
+    }
+
+    this.#pendingProfileApply = undefined;
+    try {
+      await this.#applyProfile(pending.profileName);
+      this.#emit({
+        type: "config-updated",
+        message: `Applied Telegram model profile ${pending.profileName}.`,
+      });
+
+      if (this.#distributor) {
+        const notifier = createNotifierFromDistributor(this.#distributor);
+        await notifier.sendText(
+          pending.chatId,
+          `Telegram model configuration is now active.\n\nProfile: ${pending.profileName}`,
+        ).catch(() => {});
+      }
+    } catch (error) {
+      const formatted = formatTelegramRuntimeError(error);
+      this.#emit({
+        type: "error",
+        message: `Saved Telegram model profile but failed to apply it automatically: ${formatted}`,
+      });
+      if (this.#distributor) {
+        const notifier = createNotifierFromDistributor(this.#distributor);
+        await notifier.sendText(
+          pending.chatId,
+          `Saved the Telegram model profile, but automatic apply failed.\n\n${formatted}`,
+        ).catch(() => {});
+      }
+    }
   }
 
   async requestApproval(request: ApprovalRequest): Promise<boolean | null> {
@@ -216,38 +290,61 @@ export class TelegramControlRuntime {
     }
 
     const decision = parseTelegramApprovalActionId(action.actionId);
-    if (!decision) {
+    if (decision) {
+      const pending = this.#pendingApprovals.get(decision.approvalId);
+      if (!pending) {
+        await this.#answerCallbackQuery(action.interactionId, "Approval request expired.");
+        return true;
+      }
+
+      if (action.sender.id !== pending.senderId) {
+        await this.#answerCallbackQuery(action.interactionId, "You are not allowed to answer this request.");
+        return true;
+      }
+
+      if (pending.settled) {
+        await this.#answerCallbackQuery(action.interactionId, "Approval already resolved.");
+        return true;
+      }
+
+      await this.#answerCallbackQuery(
+        action.interactionId,
+        decision.decision === "approve" ? "Approved." : "Denied."
+      );
+      await this.#finalizeApproval(decision.approvalId, decision.decision === "approve", action);
+      return true;
+    }
+
+    const wizardResult = await this.#modelConfigWizard.handleAction({
+      actionId: action.actionId,
+      senderId: action.sender.id,
+      chatId: String(action.target.address),
+    });
+    if (!wizardResult) {
       await this.#answerCallbackQuery(action.interactionId);
       return true;
     }
 
-    const pending = this.#pendingApprovals.get(decision.approvalId);
-    if (!pending) {
-      await this.#answerCallbackQuery(action.interactionId, "Approval request expired.");
-      return true;
-    }
-
-    if (action.sender.id !== pending.senderId) {
-      await this.#answerCallbackQuery(action.interactionId, "You are not allowed to answer this request.");
-      return true;
-    }
-
-    if (pending.settled) {
-      await this.#answerCallbackQuery(action.interactionId, "Approval already resolved.");
-      return true;
-    }
-
-    await this.#answerCallbackQuery(
-      action.interactionId,
-      decision.decision === "approve" ? "Approved." : "Denied."
-    );
-    await this.#finalizeApproval(decision.approvalId, decision.decision === "approve", action);
+    await this.#answerCallbackQuery(action.interactionId, wizardResult.ok ? "Updated." : "Check the latest message.");
+    await this.#dispatchTelegramResult(String(action.target.address), wizardResult);
     return true;
   }
 
   async #handleIncomingMessage(update: TelegramApiUpdate, message: TelegramIncomingMessage): Promise<void> {
     if (!this.#config || !this.#botIdentity || !this.#distributor) {
       return;
+    }
+
+    const authorized = await this.#isAuthorizedPrivateSender(message);
+    const command = parseTelegramBotCommand(message.text, this.#botIdentity.username);
+    const notifier = createNotifierFromDistributor(this.#distributor);
+
+    if (authorized) {
+      const wizardResult = await this.#maybeHandleModelConfigMessage(message, command);
+      if (wizardResult) {
+        await this.#dispatchTelegramResult(message.chatId, wizardResult);
+        return;
+      }
     }
 
     const result = await processTelegramIncomingMessage({
@@ -258,7 +355,6 @@ export class TelegramControlRuntime {
       authorizedMessageMode: this.#onChatMessage ? "chat" : "control",
     });
 
-    const notifier = createNotifierFromDistributor(this.#distributor);
     if (result?.handoffToChat) {
       this.#startChatHandoff(update, message, notifier);
       return;
@@ -267,7 +363,22 @@ export class TelegramControlRuntime {
       return;
     }
 
-    await notifier.sendText(message.chatId, result.lines.join("\n"));
+    await this.#dispatchTelegramResult(message.chatId, result);
+  }
+
+  async #dispatchTelegramResult(chatId: string, result: TelegramCommandResult): Promise<void> {
+    if (!this.#distributor) {
+      return;
+    }
+
+    const notifier = createNotifierFromDistributor(this.#distributor);
+    if (result.lines.length > 0 || result.actions?.length) {
+      await notifier.sendText(
+        chatId,
+        result.lines.join("\n"),
+        result.actions?.length ? { actions: result.actions } : undefined,
+      );
+    }
 
     if (result.title.includes("Pairing")) {
       this.#emit({ type: "pairing-request", message: result.status });
@@ -276,6 +387,130 @@ export class TelegramControlRuntime {
 
     if (result.title.includes("Approved")) {
       this.#emit({ type: "pairing-approved", message: result.status });
+      return;
+    }
+
+    const wizardResult = result as TelegramCommandResult & {
+      configuredProfileName?: string;
+      removedProfileName?: string;
+      deleteSourceMessageId?: number;
+    };
+    if (wizardResult.deleteSourceMessageId) {
+      const deleted = await this.#deleteMessage(chatId, wizardResult.deleteSourceMessageId);
+      if (!deleted) {
+        await notifier.sendText(
+          chatId,
+          "Saved the API key locally, but Telegram did not let mono delete the original API key message. Please delete it manually.",
+        ).catch(() => {});
+      }
+    }
+
+    if (wizardResult.configuredProfileName) {
+      await this.#handleConfiguredProfile(chatId, wizardResult.configuredProfileName, notifier);
+      return;
+    }
+
+    if (wizardResult.removedProfileName) {
+      this.#emit({
+        type: "config-updated",
+        message: `Removed Telegram profile ${wizardResult.removedProfileName}.`,
+      });
+    }
+  }
+
+  async #maybeHandleModelConfigMessage(
+    message: TelegramIncomingMessage,
+    command: ReturnType<typeof parseTelegramBotCommand>,
+  ): Promise<TelegramCommandResult | null> {
+    if (message.chatType !== "private") {
+      return null;
+    }
+
+    const senderId = message.senderId ?? message.chatId;
+    if (command?.name === "model") {
+      return buildTelegramModelMenuResult(await resolveTelegramUiLanguage({
+        cwd: this.#cwd,
+        senderId,
+        languageCode: message.languageCode,
+      }));
+    }
+
+    if (command?.name === "cancel") {
+      return (await this.#modelConfigWizard.cancel(senderId)) ?? {
+        ok: true,
+        title: "Telegram Model Setup",
+        lines: ["No Telegram model configuration wizard is active."],
+        status: "No Telegram model configuration in progress",
+      };
+    }
+
+    if (command) {
+      return null;
+    }
+
+    if (!await this.#modelConfigWizard.hasActiveSession(senderId)) {
+      return null;
+    }
+
+    return this.#modelConfigWizard.handleText(message);
+  }
+
+  async #isAuthorizedPrivateSender(message: TelegramIncomingMessage): Promise<boolean> {
+    if (!this.#config || message.chatType !== "private") {
+      return false;
+    }
+
+    const storeAllowFrom = await readTelegramAllowFromStore(this.#cwd);
+    const effectiveAllowFrom = mergeTelegramAllowFrom(this.#config, storeAllowFrom);
+    return isTelegramSenderAllowed(message.senderId, effectiveAllowFrom);
+  }
+
+  async #handleConfiguredProfile(
+    chatId: string,
+    profileName: string,
+    notifier: ReturnType<typeof createNotifierFromDistributor>,
+  ): Promise<void> {
+    if (!this.#applyProfile) {
+      this.#emit({
+        type: "config-updated",
+        message: `Saved Telegram model profile ${profileName}.`,
+      });
+      return;
+    }
+
+    if (this.#isAgentBusy?.()) {
+      this.#pendingProfileApply = { profileName, chatId };
+      this.#emit({
+        type: "warning",
+        message: `Saved Telegram model profile ${profileName}. It will apply after the current task finishes.`,
+      });
+      await notifier.sendText(
+        chatId,
+        `Saved ${profileName} and queued it for application after the current task finishes.`,
+      ).catch(() => {});
+      return;
+    }
+
+    try {
+      await this.#applyProfile(profileName);
+      this.#emit({
+        type: "config-updated",
+        message: `Saved and applied Telegram model profile ${profileName}.`,
+      });
+      await notifier.sendText(
+        chatId,
+        `Applied Telegram model profile immediately.\n\nProfile: ${profileName}`,
+      ).catch(() => {});
+    } catch (error) {
+      const formatted = formatTelegramRuntimeError(error);
+      this.#emit({
+        type: "error",
+        message: `Saved Telegram model profile but failed to apply it immediately: ${formatted}`,
+      });
+      await notifier.sendText(
+        chatId,
+        `Saved the Telegram model profile, but immediate apply failed.\n\n${formatted}`,
+      ).catch(() => {});
     }
   }
 
@@ -360,6 +595,37 @@ export class TelegramControlRuntime {
     });
   }
 
+  async #syncCommandMenu(): Promise<void> {
+    try {
+      await this.#callTelegram("setMyCommands", {
+        commands: [
+          { command: "help", description: t("en", "command_help_description") },
+          { command: "model", description: t("en", "command_model_description") },
+          { command: "cancel", description: t("en", "command_cancel_description") },
+        ],
+      });
+      await this.#callTelegram("setMyCommands", {
+        commands: [
+          { command: "help", description: t("zh", "command_help_description") },
+          { command: "model", description: t("zh", "command_model_description") },
+          { command: "cancel", description: t("zh", "command_cancel_description") },
+        ],
+        language_code: "zh",
+      });
+      await this.#callTelegram("setChatMenuButton", {
+        menu_button: {
+          type: "commands",
+        },
+      });
+    } catch (error) {
+      const formatted = formatTelegramRuntimeError(error);
+      this.#emit({
+        type: "warning",
+        message: `Telegram command menu sync failed: ${formatted}`,
+      });
+    }
+  }
+
   async #fetchBotIdentity(): Promise<TelegramBotIdentity> {
     const result = await this.#callTelegram<{
       id: number;
@@ -414,6 +680,18 @@ export class TelegramControlRuntime {
       callback_query_id: callbackQueryId,
       ...(text ? { text } : {}),
     }).catch(() => {});
+  }
+
+  async #deleteMessage(chatId: string, messageId: number): Promise<boolean> {
+    try {
+      await this.#callTelegram("deleteMessage", {
+        chat_id: Number(chatId),
+        message_id: messageId,
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #finalizeApproval(
@@ -536,6 +814,7 @@ function toIncomingMessage(message: TelegramApiMessage | undefined): TelegramInc
     senderId: message.from?.id != null ? String(message.from.id) : undefined,
     username: message.from?.username,
     displayName: displayName || message.from?.username,
+    languageCode: message.from?.language_code,
     text: message.text,
   };
 }

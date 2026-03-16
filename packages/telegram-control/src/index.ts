@@ -3,6 +3,7 @@ export * from "./config.js";
 export * from "./commands.js";
 export * from "./help.js";
 export * from "./inbound.js";
+export * from "./model-config.js";
 export * from "./outbound.js";
 export * from "./pairing-store.js";
 export * from "./draft-stream.js";

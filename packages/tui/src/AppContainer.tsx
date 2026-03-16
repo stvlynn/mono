@@ -485,7 +485,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
         ? "error"
         : event.type === "warning"
           ? "warning"
-          : event.type === "pairing-approved"
+          : event.type === "pairing-approved" || event.type === "config-updated"
             ? "success"
             : "info";
     pushToast(level, event.message);
@@ -1193,6 +1193,23 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       cwd: process.cwd(),
       onEvent: handleTelegramRuntimeEvent,
       onChatMessage: handleTelegramChatMessage,
+      applyProfile: async (profileName) => {
+        await agent.refreshRegistry();
+        await setSelectedProfile(profileName);
+      },
+      listConfiguredProfiles: async () => {
+        await agent.refreshRegistry();
+        const profiles = await agent.listConfiguredProfiles();
+        return profiles.map((profile) => ({
+          name: profile.name,
+          model: {
+            provider: profile.model.provider,
+            modelId: profile.model.modelId,
+            baseURL: profile.model.baseURL,
+          },
+        }));
+      },
+      isAgentBusy: () => agent.isRunning(),
     });
     telegramRuntimeRef.current = runtime;
     void runtime.start().catch((error) => {
@@ -1203,7 +1220,21 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       telegramRuntimeRef.current = null;
       void runtime.stop();
     };
-  }, [handleTelegramChatMessage, handleTelegramRuntimeEvent, reportUiError]);
+  }, [agent, handleTelegramChatMessage, handleTelegramRuntimeEvent, reportUiError, setSelectedProfile]);
+
+  useEffect(() => {
+    const unsubscribe = agent.subscribe((event) => {
+      if (event.type === "run-end" || event.type === "run-aborted") {
+        setTimeout(() => {
+          void telegramRuntimeRef.current?.flushPendingProfileApplication();
+        }, 0);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [agent]);
 
   useEffect(() => {
     const handleUnhandledRejection = (reason: unknown) => {

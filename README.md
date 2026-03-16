@@ -119,6 +119,17 @@ mono pair telegram code <CODE>
 
 5. After approval, the Telegram user id is stored in the local DM allowlist. While the `mono` TUI is running, the user can message the bot directly; `/help` is still available for Telegram control commands.
 
+6. Approved Telegram DM users can open the Telegram model menu with `/model` or the bot command menu.
+
+The Telegram model menu supports:
+
+- choosing an existing configured profile
+- a second-step action menu for existing profiles (`Enable` / `Remove`)
+- configuring the shared Telegram profile from Telegram itself
+- Chinese and English guidance, with per-user language preference
+
+The shared Telegram profile is stored as `telegram-shared` in the normal mono config and local secrets, so it behaves like any other configured profile.
+
 Useful shortcuts and checks:
 
 ```bash
@@ -138,6 +149,7 @@ Notes:
 - The polling runtime starts in the TUI, not in one-shot `--print` mode.
 - Telegram chat currently runs through the same in-process agent as the TUI, so only one active task can run at a time.
 - Approved DM users are stored under the local mono state directory.
+- Telegram model/profile changes are applied through the same runtime agent state as the TUI. Existing profiles are preferred when available; the shared Telegram profile is the fallback guided setup path.
 
 ## Architecture
 

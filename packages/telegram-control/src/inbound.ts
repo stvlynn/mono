@@ -1,3 +1,4 @@
+import { parseTelegramBotCommand } from "./bot-command.js";
 import type { MonoTelegramConfig } from "@mono/shared";
 import {
   isTelegramSenderAllowed,
@@ -10,6 +11,7 @@ import {
   buildTelegramGroupHelpText,
   buildTelegramPendingPairingText,
 } from "./help.js";
+import { buildTelegramModelEntryActions, resolveTelegramUiLanguage } from "./model-config.js";
 import { executePairCommand } from "./commands.js";
 import { readTelegramAllowFromStore, upsertTelegramPairingRequest } from "./pairing-store.js";
 import type {
@@ -17,7 +19,6 @@ import type {
   TelegramCommandResult,
   TelegramIncomingMessage,
 } from "./types.js";
-
 export async function processTelegramIncomingMessage(params: {
   cwd?: string;
   config: MonoTelegramConfig;
@@ -43,29 +44,6 @@ export async function processTelegramIncomingMessage(params: {
     message: params.message,
     command,
   });
-}
-
-function parseTelegramBotCommand(
-  text: string | undefined,
-  botUsername: string | undefined,
-): { name: string; argsText: string } | null {
-  const trimmed = text?.trim();
-  if (!trimmed?.startsWith("/")) {
-    return null;
-  }
-  const [commandToken, ...rest] = trimmed.split(/\s+/);
-  const match = /^\/([a-z0-9_-]+)(?:@([A-Za-z0-9_]+))?$/i.exec(commandToken);
-  if (!match) {
-    return null;
-  }
-  const mentionedBot = match[2]?.toLowerCase();
-  if (mentionedBot && botUsername && mentionedBot !== botUsername.toLowerCase()) {
-    return null;
-  }
-  return {
-    name: match[1]!.toLowerCase(),
-    argsText: rest.join(" ").trim(),
-  };
 }
 
 async function handlePrivateMessage(params: {
@@ -101,13 +79,25 @@ async function handlePrivateMessage(params: {
       return null;
     }
 
+    const language = await resolveTelegramUiLanguage({
+      cwd: params.cwd,
+      senderId,
+      languageCode: params.message.languageCode,
+    });
+
     return {
       ok: true,
       title: "Telegram Pairing Requested",
-      lines: [buildTelegramPendingPairingText({ senderId, code: pairing.code })],
+      lines: [buildTelegramPendingPairingText({ senderId, code: pairing.code }, language)],
       status: `Issued Telegram pairing code for ${senderId}`,
     };
   }
+
+  const language = await resolveTelegramUiLanguage({
+    cwd: params.cwd,
+    senderId: params.message.senderId,
+    languageCode: params.message.languageCode,
+  });
 
   if (params.command?.name === "pair") {
     return executePairCommand(params.command.argsText, params.cwd);
@@ -126,8 +116,9 @@ async function handlePrivateMessage(params: {
     return {
       ok: true,
       title: "Telegram Control",
-      lines: [params.command ? buildTelegramAuthorizedHelpText() : buildTelegramAuthorizedStatusText()],
+      lines: [params.command ? buildTelegramAuthorizedHelpText(language) : buildTelegramAuthorizedStatusText(language)],
       status: params.command ? "Sent Telegram help" : "Sent Telegram control status",
+      actions: buildTelegramModelEntryActions(language),
     };
   }
 
@@ -144,8 +135,9 @@ async function handlePrivateMessage(params: {
   return {
     ok: true,
     title: "Telegram Control",
-    lines: [buildTelegramAuthorizedStatusText()],
+    lines: [buildTelegramAuthorizedStatusText(language)],
     status: "Sent Telegram control status",
+    actions: buildTelegramModelEntryActions(language),
   };
 }
 
@@ -153,7 +145,7 @@ function handleGroupMessage(params: {
   config: MonoTelegramConfig;
   message: TelegramIncomingMessage;
   command: { name: string; argsText: string } | null;
-}): TelegramCommandResult | null {
+}): Promise<TelegramCommandResult | null> | TelegramCommandResult | null {
   if (!params.command || params.command.name !== "help") {
     return null;
   }
@@ -168,11 +160,12 @@ function handleGroupMessage(params: {
     params.config.groups[params.message.chatId]
     ?? params.config.groups["*"];
 
+  const language = params.message.languageCode?.toLowerCase().startsWith("zh") ? "zh" : "en";
   return {
     ok: true,
     title: "Telegram Group Help",
     lines: [
-      buildTelegramGroupHelpText(params.message.chatId, Boolean(groupConfig?.allow ?? groupConfig)),
+      buildTelegramGroupHelpText(params.message.chatId, Boolean(groupConfig?.allow ?? groupConfig), language),
     ],
     status: `Sent Telegram group help for ${params.message.chatId}`,
   };

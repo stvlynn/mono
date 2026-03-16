@@ -78,6 +78,14 @@ describe("tui app bootstrap", () => {
     expect(appContainer).toContain("request.preview?.update(streamedReply)");
   });
 
+  it("refreshes the registry before Telegram profile listing and apply", () => {
+    const appContainer = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
+
+    expect(appContainer).toContain("applyProfile: async (profileName) => {\n        await agent.refreshRegistry();");
+    expect(appContainer).toContain("listConfiguredProfiles: async () => {\n        await agent.refreshRegistry();");
+    expect(appContainer).toContain("setTimeout(() => {\n          void telegramRuntimeRef.current?.flushPendingProfileApplication();\n        }, 0);");
+  });
+
   it("keeps runtime request errors out of the fatal path", () => {
     const source = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
 

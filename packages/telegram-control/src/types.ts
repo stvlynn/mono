@@ -1,3 +1,4 @@
+import type { DispatchActionRow } from "@mono/im-platform";
 import type { TaskInput } from "@mono/shared";
 
 export interface TelegramPairingRequest {
@@ -27,12 +28,13 @@ export interface TelegramCommandResult {
   title: string;
   lines: string[];
   status: string;
+  actions?: DispatchActionRow[];
   shouldReloadRuntime?: boolean;
   handoffToChat?: boolean;
 }
 
 export interface TelegramControlEvent {
-  type: "started" | "stopped" | "pairing-request" | "pairing-approved" | "warning" | "error";
+  type: "started" | "stopped" | "pairing-request" | "pairing-approved" | "config-updated" | "warning" | "error";
   message: string;
 }
 
@@ -43,6 +45,7 @@ export interface TelegramIncomingMessage {
   senderId?: string;
   username?: string;
   displayName?: string;
+  languageCode?: string;
   text?: string;
 }
 

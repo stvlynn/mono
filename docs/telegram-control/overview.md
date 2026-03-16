@@ -26,9 +26,10 @@ Today it owns:
 - Telegram config read/write helpers
 - pending pairing request storage
 - approved Telegram DM allowlist storage
+- Telegram model-menu state storage and per-sender language preference storage
 - `/pair telegram ...` command execution
 - `/telegram ...` command execution
-- inbound Telegram command parsing for `/help` and `/pair`
+- inbound Telegram command parsing for `/help`, `/pair`, `/model`, and `/cancel`
 - a polling runtime that starts from the TUI and listens for Telegram messages
 
 It does not currently own:
@@ -50,6 +51,8 @@ Main exports:
 - pair and Telegram command handlers from `commands.ts`
 - help text builders from `help.ts`
 - inbound Telegram message processing from `inbound.ts`
+- Telegram model menu and profile wizard helpers from `model-config.ts`
+- Telegram language lookup helpers from `language.ts`
 - outbound notifier helpers from `outbound.ts`
 - pairing store accessors from `pairing-store.ts`
 - polling runtime from `runtime.ts`
@@ -110,11 +113,13 @@ Telegram pairing state is stored under the global `mono` state directory:
 
 - `~/.mono/state/telegram/pairing.json`
 - `~/.mono/state/telegram/allowFrom.json`
+- `~/.mono/state/telegram/model-config.json`
 
 Current file roles:
 
 - `pairing.json` stores pending DM pairing requests
 - `allowFrom.json` stores approved Telegram DM sender ids
+- `model-config.json` stores in-progress Telegram model-menu sessions and persisted per-sender language preferences
 
 Pairing request behavior:
 
@@ -173,6 +178,15 @@ Current inbound command support:
 
 - `/help`
 - `/pair telegram ...`
+- `/model`
+- `/cancel`
+
+Telegram also registers a native bot command menu at startup:
+
+- `setMyCommands`
+- `setChatMenuButton` with `MenuButtonCommands`
+
+The menu button only opens the bot command list. Hierarchical choices such as profile selection and the second-step `Enable` / `Remove` menu are implemented with inline keyboard callback buttons, not a Telegram-native nested menu object.
 
 Authorization rules:
 
@@ -196,6 +210,23 @@ The intended operator flow is:
 7. The sender id is written to the Telegram DM allowlist store.
 8. If Telegram is still configured, the user receives an approval confirmation message.
 
+After approval, the intended model-management flow is:
+
+1. The user opens `/model` or the bot command menu.
+2. The bot shows a model menu with two paths:
+   - choose an existing profile
+   - configure the shared Telegram profile
+3. Existing profiles open a second-step action menu:
+   - `Enable`
+   - `Remove`
+4. Shared-profile setup guides the user through:
+   - protocol family
+   - official or custom base URL
+   - suggested or custom model id
+   - API key capture
+   - save/apply confirmation
+5. The shared profile is stored as `telegram-shared` in normal mono config and local secrets.
+
 Direct allowlist shortcuts also exist:
 
 - `/pair telegram userid <USER_ID>`
@@ -213,7 +244,8 @@ Startup behavior:
 2. exit early if Telegram is disabled or missing a token
 3. create a Telegram outbound distributor through `@mono/im-platform`
 4. call `getMe`
-5. enter a `getUpdates` polling loop
+5. register Telegram command-menu metadata with Bot API
+6. enter a `getUpdates` polling loop
 
 Per-message behavior:
 
@@ -221,11 +253,16 @@ Per-message behavior:
 - for private chats:
   - merge config allowlist with stored approvals when policy is `pairing`
   - issue pairing challenges to unknown senders
-  - allow `/help` and `/pair` for authorized senders
+  - allow `/help`, `/pair`, `/model`, and `/cancel` for authorized senders
+  - resolve a per-sender UI language from Telegram `language_code` plus stored preference
+  - route `/model` into the Telegram model menu
+  - route existing-profile selection into a second-step action menu (`Enable` / `Remove`)
+  - route shared-profile setup through a button-guided wizard with text capture where needed
 - for groups:
   - only `/help` is currently handled
   - the reply includes the current group chat id and whether the group is already configured
 - for authorized chat handoff:
+  - model-menu traffic runs before normal chat handoff
   - the runtime forwards Telegram channel context into the agent permission policy
   - allowlisted chats can run protected tools without approval prompts
   - authorized private chats inherit the same approval bypass through config `allowFrom` and stored pairing approvals
@@ -245,6 +282,9 @@ Current behavior:
 - runtime notifications are surfaced as TUI toasts and status messages
 - pair and Telegram slash commands execute shared service helpers and open info dialogs with the result
 - slash commands that change Telegram runtime config request a runtime reload
+- the Telegram runtime receives `listConfiguredProfiles`, `applyProfile`, and busy-state callbacks from the TUI container
+- profile application from Telegram now refreshes the registry before listing or applying profiles
+- pending profile application is flushed after `run-end` and `run-aborted`
 
 This means the current Telegram control loop is tied to the interactive TUI process. There is no separate daemon process yet.
 
@@ -257,6 +297,8 @@ Important current constraints:
 - there is no webhook mode
 - there is no group allowlist editing command yet; groups are still configured through config files
 - `botId` is operator-managed config, not yet auto-written back from runtime discovery
+- the current localization scope is Telegram-only and stored inside `@mono/telegram-control`
+- Telegram model-menu language selection is persisted per sender, but other mono surfaces are not yet localized through the same mechanism
 
 These are current implementation limits, not hidden background behavior.
 
@@ -264,6 +306,8 @@ These are current implementation limits, not hidden background behavior.
 
 - `packages/telegram-control/src/config.ts`
 - `packages/telegram-control/src/commands.ts`
+- `packages/telegram-control/src/language.ts`
+- `packages/telegram-control/src/model-config.ts`
 - `packages/telegram-control/src/pairing-store.ts`
 - `packages/telegram-control/src/inbound.ts`
 - `packages/telegram-control/src/runtime.ts`

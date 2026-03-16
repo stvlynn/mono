@@ -1,89 +1,95 @@
-export function buildTelegramPairHelpLines(): string[] {
+import { type TelegramDisplayLanguage, t } from "./language.js";
+
+export function buildTelegramPairHelpLines(language: TelegramDisplayLanguage = "en"): string[] {
   return [
-    "Telegram pairing commands:",
+    t(language, "pair_help_title"),
     "/pair telegram code <CODE>",
     "/pair telegram userid <USER_ID>",
     "/pair telegram botid <BOT_ID>",
     "",
-    "Typical flow:",
-    "1. Configure the bot token: mono telegram token <BOT_TOKEN>",
-    "2. Start mono TUI so the Telegram control runtime is polling.",
-    "3. A new user DMs the bot and receives a pairing code.",
-    "4. Approve from the platform with /pair telegram code <CODE>.",
-    "5. The user is added to the Telegram DM allowlist store.",
+    t(language, "pair_help_flow_title"),
+    t(language, "pair_help_step_1"),
+    t(language, "pair_help_step_2"),
+    t(language, "pair_help_step_3"),
+    t(language, "pair_help_step_4"),
+    t(language, "pair_help_step_5"),
     "",
-    "Use /telegram status to inspect the active Telegram configuration.",
+    t(language, "pair_help_footer"),
   ];
 }
 
-export function buildTelegramRuntimeHelpLines(): string[] {
+export function buildTelegramRuntimeHelpLines(language: TelegramDisplayLanguage = "en"): string[] {
   return [
-    "Telegram runtime commands:",
+    t(language, "runtime_help_title"),
     "/telegram status",
     "/telegram token <BOT_TOKEN>",
     "/telegram enable",
     "/telegram disable",
+    "/model",
+    "/cancel",
     "",
-    "DM pairing is the default policy. Unknown Telegram DM senders receive a short pairing code.",
-    "Group allowlists are configured under mono.channels.telegram.groups in ~/.mono/config.json.",
+    t(language, "dm_pairing_default"),
+    t(language, "group_allowlist_config"),
+    t(language, "use_model_help"),
   ];
 }
 
-export function buildTelegramAuthorizedHelpText(): string {
+export function buildTelegramAuthorizedHelpText(language: TelegramDisplayLanguage = "en"): string {
   return [
-    "mono Telegram control",
+    t(language, "control_title"),
     "",
-    ...buildTelegramPairHelpLines(),
+    ...buildTelegramPairHelpLines(language),
     "",
-    ...buildTelegramRuntimeHelpLines(),
+    ...buildTelegramRuntimeHelpLines(language),
   ].join("\n");
 }
 
 export function buildTelegramPendingPairingText(params: {
   senderId: string;
   code: string;
-}): string {
+}, language: TelegramDisplayLanguage = "en"): string {
   return [
-    "mono Telegram access is not configured.",
+    t(language, "pairing_not_configured"),
     "",
-    `Your Telegram user id: ${params.senderId}`,
-    `Pairing code: ${params.code}`,
+    t(language, "your_user_id", { senderId: params.senderId }),
+    t(language, "pairing_code", { code: params.code }),
     "",
-    "Ask the owner to approve with:",
+    t(language, "ask_owner_to_approve"),
     `/pair telegram code ${params.code}`,
     `mono pair telegram code ${params.code}`,
   ].join("\n");
 }
 
-export function buildTelegramAuthorizedStatusText(): string {
+export function buildTelegramAuthorizedStatusText(language: TelegramDisplayLanguage = "en"): string {
   return [
-    "mono Telegram control",
+    t(language, "control_title"),
     "",
-    "Access is approved.",
-    "This runtime currently supports Telegram control commands only.",
-    "Use /help to list the available commands.",
+    t(language, "access_approved"),
+    t(language, "use_model_help"),
+    t(language, "use_help_line"),
   ].join("\n");
 }
 
-export function buildTelegramApprovedText(): string {
+export function buildTelegramApprovedText(language: TelegramDisplayLanguage = "en"): string {
   return [
-    "Telegram access approved.",
-    "If mono TUI is running, you can message the bot now.",
-    "Use /help to see the available Telegram control commands.",
+    t(language, "access_approved_short"),
+    t(language, "if_tui_running"),
+    t(language, "use_model_help"),
+    t(language, "approved_help_footer"),
   ].join("\n");
 }
 
-export function buildTelegramGroupHelpText(chatId: string, isAllowedGroup: boolean): string {
+export function buildTelegramGroupHelpText(chatId: string, isAllowedGroup: boolean, language: TelegramDisplayLanguage = "en"): string {
   const lines = [
-    "mono Telegram group help",
+    t(language, "group_help_title"),
     "",
-    `Current group chat id: ${chatId}`,
+    t(language, "current_group_chat_id", { chatId }),
   ];
 
   if (isAllowedGroup) {
-    lines.push("This group is already allowed by configuration.");
+    lines.push(t(language, "group_allowed"));
   } else {
-    lines.push('This group is not allowlisted yet. Add it under mono.channels.telegram.groups in ~/.mono/config.json.');
+    lines.push(t(language, "group_not_allowed"));
   }
 
   return lines.join("\n");

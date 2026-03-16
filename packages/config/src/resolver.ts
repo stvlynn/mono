@@ -71,10 +71,10 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
   const projectConfig = (await store.readProjectConfig()) ?? sources.legacyAgentsProjectConfig ?? await loadLegacyProjectConfig(store, sources.legacyProfiles);
   const secrets = (await store.readSecrets()) ?? await readJsonFile<MonoSecretsConfig>(store.paths.legacyGlobalSecretsPath);
 
-  const envProfile = process.env.MONO_PROFILE;
-  const envModel = process.env.MONO_MODEL;
-  const envBaseURL = process.env.MONO_BASE_URL;
-  const directApiKey = process.env.MONO_API_KEY;
+  const envProfile = nonEmptyEnv(process.env.MONO_PROFILE);
+  const envModel = nonEmptyEnv(process.env.MONO_MODEL);
+  const envBaseURL = nonEmptyEnv(process.env.MONO_BASE_URL);
+  const directApiKey = nonEmptyEnv(process.env.MONO_API_KEY);
 
   const requestedProfile = options.profileSelection ?? envProfile ?? projectConfig?.profile ?? effectiveGlobal.mono.defaultProfile;
   const requestedModel = options.modelSelection ?? envModel;
@@ -160,6 +160,11 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
       apiKey: apiKeySource
     }
   };
+}
+
+function nonEmptyEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChannelsConfig {
@@ -382,6 +387,7 @@ async function normalizeProfileWithCatalog(
     runtimeProviderKey: normalized.runtimeProviderKey ?? profile.runtimeProviderKey,
     providerFactory: normalized.providerFactory ?? profile.providerFactory,
     baseURL: shouldPreserveProfileBaseURL(profile, normalized, existingBaseURL) ? existingBaseURL : normalized.baseURL,
+    apiKeyRef: profile.apiKeyRef,
     apiKeyEnv: profile.apiKeyEnv ?? normalized.apiKeyEnv,
     supportsTools: normalized.supportsTools,
     supportsReasoning: normalized.supportsReasoning,
