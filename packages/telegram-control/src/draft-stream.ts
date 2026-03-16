@@ -53,11 +53,12 @@ export function createTelegramDraftPreviewStream(params: {
         return;
       }
 
-      if (prepared.text.length > TELEGRAM_DRAFT_MAX_CHARS) {
+      const parsedLength = prepared.parsedTextLength ?? prepared.text.length;
+      if (parsedLength > TELEGRAM_DRAFT_MAX_CHARS) {
         draftSupported = false;
         renderedSnapshot = undefined;
         params.warn?.(
-          `telegram draft preview stopped (text length ${prepared.text.length} > ${TELEGRAM_DRAFT_MAX_CHARS})`,
+          `telegram draft preview stopped (text length ${parsedLength} > ${TELEGRAM_DRAFT_MAX_CHARS})`,
         );
         return;
       }
@@ -170,7 +171,8 @@ export function createTelegramDraftPreviewStream(params: {
       }
 
       const prepared = params.renderText(finalText.trimEnd());
-      if (!prepared.text.trim() || prepared.text.length > TELEGRAM_DRAFT_MAX_CHARS) {
+      const parsedLength = prepared.parsedTextLength ?? prepared.text.length;
+      if (!prepared.text.trim() || parsedLength > TELEGRAM_DRAFT_MAX_CHARS) {
         return false;
       }
 

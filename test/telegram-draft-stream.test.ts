@@ -69,4 +69,24 @@ describe("telegram draft preview stream", () => {
 
     expect(sendDraft).toHaveBeenLastCalledWith(expect.any(Number), "");
   });
+
+  it("uses parsed text length instead of raw HTML length for Telegram draft limits", async () => {
+    const sendDraft = vi.fn(async () => undefined);
+    const stream = createTelegramDraftPreviewStream({
+      throttleMs: 1000,
+      renderText: (text) => ({
+        text: `<b>${text}</b>`,
+        parseMode: "HTML",
+        parsedTextLength: text.length,
+      }),
+      sendDraft,
+      sendFinal: async () => undefined,
+    });
+
+    stream.update("a".repeat(4096));
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(sendDraft).toHaveBeenCalledTimes(1);
+    expect(sendDraft).toHaveBeenCalledWith(expect.any(Number), `<b>${"a".repeat(4096)}</b>`, "HTML");
+  });
 });

@@ -116,6 +116,88 @@ describe("@mono/im-platform", () => {
     expect(String(body.text)).toContain("<b>Release Notes</b>");
   });
 
+  it("renders markdown tables as Telegram-safe preformatted text", async () => {
+    const { fetchImpl, calls } = createFetchStub([
+      { ok: true, result: { message_id: 105, chat: { id: -1001002 } } },
+    ]);
+    const distributor = createDistributor({
+      builtInProviders: [createTelegramConfig(fetchImpl, "announcements")],
+    });
+
+    await distributor.dispatch({
+      provider: "announcements",
+      target: {
+        kind: "channel",
+        address: "@mono_channel",
+      },
+      content: {
+        type: "text",
+        text: "| Name | Value |\n| --- | --- |\n| foo | **bar** |",
+        format: "markdown",
+      },
+    });
+
+    const body = await readJsonBody(calls[0]!);
+    expect(body.parse_mode).toBe("HTML");
+    expect(String(body.text)).toContain("<pre><code>");
+    expect(String(body.text)).not.toContain("<table>");
+    expect(String(body.text)).toContain("| Name");
+    expect(String(body.text)).toContain("| foo");
+  });
+
+  it("escapes raw HTML embedded inside markdown text", async () => {
+    const { fetchImpl, calls } = createFetchStub([
+      { ok: true, result: { message_id: 106, chat: { id: 55 } } },
+    ]);
+    const distributor = createDistributor({
+      builtInProviders: [createTelegramConfig(fetchImpl)],
+    });
+
+    await distributor.dispatch({
+      provider: "primary-dispatch",
+      target: {
+        kind: "dm",
+        address: 55,
+      },
+      content: {
+        type: "text",
+        text: "Before\n\n<div>unsafe</div>\n\nAfter",
+        format: "markdown",
+      },
+    });
+
+    const body = await readJsonBody(calls[0]!);
+    expect(body.parse_mode).toBe("HTML");
+    expect(String(body.text)).toContain("&lt;div&gt;unsafe&lt;/div&gt;");
+    expect(String(body.text)).not.toContain("<div>unsafe</div>");
+  });
+
+  it("degrades markdown image syntax to a clickable Telegram link", async () => {
+    const { fetchImpl, calls } = createFetchStub([
+      { ok: true, result: { message_id: 107, chat: { id: 55 } } },
+    ]);
+    const distributor = createDistributor({
+      builtInProviders: [createTelegramConfig(fetchImpl)],
+    });
+
+    await distributor.dispatch({
+      provider: "primary-dispatch",
+      target: {
+        kind: "dm",
+        address: 55,
+      },
+      content: {
+        type: "text",
+        text: "![diagram](https://example.com/diagram.png)",
+        format: "markdown",
+      },
+    });
+
+    const body = await readJsonBody(calls[0]!);
+    expect(body.parse_mode).toBe("HTML");
+    expect(String(body.text)).toContain('<a href="https://example.com/diagram.png">diagram</a>');
+  });
+
   it("falls back to plain text when Telegram rejects HTML parsing", async () => {
     const { fetchImpl, calls } = createFetchStub([
       { ok: false, description: "Bad Request: can't parse entities" },

@@ -1,11 +1,12 @@
 import type { DispatchTextFormat } from "../../types.js";
-import { markdownToTelegramHtml } from "./vendor/telegram-platform-adapter/format.js";
+import { countTelegramHtmlTextLength, markdownToTelegramHtml } from "./vendor/telegram-platform-adapter/format.js";
 import { splitMessage } from "./vendor/telegram-platform-adapter/split-message.js";
 
 export interface PreparedTelegramText {
   text: string;
   parseMode?: "HTML";
   fallbackText?: string;
+  parsedTextLength?: number;
 }
 
 export function resolveTelegramTextFormat(
@@ -47,18 +48,24 @@ export function prepareTelegramSingleText(
 
 function prepareTelegramText(text: string, format: DispatchTextFormat): PreparedTelegramText {
   if (format === "plain") {
-    return { text };
+    return {
+      text,
+      parsedTextLength: text.length,
+    };
   }
   if (format === "html") {
     return {
       text,
       parseMode: "HTML",
       fallbackText: text,
+      parsedTextLength: countTelegramHtmlTextLength(text),
     };
   }
+  const rendered = markdownToTelegramHtml(text);
   return {
-    text: markdownToTelegramHtml(text),
+    text: rendered,
     parseMode: "HTML",
     fallbackText: text,
+    parsedTextLength: countTelegramHtmlTextLength(rendered),
   };
 }
