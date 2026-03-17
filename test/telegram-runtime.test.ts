@@ -141,6 +141,354 @@ describe("telegram runtime conflict detection", () => {
     expect(setChatMenuButtonCall?.body.menu_button).toEqual({ type: "commands" });
   });
 
+  it("hands off Telegram photo captions to chat with image attachments", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-photo-caption");
+    await writeTelegramRuntimeConfig(configDir);
+
+    const chatRequests: Array<{ input: { text?: string; attachments?: Array<{ mimeType: string; sourceLabel?: string }> }; message: { text?: string } }> = [];
+    let deliveredMessage = false;
+    let resolveFinalReply: (() => void) | undefined;
+    const finalReplySent = new Promise<void>((resolve) => {
+      resolveFinalReply = resolve;
+    });
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+
+      if (url.includes("/file/bot")) {
+        return new Response(Uint8Array.from([1, 2, 3, 4]), {
+          status: 200,
+          headers: { "content-type": "image/jpeg" },
+        });
+      }
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        if (!deliveredMessage) {
+          deliveredMessage = true;
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [{
+              update_id: 1,
+              message: {
+                message_id: 21,
+                chat: { id: 7001, type: "private" },
+                from: { id: 7001, username: "alice", first_name: "Alice" },
+                caption: "describe this",
+                photo: [
+                  { file_id: "small" },
+                  { file_id: "large" },
+                ],
+              },
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getFile") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { file_path: "photos/file_10.jpg" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "sendMessage") {
+        if (body.text === "photo received") {
+          resolveFinalReply?.();
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { message_id: 701, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({
+      cwd,
+      fetchImpl,
+      onChatMessage: async (request) => {
+        chatRequests.push({
+          input: {
+            text: request.input.text,
+            attachments: request.input.attachments?.map((attachment) => ({
+              mimeType: attachment.mimeType,
+              sourceLabel: attachment.sourceLabel,
+            })),
+          },
+          message: {
+            text: request.message.text,
+          },
+        });
+        return "photo received";
+      },
+    });
+    await runtime.start();
+
+    await Promise.race([
+      finalReplySent,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for photo reply")), 1000)),
+    ]);
+
+    expect(chatRequests).toEqual([{
+      input: {
+        text: "<media:image>\ndescribe this",
+        attachments: [{
+          mimeType: "image/jpeg",
+          sourceLabel: "telegram-photo-21.jpg",
+        }],
+      },
+      message: {
+        text: "describe this",
+      },
+    }]);
+
+    await runtime.stop();
+  });
+
+  it("hands off static Telegram stickers to chat as image attachments", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-static-sticker");
+    await writeTelegramRuntimeConfig(configDir);
+
+    const chatRequests: Array<{ input: { text?: string; attachments?: Array<{ mimeType: string; sourceLabel?: string }> } }> = [];
+    let deliveredMessage = false;
+    let resolveFinalReply: (() => void) | undefined;
+    const finalReplySent = new Promise<void>((resolve) => {
+      resolveFinalReply = resolve;
+    });
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+
+      if (url.includes("/file/bot")) {
+        return new Response(Uint8Array.from([1, 2, 3, 4]), {
+          status: 200,
+          headers: { "content-type": "image/webp" },
+        });
+      }
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        if (!deliveredMessage) {
+          deliveredMessage = true;
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [{
+              update_id: 1,
+              message: {
+                message_id: 31,
+                chat: { id: 7001, type: "private" },
+                from: { id: 7001, username: "alice", first_name: "Alice" },
+                sticker: {
+                  file_id: "static-sticker",
+                  file_unique_id: "static-sticker-unique",
+                  width: 512,
+                  height: 512,
+                  is_animated: false,
+                  is_video: false,
+                },
+              },
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getFile") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { file_path: "stickers/sticker_30.webp" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "sendMessage") {
+        if (body.text === "sticker received") {
+          resolveFinalReply?.();
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { message_id: 702, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({
+      cwd,
+      fetchImpl,
+      onChatMessage: async (request) => {
+        chatRequests.push({
+          input: {
+            text: request.input.text,
+            attachments: request.input.attachments?.map((attachment) => ({
+              mimeType: attachment.mimeType,
+              sourceLabel: attachment.sourceLabel,
+            })),
+          },
+        });
+        return "sticker received";
+      },
+    });
+    await runtime.start();
+
+    await Promise.race([
+      finalReplySent,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for sticker reply")), 1000)),
+    ]);
+
+    expect(chatRequests).toEqual([{
+      input: {
+        text: "<media:sticker>",
+        attachments: [{
+          mimeType: "image/webp",
+          sourceLabel: "telegram-sticker-31.webp",
+        }],
+      },
+    }]);
+
+    await runtime.stop();
+  });
+
+  it("sends an explicit notice for animated Telegram stickers instead of dropping them", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-animated-sticker");
+    await writeTelegramRuntimeConfig(configDir);
+
+    let deliveredMessage = false;
+    let onChatMessageCalls = 0;
+    let resolveNoticeSent: (() => void) | undefined;
+    const noticeSent = new Promise<void>((resolve) => {
+      resolveNoticeSent = resolve;
+    });
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        if (!deliveredMessage) {
+          deliveredMessage = true;
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [{
+              update_id: 1,
+              message: {
+                message_id: 41,
+                chat: { id: 7001, type: "private" },
+                from: { id: 7001, username: "alice", first_name: "Alice" },
+                sticker: {
+                  file_id: "animated-sticker",
+                  file_unique_id: "animated-sticker-unique",
+                  width: 512,
+                  height: 512,
+                  is_animated: true,
+                  is_video: false,
+                },
+              },
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "sendMessage") {
+        if (body.text === "Animated and video stickers are not supported yet. Please send a static sticker or image.") {
+          resolveNoticeSent?.();
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { message_id: 703, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({
+      cwd,
+      fetchImpl,
+      onChatMessage: async () => {
+        onChatMessageCalls += 1;
+        return "unexpected";
+      },
+    });
+    await runtime.start();
+
+    await Promise.race([
+      noticeSent,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for animated sticker notice")), 1000)),
+    ]);
+
+    expect(onChatMessageCalls).toBe(0);
+
+    await runtime.stop();
+  });
+
   it("sends Telegram approval buttons and resolves callback approvals", async () => {
     const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-approval-buttons");
     await writeTelegramRuntimeConfig(configDir);

@@ -3,11 +3,17 @@ import {
   aiSdkAnthropicAdapter,
   aiSdkGeminiAdapter,
   aiSdkOpenAICompatibleAdapter,
+  aiSdkOpenAIResponsesAdapter,
   type LlmRunOptions,
   type ModelAdapter
 } from "./adapters/index.js";
 
-const ADAPTERS: ModelAdapter[] = [aiSdkAnthropicAdapter, aiSdkGeminiAdapter, aiSdkOpenAICompatibleAdapter];
+const ADAPTERS: ModelAdapter[] = [
+  aiSdkAnthropicAdapter,
+  aiSdkGeminiAdapter,
+  aiSdkOpenAIResponsesAdapter,
+  aiSdkOpenAICompatibleAdapter
+];
 
 export function getAdapterForModel(model: UnifiedModel): ModelAdapter {
   const adapter = ADAPTERS.find((item) => item.supports(model));

@@ -57,10 +57,16 @@ function createTelegramInboundFetchStub() {
     calls.push({ url, init });
 
     if (url.endsWith("/getFile")) {
+      const body = init?.body ? JSON.parse(String(init.body)) as { file_id?: string } : {};
+      const filePathById: Record<string, string> = {
+        large: "photos/file_10.jpg",
+        "doc-image": "images/document_20.png",
+        "static-sticker": "stickers/sticker_30.webp",
+      };
       return new Response(JSON.stringify({
         ok: true,
         result: {
-          file_path: "photos/file_10.jpg",
+          file_path: filePathById[body.file_id ?? ""] ?? "photos/file_10.jpg",
         },
       }), {
         status: 200,
@@ -454,6 +460,7 @@ describe("@mono/im-platform", () => {
       address: 42,
       topicId: undefined,
     });
+    expect(incoming?.text).toBe("<media:image>\nwhat is in this image?");
     expect(incoming?.attachments).toHaveLength(1);
     expect(incoming?.attachments[0]).toMatchObject({
       kind: "image",
@@ -462,11 +469,141 @@ describe("@mono/im-platform", () => {
       origin: "remote_platform",
     });
     expect(inboundMessageToTaskInput(incoming!)).toEqual({
-      text: "what is in this image?",
+      text: "<media:image>\nwhat is in this image?",
       attachments: incoming?.attachments,
     });
     expect(calls[0]?.url.endsWith("/getFile")).toBe(true);
     expect(calls[1]?.url).toContain("/file/botbot-token/photos/file_10.jpg");
+  });
+
+  it("normalizes Telegram photo captions and pure-photo messages", async () => {
+    const { fetchImpl } = createTelegramInboundFetchStub();
+    const provider = createBuiltInProvider(createTelegramConfig(fetchImpl));
+
+    const captioned = await provider.normalizeIncomingMessage?.({
+      update_id: 4,
+      message: {
+        message_id: 12,
+        caption: "describe this",
+        chat: {
+          id: 42,
+          type: "private",
+        },
+        from: {
+          id: 7,
+          username: "alice",
+          first_name: "Alice",
+        },
+        photo: [
+          { file_id: "small" },
+          { file_id: "large" },
+        ],
+      },
+    });
+
+    expect(captioned?.text).toBe("<media:image>\ndescribe this");
+    expect(captioned?.attachments).toHaveLength(1);
+
+    const photoOnly = await provider.normalizeIncomingMessage?.({
+      update_id: 5,
+      message: {
+        message_id: 13,
+        chat: {
+          id: 42,
+          type: "private",
+        },
+        from: {
+          id: 7,
+          username: "alice",
+          first_name: "Alice",
+        },
+        photo: [
+          { file_id: "small" },
+          { file_id: "large" },
+        ],
+      },
+    });
+
+    expect(photoOnly).not.toBeNull();
+    expect(photoOnly?.text).toBe("<media:image>");
+    expect(photoOnly?.attachments).toHaveLength(1);
+    expect(inboundMessageToTaskInput(photoOnly!)).toEqual({
+      text: "<media:image>",
+      attachments: photoOnly?.attachments,
+    });
+  });
+
+  it("normalizes static Telegram stickers into image attachments", async () => {
+    const { fetchImpl, calls } = createTelegramInboundFetchStub();
+    const provider = createBuiltInProvider(createTelegramConfig(fetchImpl));
+
+    const incoming = await provider.normalizeIncomingMessage?.({
+      update_id: 6,
+      message: {
+        message_id: 30,
+        chat: {
+          id: 42,
+          type: "private",
+        },
+        from: {
+          id: 7,
+          username: "alice",
+          first_name: "Alice",
+        },
+        sticker: {
+          file_id: "static-sticker",
+          file_unique_id: "sticker-unique",
+          width: 512,
+          height: 512,
+          is_animated: false,
+          is_video: false,
+        },
+      },
+    });
+
+    expect(incoming).not.toBeNull();
+    expect(incoming?.text).toBe("<media:sticker>");
+    expect(incoming?.attachments).toHaveLength(1);
+    expect(incoming?.attachments[0]).toMatchObject({
+      kind: "image",
+      mimeType: "image/webp",
+      sourceLabel: "telegram-sticker-30.webp",
+      origin: "remote_platform",
+    });
+    expect(calls[0]?.url.endsWith("/getFile")).toBe(true);
+    expect(calls[1]?.url).toContain("/file/botbot-token/stickers/sticker_30.webp");
+  });
+
+  it("ignores animated Telegram stickers that cannot be converted into image attachments", async () => {
+    const { fetchImpl, calls } = createTelegramInboundFetchStub();
+    const provider = createBuiltInProvider(createTelegramConfig(fetchImpl));
+
+    const incoming = await provider.normalizeIncomingMessage?.({
+      update_id: 7,
+      message: {
+        message_id: 31,
+        chat: {
+          id: 42,
+          type: "private",
+        },
+        from: {
+          id: 7,
+          username: "alice",
+          first_name: "Alice",
+        },
+        sticker: {
+          file_id: "animated-sticker",
+          file_unique_id: "sticker-unique",
+          width: 512,
+          height: 512,
+          is_animated: true,
+          is_video: false,
+        },
+      },
+    });
+
+    expect(incoming).toBeNull();
+    expect(calls).toHaveLength(0);
   });
 
   it("normalizes Telegram callback queries into platform-agnostic actions", async () => {

@@ -25,7 +25,7 @@ export interface RawCatalogModel {
   provider?: unknown;
 }
 
-export type CatalogTransportKind = "openai-compatible" | "anthropic" | "gemini";
+export type CatalogTransportKind = "openai-compatible" | "openai-responses" | "anthropic" | "gemini";
 
 export interface CatalogTransportCandidate {
   kind: CatalogTransportKind;

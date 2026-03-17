@@ -370,10 +370,21 @@ async function normalizeProfileWithCatalog(
     throw createUnsupportedCatalogModelError(`${profile.provider}/${profile.modelId}`, provider.npm ?? model.npm, profileName);
   }
 
+  const requestedTransport = normalizeModelTransport(profile);
   const normalized = catalogModelToUnifiedModel(provider, model, {
-    runtimeProviderKey: profile.runtimeProviderKey
+    runtimeProviderKey: profile.runtimeProviderKey,
+    preferredTransport: requestedTransport
   });
   const existingBaseURL = profile.baseURL?.trim();
+  const explicitResponsesTransport =
+    requestedTransport === "openai-responses" && normalized.family === "openai-compatible"
+      ? "openai-responses"
+      : undefined;
+  const runtimeProviderKey =
+    normalized.runtimeProviderKey
+    ?? profile.runtimeProviderKey
+    ?? (explicitResponsesTransport ? `${normalized.provider}:${explicitResponsesTransport}` : undefined);
+
   return {
     ...profile,
     provider: normalized.provider,
@@ -381,10 +392,10 @@ async function normalizeProfileWithCatalog(
     family: normalized.family,
     transport: normalizeModelTransport({
       family: normalized.family,
-      transport: normalized.transport ?? profile.transport,
-      runtimeProviderKey: normalized.runtimeProviderKey ?? profile.runtimeProviderKey
+      transport: explicitResponsesTransport ?? normalized.transport ?? profile.transport,
+      runtimeProviderKey
     }),
-    runtimeProviderKey: normalized.runtimeProviderKey ?? profile.runtimeProviderKey,
+    runtimeProviderKey,
     providerFactory: normalized.providerFactory ?? profile.providerFactory,
     baseURL: shouldPreserveProfileBaseURL(profile, normalized, existingBaseURL) ? existingBaseURL : normalized.baseURL,
     apiKeyRef: profile.apiKeyRef,

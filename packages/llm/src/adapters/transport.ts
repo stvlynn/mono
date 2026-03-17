@@ -5,12 +5,12 @@ export function resolveModelTransport(model: {
   transport?: string;
   runtimeProviderKey?: string;
 }): NonNullable<UnifiedModel["transport"]> {
-  if (model.transport === "openai-compatible" || model.transport === "anthropic" || model.transport === "gemini") {
+  if (model.transport === "openai-compatible" || model.transport === "openai-responses" || model.transport === "anthropic" || model.transport === "gemini") {
     return model.transport;
   }
 
   const runtimeKind = model.runtimeProviderKey?.split(":").at(-1);
-  if (runtimeKind === "openai-compatible" || runtimeKind === "anthropic" || runtimeKind === "gemini") {
+  if (runtimeKind === "openai-compatible" || runtimeKind === "openai-responses" || runtimeKind === "anthropic" || runtimeKind === "gemini") {
     return runtimeKind;
   }
 

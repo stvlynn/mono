@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LlmRunOptions } from "../packages/llm/src/adapters/index.js";
 import type { AgentTool } from "../packages/shared/src/index.js";
 import { getAdapterForModel, ModelRegistry } from "../packages/llm/src/index.js";
+import { conversationMessagesToModelMessages } from "../packages/llm/src/adapters/ai-sdk-runtime.js";
 
 const originalFetch = global.fetch;
 
@@ -91,6 +92,74 @@ function createAnthropicTextResponse(text: string): Response {
   ]);
 }
 
+function createEventSourceStream(chunks: Array<Record<string, unknown>>): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const payload = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("");
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(payload));
+      controller.close();
+    }
+  });
+}
+
+function createOpenAIResponsesResponse(chunks: Array<Record<string, unknown>>): Response {
+  return new Response(createEventSourceStream(chunks), {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream"
+    }
+  });
+}
+
+function createOpenAIResponsesTextResponse(text: string, model = "gpt-4.1-mini"): Response {
+  return createOpenAIResponsesResponse([
+    {
+      type: "response.created",
+      response: {
+        id: "resp_1",
+        created_at: 1,
+        model
+      }
+    },
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        type: "message",
+        id: "msg_1"
+      }
+    },
+    {
+      type: "response.output_text.delta",
+      item_id: "msg_1",
+      delta: text
+    },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "message",
+        id: "msg_1"
+      }
+    },
+    {
+      type: "response.completed",
+      response: {
+        incomplete_details: null,
+        usage: {
+          input_tokens: 1,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 1,
+          output_tokens_details: { reasoning_tokens: 0 }
+        },
+        service_tier: null
+      }
+    }
+  ]);
+}
+
 describe("llm adapters", () => {
   it("routes anthropic models to the anthropic AI SDK adapter", async () => {
     const registry = new ModelRegistry();
@@ -109,6 +178,24 @@ describe("llm adapters", () => {
     const adapter = getAdapterForModel(model);
 
     expect(adapter.id).toBe("ai-sdk-openai-compatible");
+  });
+
+  it("routes openai responses transport models to the responses adapter", () => {
+    const adapter = getAdapterForModel({
+      provider: "moonshotai",
+      modelId: "kimi-k2-turbo-preview",
+      family: "openai-compatible",
+      transport: "openai-responses",
+      runtimeProviderKey: "moonshotai:openai-responses",
+      baseURL: "https://api.moonshot.cn/v1",
+      apiKeyEnv: "MOONSHOT_API_KEY",
+      providerFactory: "custom",
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsAttachments: true
+    });
+
+    expect(adapter.id).toBe("ai-sdk-openai-responses");
   });
 
   it("routes anthropic-compatible runtime overrides to the anthropic adapter", () => {
@@ -143,6 +230,99 @@ describe("llm adapters", () => {
     });
 
     expect(adapter.id).toBe("ai-sdk-gemini");
+  });
+
+  it("adds fallback text for image-only user messages", () => {
+    const modelMessages = conversationMessagesToModelMessages({
+      provider: "openai",
+      modelId: "gpt-4.1-mini",
+      family: "openai-compatible",
+      transport: "openai-compatible",
+      runtimeProviderKey: "openai:openai-compatible",
+      baseURL: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      apiKeyEnv: "OPENAI_API_KEY",
+      providerFactory: "openai",
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsAttachments: true
+    }, [
+      {
+        role: "user",
+        content: [
+          { type: "image", mimeType: "image/webp", data: "aGVsbG8=" }
+        ],
+        timestamp: Date.now()
+      }
+    ]);
+
+    expect(modelMessages).toEqual([{
+      role: "user",
+      content: [
+        { type: "image", image: "aGVsbG8=", mediaType: "image/webp" },
+        { type: "text", text: "User sent an image." }
+      ]
+    }]);
+  });
+
+  it("uses the responses endpoint for openai responses transport models", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createOpenAIResponsesTextResponse("Responses API ok"));
+    global.fetch = fetchMock as typeof global.fetch;
+
+    const adapter = getAdapterForModel({
+      provider: "moonshotai",
+      modelId: "kimi-k2-turbo-preview",
+      family: "openai-compatible",
+      transport: "openai-responses",
+      runtimeProviderKey: "moonshotai:openai-responses",
+      baseURL: "https://api.moonshot.cn/v1",
+      apiKey: "test-key",
+      apiKeyEnv: "MOONSHOT_API_KEY",
+      providerFactory: "custom",
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsAttachments: true
+    });
+
+    const messages = await adapter.run({
+      model: {
+        provider: "moonshotai",
+        modelId: "kimi-k2-turbo-preview",
+        family: "openai-compatible",
+        transport: "openai-responses",
+        runtimeProviderKey: "moonshotai:openai-responses",
+        baseURL: "https://api.moonshot.cn/v1",
+        apiKey: "test-key",
+        apiKeyEnv: "MOONSHOT_API_KEY",
+        providerFactory: "custom",
+        supportsTools: true,
+        supportsReasoning: true,
+        supportsAttachments: true
+      },
+      systemPrompt: "You are a helpful assistant.",
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+          timestamp: Date.now()
+        }
+      ],
+      tools: [],
+      thinkingLevel: "off",
+      maxSteps: 1,
+      emit() {}
+    } satisfies LlmRunOptions);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.moonshot.cn/v1/responses");
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.model).toBe("kimi-k2-turbo-preview");
+    expect(messages.at(0)).toMatchObject({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "Responses API ok" }]
+    });
   });
 
   it("uses the anthropic messages endpoint and completes a tool loop for anthropic transport models", async () => {

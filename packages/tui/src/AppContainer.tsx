@@ -686,7 +686,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     provider: CatalogProvider,
     modelId: string,
     runtimeProviderKey: string | undefined,
-    preferredFamily: "openai-compatible" | "anthropic" | "gemini" | undefined,
+    preferredTransport: CatalogTransportCandidate["kind"] | undefined,
     apiKey: string
   ) => {
     const models = await listCatalogModels(process.cwd(), provider.id);
@@ -696,7 +696,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     }
     const normalized = catalogModelToUnifiedModel(provider, model, {
       runtimeProviderKey,
-      preferredFamily
+      preferredTransport
     });
     const configSummary = agent.getConfigSummary();
     const configuredProfiles = await agent.listConfiguredProfiles();
@@ -735,7 +735,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     provider: CatalogProvider,
     modelId: string,
     runtimeProviderKey: string | undefined,
-    preferredFamily: "openai-compatible" | "anthropic" | "gemini" | undefined
+    preferredTransport: CatalogTransportCandidate["kind"] | undefined
   ) => {
     openSafeInputDialog(
       "Connect: API Key",
@@ -746,7 +746,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
           throw new Error("API key cannot be empty");
         }
         closeTopDialog();
-        await finishConnectFlow(provider, modelId, runtimeProviderKey, preferredFamily, apiKey);
+        await finishConnectFlow(provider, modelId, runtimeProviderKey, preferredTransport, apiKey);
       },
       {
         hint: "Paste the API key, then press Enter to save. Esc closes this dialog.",

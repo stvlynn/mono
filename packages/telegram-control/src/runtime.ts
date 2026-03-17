@@ -69,6 +69,7 @@ interface TelegramApiMessage {
   caption?: string;
   photo?: Array<{ file_id?: string }>;
   document?: { file_id?: string; mime_type?: string; file_name?: string };
+  sticker?: { file_id?: string; is_animated?: boolean; is_video?: boolean };
 }
 
 interface TelegramApiUpdate {
@@ -527,6 +528,10 @@ export class TelegramControlRuntime {
     try {
       const inbound = await this.#provider.normalizeIncomingMessage(update);
       if (!inbound) {
+        const unsupportedNotice = resolveUnsupportedTelegramMediaNotice(update.message);
+        if (unsupportedNotice) {
+          await notifier.sendText(message.chatId, unsupportedNotice).catch(() => {});
+        }
         return;
       }
 
@@ -815,8 +820,20 @@ function toIncomingMessage(message: TelegramApiMessage | undefined): TelegramInc
     username: message.from?.username,
     displayName: displayName || message.from?.username,
     languageCode: message.from?.language_code,
-    text: message.text,
+    text: message.text ?? message.caption,
   };
+}
+
+function resolveUnsupportedTelegramMediaNotice(message: TelegramApiMessage | undefined): string | undefined {
+  if (!message?.sticker) {
+    return undefined;
+  }
+
+  if (message.sticker.is_animated || message.sticker.is_video) {
+    return "Animated and video stickers are not supported yet. Please send a static sticker or image.";
+  }
+
+  return undefined;
 }
 
 async function wait(ms: number, signal: AbortSignal): Promise<void> {

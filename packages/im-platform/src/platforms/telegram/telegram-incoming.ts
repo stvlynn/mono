@@ -16,6 +16,16 @@ interface TelegramPhotoSize extends TelegramFileDescriptor {
   height?: number;
 }
 
+interface TelegramSticker extends TelegramFileDescriptor {
+  type?: string;
+  width?: number;
+  height?: number;
+  is_animated?: boolean;
+  is_video?: boolean;
+  emoji?: string;
+  set_name?: string;
+}
+
 interface TelegramChat {
   id: number | string;
   type?: string;
@@ -41,6 +51,7 @@ interface TelegramIncomingMessage {
   chat: TelegramChat;
   photo?: TelegramPhotoSize[];
   document?: TelegramFileDescriptor;
+  sticker?: TelegramSticker;
 }
 
 interface TelegramUpdate {
@@ -76,7 +87,7 @@ export async function normalizeTelegramIncomingMessage(options: {
   }
 
   const attachments = await extractIncomingAttachments(options.client, message, options.origin ?? "remote_platform");
-  const text = (message.text ?? message.caption ?? "").trim();
+  const text = resolveIncomingText(message);
   if (!text && attachments.length === 0) {
     return null;
   }
@@ -130,6 +141,29 @@ function extractCallbackQuery(payload: unknown): TelegramCallbackQuery | undefin
   return update.callback_query;
 }
 
+function resolveIncomingText(message: TelegramIncomingMessage): string {
+  const rawText = (message.text ?? message.caption ?? "").trim();
+  const mediaPlaceholder = resolveIncomingMediaPlaceholder(message);
+
+  if (mediaPlaceholder && rawText) {
+    return `${mediaPlaceholder}\n${rawText}`;
+  }
+
+  return rawText || mediaPlaceholder;
+}
+
+function resolveIncomingMediaPlaceholder(message: TelegramIncomingMessage): string {
+  if (message.sticker && !message.sticker.is_animated && !message.sticker.is_video) {
+    return "<media:sticker>";
+  }
+
+  if (message.photo?.length || message.document?.mime_type?.startsWith("image/")) {
+    return "<media:image>";
+  }
+
+  return "";
+}
+
 async function extractIncomingAttachments(
   client: TelegramBotApiClient,
   message: TelegramIncomingMessage,
@@ -155,6 +189,19 @@ async function extractIncomingAttachments(
       fileId: document.file_id,
       mimeType: document.mime_type,
       sourceLabel: document.file_name ?? `telegram-image-${message.message_id}`,
+      origin,
+    });
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  const sticker = message.sticker;
+  if (sticker?.file_id && !sticker.is_animated && !sticker.is_video) {
+    const attachment = await downloadIncomingAttachment(client, {
+      fileId: sticker.file_id,
+      mimeType: "image/webp",
+      sourceLabel: `telegram-sticker-${message.message_id}.webp`,
       origin,
     });
     if (attachment) {

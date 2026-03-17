@@ -159,6 +159,51 @@ describe("models catalog", () => {
     expect(registry.list().some((model) => model.provider === "moonshotai" && model.modelId === "kimi-k2-turbo-preview")).toBe(true);
   });
 
+  it("lists routable transport variants without changing the default direct selection", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-catalog-registry-variants-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-catalog-registry-variants-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "cache", "models.dev.json"), {
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        openai: {
+          id: "openai",
+          canonicalId: "openai",
+          name: "OpenAI",
+          env: ["OPENAI_API_KEY"],
+          api: "https://api.openai.com/v1",
+          npm: "@ai-sdk/openai",
+          supported: true,
+          models: {
+            "gpt-5.4": {
+              id: "gpt-5.4",
+              name: "gpt-5.4",
+              providerId: "openai",
+              canonicalProviderId: "openai",
+              npm: "@ai-sdk/openai",
+              catalogTransport: "openai-compatible",
+              toolCall: true,
+              reasoning: true,
+              temperature: true,
+              attachment: true,
+              supported: true
+            }
+          }
+        }
+      }
+    });
+
+    const registry = new ModelRegistry({ cwd });
+    await registry.load();
+
+    const models = registry.list().filter((model) => model.provider === "openai" && model.modelId === "gpt-5.4");
+    expect(models.map((model) => model.transport).sort()).toEqual(["openai-compatible", "openai-responses"]);
+    expect(registry.resolve("openai/gpt-5.4").transport).toBe("openai-compatible");
+  });
+
   it("uses the catalog-declared transport for providers with anthropic-compatible models", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-catalog-minimax-cwd-"));
     const configDir = await mkdtemp(join(tmpdir(), "mono-catalog-minimax-config-"));
@@ -275,6 +320,146 @@ describe("models catalog", () => {
     const providers = await listCatalogProviders(cwd);
 
     expect(providers.map((provider) => provider.id)).toEqual(["openai"]);
+  });
+
+  it("offers and self-heals the openai responses runtime transport for openai-compatible providers", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-catalog-openai-responses-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-catalog-openai-responses-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "cache", "models.dev.json"), {
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        openai: {
+          id: "openai",
+          canonicalId: "openai",
+          name: "OpenAI",
+          env: ["OPENAI_API_KEY"],
+          npm: "@ai-sdk/openai",
+          catalogTransport: "openai-compatible",
+          supported: true,
+          models: {
+            "gpt-5.4": {
+              id: "gpt-5.4",
+              name: "gpt-5.4",
+              providerId: "openai",
+              canonicalProviderId: "openai",
+              npm: "@ai-sdk/openai",
+              catalogTransport: "openai-compatible",
+              toolCall: true,
+              reasoning: true,
+              temperature: true,
+              attachment: true,
+              supported: true
+            }
+          }
+        }
+      }
+    });
+
+    const providers = await listCatalogProviders(cwd);
+    const openaiProvider = providers.find((provider) => provider.id === "openai");
+    const transportKinds = openaiProvider?.transportCandidates?.map((candidate) => candidate.kind) ?? [];
+    expect(transportKinds).toContain("openai-compatible");
+    expect(transportKinds).toContain("openai-responses");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-5.4",
+            baseURL: "https://llm-router.example.com/v1",
+            family: "openai-compatible",
+            transport: "openai-responses",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true,
+            supportsAttachments: true
+          }
+        }
+      },
+      projects: {}
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.model.family).toBe("openai-compatible");
+    expect(resolved.model.transport).toBe("openai-responses");
+    expect(resolved.model.runtimeProviderKey).toBe("openai:openai-responses");
+    expect(resolved.model.baseURL).toBe("https://llm-router.example.com/v1");
+  });
+
+  it("keeps custom base urls routable for cached openai profiles even when the catalog omits api", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-catalog-openai-custom-base-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-catalog-openai-custom-base-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeJsonFile(join(configDir, "cache", "models.dev.json"), {
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        openai: {
+          id: "openai",
+          canonicalId: "openai",
+          name: "OpenAI",
+          env: ["OPENAI_API_KEY"],
+          npm: "@ai-sdk/openai",
+          catalogTransport: "openai-compatible",
+          supported: true,
+          models: {
+            "gpt-5.4": {
+              id: "gpt-5.4",
+              name: "gpt-5.4",
+              providerId: "openai",
+              canonicalProviderId: "openai",
+              npm: "@ai-sdk/openai",
+              catalogTransport: "openai-compatible",
+              toolCall: true,
+              reasoning: true,
+              temperature: false,
+              attachment: true,
+              supported: true
+            }
+          }
+        }
+      }
+    });
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "telegram-shared",
+        profiles: {
+          "telegram-shared": {
+            provider: "openai",
+            modelId: "gpt-5.4",
+            baseURL: "https://llm-router.ofo.icu/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "custom",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true,
+            supportsAttachments: true
+          }
+        }
+      },
+      projects: {}
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.model.provider).toBe("openai");
+    expect(resolved.model.modelId).toBe("gpt-5.4");
+    expect(resolved.model.transport).toBe("openai-compatible");
+    expect(resolved.model.baseURL).toBe("https://llm-router.ofo.icu/v1");
   });
 
   it("self-heals broken saved profile transport metadata from the catalog", async () => {

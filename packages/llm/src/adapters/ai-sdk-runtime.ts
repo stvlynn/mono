@@ -147,9 +147,11 @@ function createProviderOptions(
     return undefined;
   }
 
-  const providerName = model.providerFactory === "openai" || model.provider === "openai"
+  const providerName = transport === "openai-responses"
     ? "openai"
-    : model.provider;
+    : model.providerFactory === "openai" || model.provider === "openai"
+      ? "openai"
+      : model.provider;
 
   return {
     [providerName]: {
@@ -161,6 +163,13 @@ function createProviderOptions(
 function createLanguageModel(model: UnifiedModel): unknown {
   const apiKey = resolveApiKey(model);
   const transport = resolveModelTransport(model);
+
+  if (transport === "openai-responses") {
+    return createOpenAI({
+      apiKey,
+      baseURL: model.baseURL
+    }).responses(model.modelId);
+  }
 
   if (transport === "anthropic") {
     return createAnthropic({
@@ -202,10 +211,28 @@ function toModelUserPart(part: UserPart): { type: "text"; text: string } | { typ
   };
 }
 
+function buildModelUserParts(
+  content: UserPart[]
+): Array<{ type: "text"; text: string } | { type: "image"; image: string; mediaType: string }> {
+  const parts = content.map(toModelUserPart);
+  const hasText = parts.some((part) => part.type === "text" && part.text.trim().length > 0);
+  if (hasText) {
+    return parts;
+  }
+
+  return [
+    ...parts,
+    {
+      type: "text",
+      text: parts.length === 1 ? "User sent an image." : `User sent ${parts.length} images.`
+    }
+  ];
+}
+
 function toModelUserMessage(message: UserMessage): ModelMessage {
   return {
     role: "user",
-    content: typeof message.content === "string" ? message.content : message.content.map(toModelUserPart)
+    content: typeof message.content === "string" ? message.content : buildModelUserParts(message.content)
   };
 }
 

@@ -18,6 +18,16 @@ const PROVIDER_ALIASES: Record<string, string> = {
   moonshot: "moonshotai"
 };
 
+const PROVIDERS_WITH_DEFAULT_BASE_URL = new Set([
+  "anthropic",
+  "gemini",
+  "google",
+  "moonshotai",
+  "openai",
+  "openrouter",
+  "xai",
+]);
+
 const BUILTIN_MODELS: UnifiedModel[] = [
   {
     provider: "openai",
@@ -182,7 +192,8 @@ const RUNTIME_TRANSPORT_OVERRIDES: Record<string, CatalogTransportCandidate[]> =
 function buildCatalogTransportCandidate(provider: string, npm?: string, api?: string): CatalogTransportCandidate[] {
   const canonicalProvider = canonicalizeProviderId(provider);
   const kind = resolveCatalogTransport(canonicalProvider, npm);
-  if (!kind || !api) {
+  const resolvedApi = resolveTransportApi(canonicalProvider, api);
+  if (!kind || !resolvedApi) {
     return [];
   }
 
@@ -190,7 +201,7 @@ function buildCatalogTransportCandidate(provider: string, npm?: string, api?: st
     {
       kind,
       source: "catalog",
-      api,
+      api: resolvedApi,
       npm,
       providerFactory: resolveCatalogProviderFactory(
         canonicalProvider,
@@ -200,6 +211,47 @@ function buildCatalogTransportCandidate(provider: string, npm?: string, api?: st
       supportedByMono: isTransportCandidateSupported(canonicalProvider, kind, "catalog")
     }
   ];
+}
+
+function buildRuntimeTransportCandidates(
+  provider: string,
+  options: { npm?: string; api?: string }
+): CatalogTransportCandidate[] {
+  const canonicalProvider = canonicalizeProviderId(provider);
+  const catalogCandidates = buildCatalogTransportCandidate(canonicalProvider, options.npm, options.api);
+  if (!catalogCandidates.some((candidate) => candidate.kind === "openai-compatible")) {
+    return [];
+  }
+
+  const baseCandidate = catalogCandidates.find((candidate) => candidate.kind === "openai-compatible");
+  if (!baseCandidate?.api) {
+    return [];
+  }
+
+  return [
+    {
+      kind: "openai-responses",
+      source: "runtime-override",
+      api: baseCandidate.api,
+      npm: "@ai-sdk/openai",
+      providerFactory: resolveCatalogProviderFactory(canonicalProvider, "openai-compatible"),
+      runtimeProviderKey: `${canonicalProvider}:openai-responses`,
+      supportedByMono: true,
+    },
+  ];
+}
+
+function resolveTransportApi(provider: string, api?: string): string | undefined {
+  const trimmedApi = api?.trim();
+  if (trimmedApi) {
+    return trimmedApi;
+  }
+
+  if (!PROVIDERS_WITH_DEFAULT_BASE_URL.has(provider)) {
+    return undefined;
+  }
+
+  return resolveBaseURL(provider);
 }
 
 function dedupeTransportCandidates(candidates: CatalogTransportCandidate[]): CatalogTransportCandidate[] {
@@ -224,6 +276,7 @@ export function getCatalogTransportCandidates(
   const canonicalProvider = canonicalizeProviderId(provider);
   return dedupeTransportCandidates([
     ...buildCatalogTransportCandidate(canonicalProvider, options.npm, options.api),
+    ...buildRuntimeTransportCandidates(canonicalProvider, options),
     ...(RUNTIME_TRANSPORT_OVERRIDES[canonicalProvider] ?? [])
   ]);
 }
@@ -236,7 +289,7 @@ export function isTransportCandidateSupported(
   if (source === "runtime-override") {
     return true;
   }
-  return kind === "openai-compatible" || kind === "anthropic" || kind === "gemini";
+  return kind === "openai-compatible" || kind === "openai-responses" || kind === "anthropic" || kind === "gemini";
 }
 
 export function selectCatalogTransportCandidate(
@@ -244,7 +297,7 @@ export function selectCatalogTransportCandidate(
   candidates: CatalogTransportCandidate[],
   options: {
     runtimeProviderKey?: string;
-    preferredKind?: UnifiedModel["family"];
+    preferredTransport?: UnifiedModel["transport"];
   } = {}
 ): CatalogTransportCandidate | undefined {
   const supportedCandidates = candidates.filter((candidate) => candidate.supportedByMono);
@@ -259,8 +312,8 @@ export function selectCatalogTransportCandidate(
     }
   }
 
-  if (options.preferredKind) {
-    const byKind = supportedCandidates.find((candidate) => candidate.kind === options.preferredKind);
+  if (options.preferredTransport) {
+    const byKind = supportedCandidates.find((candidate) => candidate.kind === options.preferredTransport);
     if (byKind) {
       return byKind;
     }
@@ -285,7 +338,7 @@ export function resolveCatalogModelFamily(
   if (transport === "gemini") {
     return "gemini";
   }
-  if (transport === "openai-compatible") {
+  if (transport === "openai-compatible" || transport === "openai-responses") {
     return "openai-compatible";
   }
   return undefined;
@@ -293,7 +346,7 @@ export function resolveCatalogModelFamily(
 
 function resolveTransportFromRuntimeProviderKey(runtimeProviderKey?: string): NonNullable<UnifiedModel["transport"]> | undefined {
   const kind = runtimeProviderKey?.split(":").at(-1);
-  if (kind === "openai-compatible" || kind === "anthropic" || kind === "gemini") {
+  if (kind === "openai-compatible" || kind === "openai-responses" || kind === "anthropic" || kind === "gemini") {
     return kind;
   }
   return undefined;
@@ -304,7 +357,7 @@ function normalizeLegacyTransport(transport?: string): NonNullable<UnifiedModel[
     return "openai-compatible";
   }
 
-  if (transport === "openai-compatible" || transport === "anthropic" || transport === "gemini") {
+  if (transport === "openai-compatible" || transport === "openai-responses" || transport === "anthropic" || transport === "gemini") {
     return transport;
   }
 
@@ -356,7 +409,7 @@ export function isSupportedCatalogTransport(provider: string, npm?: string, api?
 
 export function isSupportedUnifiedModel(model: Pick<UnifiedModel, "family" | "transport" | "runtimeProviderKey" | "provider">): boolean {
   const transport = normalizeModelTransport(model);
-  return (transport === "openai-compatible" || transport === "anthropic" || transport === "gemini")
+  return (transport === "openai-compatible" || transport === "openai-responses" || transport === "anthropic" || transport === "gemini")
     && (model.family === "openai-compatible" || model.family === "anthropic" || model.family === "gemini");
 }
 

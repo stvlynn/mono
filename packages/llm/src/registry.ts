@@ -22,6 +22,7 @@ export interface LoadedProfile {
 export class ModelRegistry {
   private readonly cwd: string;
   private models = new Map<string, UnifiedModel>();
+  private listedModels = new Map<string, UnifiedModel>();
   private profiles = new Map<string, UnifiedModel>();
 
   constructor(options: RegistryOptions = {}) {
@@ -35,16 +36,38 @@ export class ModelRegistry {
     return `${provider}/${modelId}`;
   }
 
+  private variantKeyFor(model: Pick<UnifiedModel, "provider" | "modelId" | "runtimeProviderKey" | "transport">): string {
+    return `${this.keyFor(model.provider, model.modelId)}#${model.runtimeProviderKey ?? model.transport}`;
+  }
+
+  private registerListedModel(model: UnifiedModel): void {
+    this.listedModels.set(this.variantKeyFor(model), model);
+  }
+
   async load(): Promise<void> {
     this.models.clear();
+    this.listedModels.clear();
     for (const builtin of getBuiltinModels()) {
       this.models.set(this.keyFor(builtin.provider, builtin.modelId), builtin);
+      this.registerListedModel(builtin);
     }
     this.profiles.clear();
     for (const provider of await listCatalogProviders(this.cwd)) {
       for (const catalogModel of Object.values(provider.models).filter((model) => model.supported)) {
         const model = catalogModelToUnifiedModel(provider, catalogModel);
         this.models.set(this.keyFor(model.provider, model.modelId), model);
+        this.registerListedModel(model);
+
+        for (const candidate of (catalogModel.transportCandidates ?? provider.transportCandidates ?? []).filter((candidate) => candidate.supportedByMono)) {
+          if (candidate.kind === model.transport && candidate.runtimeProviderKey === model.runtimeProviderKey) {
+            continue;
+          }
+
+          this.registerListedModel(catalogModelToUnifiedModel(provider, catalogModel, {
+            runtimeProviderKey: candidate.runtimeProviderKey,
+            preferredTransport: candidate.kind
+          }));
+        }
       }
     }
     for (const profile of await listProfiles(this.cwd)) {
@@ -64,6 +87,7 @@ export class ModelRegistry {
       } satisfies UnifiedModel;
       this.profiles.set(profile.name, model);
       this.models.set(this.keyFor(model.provider, model.modelId), model);
+      this.registerListedModel(model);
     }
   }
 
@@ -116,7 +140,7 @@ export class ModelRegistry {
   }
 
   list(): UnifiedModel[] {
-    return [...this.models.values()];
+    return [...this.listedModels.values()];
   }
 
   listProfileNames(): string[] {

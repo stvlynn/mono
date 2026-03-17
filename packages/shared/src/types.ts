@@ -76,7 +76,7 @@ export interface UnifiedToolSpec {
   inputSchema: Record<string, unknown>;
 }
 
-export type ModelTransport = "openai-compatible" | "anthropic" | "gemini";
+export type ModelTransport = "openai-compatible" | "openai-responses" | "anthropic" | "gemini";
 
 export interface UnifiedModel {
   provider: string;

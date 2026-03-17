@@ -12,7 +12,7 @@ export function catalogModelToUnifiedModel(
   model: CatalogModel,
   options: {
     runtimeProviderKey?: string;
-    preferredFamily?: UnifiedModel["family"];
+    preferredTransport?: UnifiedModel["transport"];
   } = {}
 ): UnifiedModel {
   const selectedCandidate = selectCatalogTransportCandidate(
@@ -20,7 +20,7 @@ export function catalogModelToUnifiedModel(
     model.transportCandidates ?? provider.transportCandidates ?? [],
     {
       runtimeProviderKey: options.runtimeProviderKey,
-      preferredKind: options.preferredFamily
+      preferredTransport: options.preferredTransport
     }
   );
 
