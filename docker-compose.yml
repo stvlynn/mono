@@ -27,3 +27,9 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "[ -f /app/packages/cli/dist/index.js ] || [ -f /workspace/packages/cli/src/bin.ts ]"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
