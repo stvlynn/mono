@@ -325,6 +325,128 @@ describe("llm adapters", () => {
     });
   });
 
+  it("extracts think-style wrappers into reasoning parts instead of leaking them into text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createOpenAIResponsesResponse([
+      {
+        type: "response.created",
+        response: {
+          id: "resp_2",
+          created_at: 1,
+          model: "MiniMax-M2.7-highspeed",
+        }
+      },
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: {
+          type: "message",
+          id: "msg_2"
+        }
+      },
+      {
+        type: "response.output_text.delta",
+        item_id: "msg_2",
+        delta: "<thi"
+      },
+      {
+        type: "response.output_text.delta",
+        item_id: "msg_2",
+        delta: "nk>internal reasoning"
+      },
+      {
+        type: "response.output_text.delta",
+        item_id: "msg_2",
+        delta: "</think>\n\nhel"
+      },
+      {
+        type: "response.output_text.delta",
+        item_id: "msg_2",
+        delta: "lo"
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "message",
+          id: "msg_2"
+        }
+      },
+      {
+        type: "response.completed",
+        response: {
+          incomplete_details: null,
+          usage: {
+            input_tokens: 1,
+            input_tokens_details: { cached_tokens: 0 },
+            output_tokens: 1,
+            output_tokens_details: { reasoning_tokens: 0 }
+          },
+          service_tier: null
+        }
+      }
+    ]));
+    global.fetch = fetchMock as typeof global.fetch;
+
+    const adapter = getAdapterForModel({
+      provider: "openai",
+      modelId: "MiniMax-M2.7-highspeed",
+      family: "openai-compatible",
+      transport: "openai-responses",
+      runtimeProviderKey: "openai:openai-responses",
+      baseURL: "https://api.minimaxi.com/v1",
+      apiKey: "test-key",
+      apiKeyEnv: "OPENAI_API_KEY",
+      providerFactory: "custom",
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsAttachments: true
+    });
+
+    const events: Array<{ type: string; delta: string }> = [];
+    const messages = await adapter.run({
+      model: {
+        provider: "openai",
+        modelId: "MiniMax-M2.7-highspeed",
+        family: "openai-compatible",
+        transport: "openai-responses",
+        runtimeProviderKey: "openai:openai-responses",
+        baseURL: "https://api.minimaxi.com/v1",
+        apiKey: "test-key",
+        apiKeyEnv: "OPENAI_API_KEY",
+        providerFactory: "custom",
+        supportsTools: true,
+        supportsReasoning: true,
+        supportsAttachments: true
+      },
+      systemPrompt: "You are a helpful assistant.",
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+          timestamp: Date.now()
+        }
+      ],
+      tools: [],
+      thinkingLevel: "off",
+      maxSteps: 1,
+      emit(event) {
+        if (event.type === "assistant-text-delta" || event.type === "assistant-thinking-delta") {
+          events.push({ type: event.type, delta: event.delta });
+        }
+      }
+    } satisfies LlmRunOptions);
+
+    expect(events.filter((event) => event.type === "assistant-text-delta").map((event) => event.delta).join("")).not.toContain("<think>");
+    expect(events.filter((event) => event.type === "assistant-thinking-delta").map((event) => event.delta).join("")).toContain("internal reasoning");
+    expect(messages.at(0)).toMatchObject({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "internal reasoning" },
+        { type: "text", text: "\n\nhello" },
+      ],
+    });
+  });
+
   it("uses the anthropic messages endpoint and completes a tool loop for anthropic transport models", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(createAnthropicResponse([

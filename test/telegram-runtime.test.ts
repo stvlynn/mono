@@ -933,7 +933,7 @@ describe("telegram runtime conflict detection", () => {
         });
       }
 
-      if (method === "sendMessage" || method === "sendSticker") {
+      if (method === "sendMessage" || method === "sendSticker" || method === "sendChatAction") {
         if (method === "sendSticker") {
           resolveDelivered?.();
         }
@@ -963,6 +963,108 @@ describe("telegram runtime conflict detection", () => {
     ]);
 
     expect(calls.some((call) => call.method === "sendSticker" && call.body.sticker === "CAACAgIAAxkBAAIBQ2abc123")).toBe(true);
+    expect(calls.some((call) => call.method === "sendChatAction" && call.body.action === "typing")).toBe(true);
+
+    await runtime.stop();
+  });
+
+  it("sends typing for a single-message Telegram chat reply before the final message lands", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-single-message-typing");
+    await writeTelegramRuntimeConfig(configDir, {
+      reply: {
+        multiMessage: true,
+        splitDelayMs: 5,
+        stickers: {
+          enabled: true,
+          storePath: ".mono/telegram/stickers.json",
+        },
+      },
+    });
+
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    let deliveredMessage = false;
+    let resolveDelivered: (() => void) | undefined;
+    const delivered = new Promise<void>((resolve) => {
+      resolveDelivered = resolve;
+    });
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ method, body });
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        if (!deliveredMessage) {
+          deliveredMessage = true;
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [{
+              update_id: 1,
+              message: {
+                message_id: 71,
+                chat: { id: 7001, type: "private" },
+                from: { id: 7001, username: "alice", first_name: "Alice" },
+                text: "hello",
+              },
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "sendMessage" || method === "sendChatAction") {
+        if (method === "sendMessage") {
+          resolveDelivered?.();
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { message_id: 900 + calls.length, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({
+      cwd,
+      fetchImpl,
+      onChatMessage: async () => ({
+        messages: [{ text: "Single reply" }],
+      }),
+    });
+    await runtime.start();
+
+    await Promise.race([
+      delivered,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for single reply")), 1000)),
+    ]);
+
+    const typingIndex = calls.findIndex((call) => call.method === "sendChatAction" && call.body.action === "typing");
+    const sendIndex = calls.findIndex((call) => call.method === "sendMessage" && call.body.text === "Single reply");
+    expect(typingIndex).toBeGreaterThanOrEqual(0);
+    expect(sendIndex).toBeGreaterThanOrEqual(0);
+    expect(typingIndex).toBeLessThan(sendIndex);
 
     await runtime.stop();
   });

@@ -22,13 +22,13 @@ Summarize the maintainer-facing contract of the agent runtime.
 ## Important Public Methods
 
 - `initialize()`
-- `runTask(input)`
+- `runTask(input, options?)`
 - `prompt(input)`
 - `abort()`
 - `isRunning()`
 - `listProfiles()` / `setProfile()`
 - `listModels()` / `setModel()`
-- `listSessions()` / `switchSession()`
+- `listSessions()` / `switchSession(sessionId, branchHeadId?, options?)`
 - `listSessionNodes()` / `switchBranch()`
 - `inspectContext(prompt?)`
 - `getLatestContextReport()`
@@ -71,8 +71,21 @@ Important contract:
 - `runTask()` is the preferred execution entrypoint
 - `prompt()` is compatibility sugar over task execution
 - both methods now accept `string | TaskInput`
+- `runTask()` options now include channel-aware execution hints such as `channel`, `interactionMode`, and `extraTaskContext`
 - `abort()` must stop the active run and prevent stale results from landing
 - prompt memory injection may combine execution memory and structured memory
 - prompt skill injection may combine builtin, global, and project skills
 - local session replay and task todo state remain authoritative even when OpenViking is enabled
 - image-bearing inputs are rejected up front when the selected model reports `supportsAttachments === false`
+- `switchSession(..., { preserveCurrentModel: true })` allows a caller to reuse an existing session transcript without letting older session metadata replace the current resolved model
+
+## Shared-session Telegram handoff
+
+Current Telegram chat handoff does **not** create a separate session.
+
+Instead:
+
+- the TUI creates short-lived handoff agent instances
+- each handoff agent switches into the current shared session id
+- `switchSession(..., { preserveCurrentModel: true })` prevents an older session metadata header from replacing the active Telegram profile/model
+- `extraTaskContext` is used to inject unfinished same-chat reply context into the next Telegram handoff turn

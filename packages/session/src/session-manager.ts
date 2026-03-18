@@ -30,6 +30,7 @@ export interface SessionManagerOptions {
 }
 
 export class SessionManager {
+  private static readonly appendQueues = new Map<string, Promise<void>>();
   readonly cwd: string;
   readonly sessionId: string;
   readonly filePath: string;
@@ -83,76 +84,86 @@ export class SessionManager {
   }
 
   async appendMessage(message: ConversationMessage): Promise<void> {
-    const entryType: SessionEntryType = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "tool";
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: message.timestamp,
-      entryType,
-      payload: message as never
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
+    await this.withAppendLock(async () => {
+      const entryType: SessionEntryType = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "tool";
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: message.timestamp,
+        entryType,
+        payload: message as never
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+    });
   }
 
   async appendBranch(name?: string): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: now(),
-      entryType: "branch",
-      payload: { name }
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: now(),
+        entryType: "branch",
+        payload: { name }
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async appendMemoryReference(plan: MemoryRecallPlan, reason: "auto" | "manual", query?: string): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: now(),
-      entryType: "memory_reference",
-      payload: {
-        memoryIds: plan.selectedIds,
-        compactedIds: plan.compactedIds,
-        rawPairIds: plan.rawPairIds,
-        reason,
-        query
-      }
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: now(),
+        entryType: "memory_reference",
+        payload: {
+          memoryIds: plan.selectedIds,
+          compactedIds: plan.compactedIds,
+          rawPairIds: plan.rawPairIds,
+          reason,
+          query
+        }
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async appendMemoryRecord(record: MemoryRecord): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: record.createdAt,
-      entryType: "memory_record",
-      payload: {
-        memoryId: record.id
-      }
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: record.createdAt,
+        entryType: "memory_record",
+        payload: {
+          memoryId: record.id
+        }
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async appendTaskState(task: TaskState): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: now(),
-      entryType: "task_state",
-      payload: task
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: now(),
+        entryType: "task_state",
+        payload: task
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async appendTaskPointer(pointer: {
@@ -163,51 +174,61 @@ export class SessionManager {
     attempts: number;
     verification: VerificationState;
   }): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: now(),
-      entryType: "task_pointer",
-      payload: pointer
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: now(),
+        entryType: "task_pointer",
+        payload: pointer
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async appendTaskSummary(result: TaskResult): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: now(),
-      entryType: "task_summary",
-      payload: {
-        taskId: result.taskId ?? "",
-        todoMemoryId: result.todoMemoryId,
-        status: result.status,
-        summary: result.summary,
-        verification: result.verification
-      }
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: now(),
+        entryType: "task_summary",
+        payload: {
+          taskId: result.taskId ?? "",
+          todoMemoryId: result.todoMemoryId,
+          status: result.status,
+          summary: result.summary,
+          verification: result.verification
+        }
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async appendSessionCompression(result: SessionCompressionResult): Promise<string> {
-    const entry: SessionEntry = {
-      id: createId(),
-      parentId: this.headId,
-      timestamp: now(),
-      entryType: "session_compression",
-      payload: result
-    };
-    this.headId = entry.id;
-    await appendJsonLine(this.filePath, entry);
-    return entry.id;
+    return this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: now(),
+        entryType: "session_compression",
+        payload: result
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+      return entry.id;
+    });
   }
 
   async loadMessages(branchHeadId = this.headId): Promise<ConversationMessage[]> {
+    if (branchHeadId === this.headId) {
+      await this.syncHeadToLatest();
+      branchHeadId = this.headId;
+    }
     const entries = await this.readEntriesForHead(branchHeadId);
     const orderedEntries = branchHeadId ? [...entries].reverse() : entries;
     return orderedEntries
@@ -305,6 +326,31 @@ export class SessionManager {
 
   static rootDirFromSessionFile(filePath: string): string {
     return dirname(dirname(filePath));
+  }
+
+  private async syncHeadToLatest(): Promise<string | undefined> {
+    const entries = await this.readEntries();
+    this.headId = entries.at(-1)?.id;
+    return this.headId;
+  }
+
+  private async withAppendLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = SessionManager.appendQueues.get(this.filePath) ?? Promise.resolve();
+    let result!: T;
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        result = await operation();
+      });
+    SessionManager.appendQueues.set(this.filePath, next);
+    try {
+      await next;
+      return result;
+    } finally {
+      if (SessionManager.appendQueues.get(this.filePath) === next) {
+        SessionManager.appendQueues.delete(this.filePath);
+      }
+    }
   }
 }
 

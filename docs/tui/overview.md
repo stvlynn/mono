@@ -30,8 +30,11 @@ Current behavior:
 
 - start `TelegramControlRuntime` when Telegram is configured
 - register the Telegram runtime as the current channel capability provider
-- hand authorized Telegram private-chat messages to `agent.runTask(...)`
+- hand authorized Telegram private-chat messages to short-lived handoff agent instances instead of the main interactive run slot
+- switch those handoff agents into the current shared session id
 - force Telegram chat handoff into `interactionMode: "channel_chat"`
+- preserve the current Telegram model/profile when switching that shared session for handoff
+- keep one unfinished draft/thinking lane per Telegram chat and inject it as continuation context into the next message from the same chat
 
 `channel_chat` turns differ from the normal coding-task path:
 
@@ -39,3 +42,4 @@ Current behavior:
 - they keep replies in the channel-delivery path
 - they rely on `channel_action` / `channel_store` for native Telegram sends such as stickers
 - streamed assistant text is sanitized before Telegram draft preview updates
+- multiple Telegram handoffs can run in parallel without blocking the local TUI coding run

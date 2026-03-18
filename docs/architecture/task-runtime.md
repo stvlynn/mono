@@ -15,6 +15,12 @@ Not every request follows the same verification path:
 - direct questions, explain/summarize-style prompts, and lightweight repository queries default to single-pass execution with `verification=none`
 - implementation and change-oriented requests still use the execute/verify loop
 
+Telegram `channel_chat` turns reuse the same runtime entrypoint, but they are assembled with extra channel-specific context:
+
+- `interactionMode: "channel_chat"`
+- optional `extraTaskContext` for chat continuation state
+- the same shared session history as the main TUI run
+
 ## Task Shell
 
 A task starts with a lightweight `TaskState`:
@@ -73,6 +79,7 @@ Current direct-response behavior:
 - `verification=none` skips the verify phase entirely
 - the execute prompt tells the model to answer directly and only use tools when they provide concrete evidence
 - this keeps casual chat and lightweight questions from generating extra verifier-only assistant turns
+- Telegram `channel_chat` turns force this direct-response path and do not expose `write_todos` or coding tools
 - `verification=light` can also short-circuit to summarize when a turn produced a normal assistant reply and no tool evidence was needed
 - light verification that only failed due to missing evidence does not re-open execution if the verify turn also produced no tool evidence
 
@@ -93,6 +100,11 @@ A completed task yields:
 - `TaskResult.summary`
 - final verification state
 - collected task messages
+
+Important current detail for Telegram:
+
+- handoff agents may run in parallel while still appending into the same shared session
+- reply/summary consumers should only use visible `text` parts, not `thinking` parts
 
 The session also records:
 

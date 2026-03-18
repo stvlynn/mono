@@ -98,6 +98,7 @@ interface TaskRunContext {
   interactionMode: "default" | "channel_chat";
   channel?: ToolExecutionChannel;
   input: TaskInput;
+  extraTaskContext?: string;
   channelContext?: ChannelCapabilityContext | null;
   channelActionRequirement?: {
     nativeActionRequired: boolean;
@@ -116,6 +117,7 @@ interface TaskRunContext {
 export interface RunTaskOptions {
   channel?: ToolExecutionChannel;
   interactionMode?: "default" | "channel_chat";
+  extraTaskContext?: string;
 }
 
 export interface AgentOptions {
@@ -318,6 +320,7 @@ export class Agent {
 
   async runTask(input: string | TaskInput, options: RunTaskOptions = {}): Promise<TaskResult> {
     await this.initialize();
+    this.state.messages = await this.state.session.loadMessages();
     if (!hasTaskInputContent(input)) {
       throw new Error("Task input requires text or at least one image attachment");
     }
@@ -561,7 +564,11 @@ export class Agent {
     });
   }
 
-  async switchSession(sessionId: string, branchHeadId?: string): Promise<ConversationMessage[]> {
+  async switchSession(
+    sessionId: string,
+    branchHeadId?: string,
+    options: { preserveCurrentModel?: boolean } = {},
+  ): Promise<ConversationMessage[]> {
     await this.initialize();
     this.assertIdle("switch session");
     const sessions = await SessionManager.listSessions(this.cwd);
@@ -574,7 +581,7 @@ export class Agent {
     });
     await session.initialize(this.state.model);
     const metadata = await session.getMetadata();
-    if (metadata) {
+    if (metadata && !options.preserveCurrentModel) {
       this.state.model = this.registry.resolve(`${metadata.provider}/${metadata.model}`);
     }
     const messages = await session.loadMessages(branchHeadId);
@@ -1078,6 +1085,7 @@ export class Agent {
       interactionMode: options.interactionMode ?? "default",
       channel: options.channel,
       input: typeof input === "string" ? { text: input } : input,
+      extraTaskContext: options.extraTaskContext,
       channelContext: null,
       channelActionRequirement: undefined,
       channelActionFeedback: undefined,
@@ -1184,6 +1192,7 @@ export class Agent {
     this.emitIfCurrent(context.runId, { type: "assistant-start" });
     const taskContext = [
       this.buildTaskContextForRun(task, todoRecord, context.interactionMode),
+      context.extraTaskContext ?? "",
       turnPlan.prompt,
       this.buildChannelReplyInstructions(channelContext),
       this.buildChannelPlatformContext(channelContext),

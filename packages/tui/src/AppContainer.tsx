@@ -1,6 +1,6 @@
 import { Box, Text, useApp, useStdin } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatContextReportLines, loadAvailableSkills, type Agent } from "@mono/agent-core";
+import { Agent as AgentRuntime, formatContextReportLines, loadAvailableSkills, type Agent } from "@mono/agent-core";
 import {
   catalogModelToUnifiedModel,
   listCatalogModels,
@@ -54,6 +54,16 @@ export interface InteractiveAppProps {
   agent: Agent;
   initialPrompt?: string;
   initialAttachments?: InputImageAttachment[];
+}
+
+interface TelegramChatLane {
+  runKey: string;
+  chatId: string;
+  sourceMessageId: number;
+  goal: string;
+  draftText: string;
+  thinkingText: string;
+  startedAt: number;
 }
 
 const initialUiState: UIState = {
@@ -111,6 +121,34 @@ function formatTransportCandidate(candidate: CatalogTransportCandidate): string 
   return parts.join(" · ");
 }
 
+function buildTelegramContinuationContext(lane: TelegramChatLane | undefined): string {
+  if (!lane) {
+    return "";
+  }
+
+  const lines = [
+    "Channel Handoff Continuation Context:",
+    "- PreviousChatRunStillInProgress: yes",
+    `- PreviousSourceMessageId: ${lane.sourceMessageId}`,
+    `- PreviousTaskGoal: ${lane.goal}`,
+  ];
+  if (lane.draftText.trim()) {
+    lines.push(`- PreviousAssistantDraft: ${truncateTelegramContinuationText(lane.draftText)}`);
+  }
+  if (lane.thinkingText.trim()) {
+    lines.push(`- PreviousAssistantThinking: ${truncateTelegramContinuationText(lane.thinkingText)}`);
+  }
+  return lines.join("\n");
+}
+
+function truncateTelegramContinuationText(text: string, maxChars = 1200): string {
+  const normalized = text.trim().replace(/\s+/gu, " ");
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxChars - 1)}…`;
+}
+
 function normalizeNameSegment(value: string): string {
   return value
     .toLowerCase()
@@ -159,6 +197,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
   const keypressHandlerStackRef = useRef<Array<{ id: number; handler: ForegroundKeypressHandler }>>([]);
   const nextKeypressHandlerIdRef = useRef(0);
   const telegramRuntimeRef = useRef<TelegramControlRuntime | null>(null);
+  const telegramChatLanesRef = useRef(new Map<string, TelegramChatLane[]>());
 
   useEffect(() => {
     uiStateRef.current = uiState;
@@ -488,49 +527,9 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
           ? "warning"
           : event.type === "pairing-approved" || event.type === "config-updated"
             ? "success"
-            : "info";
+          : "info";
     pushToast(level, event.message);
   }, [pushToast]);
-
-  const handleTelegramChatMessage = useCallback(async (request: TelegramChatRequest): Promise<TelegramChatResponse | string | null> => {
-    if (agent.isRunning()) {
-      return "Agent is busy with another task. Try again in a moment.";
-    }
-
-    const senderLabel =
-      request.message.username
-      ? `@${request.message.username}`
-      : request.message.displayName ?? request.message.senderId ?? request.message.chatId;
-    setStatus(`Handling Telegram message from ${senderLabel}`);
-
-    let streamedReply = "";
-    const unsubscribe = request.preview
-      ? agent.subscribe((event) => {
-        if (event.type === "assistant-start") {
-          streamedReply = "";
-          return;
-        }
-        if (event.type === "assistant-text-delta") {
-          streamedReply += event.delta;
-          request.preview?.update(sanitizeTelegramReplyPreview(streamedReply));
-        }
-      })
-      : () => {};
-
-    try {
-      const result = await agent.runTask(request.input, {
-        channel: telegramChatIdToToolExecutionChannel(request.message.chatId),
-        interactionMode: "channel_chat",
-      });
-      return formatTelegramChatResponse(result);
-    } catch (error) {
-      const message = errorMessage(error, "Failed to handle Telegram chat");
-      reportUiError(error, "Failed to handle Telegram chat");
-      return `Request failed: ${message}`;
-    } finally {
-      unsubscribe();
-    }
-  }, [agent, reportUiError, setStatus]);
 
   const requestLocalApproval = useCallback((request: ApprovalRequest) =>
     new Promise<boolean>((resolve) => {
@@ -561,6 +560,89 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
 
     return requestLocalApproval(request);
   }, [requestLocalApproval, setStatus]);
+
+  const createTelegramHandoffAgent = useCallback(async () => {
+    const runtime = telegramRuntimeRef.current;
+    const handoffAgent = new AgentRuntime({
+      cwd: process.cwd(),
+      profile: agent.getProfileName(),
+      requestApproval: handleApprovalRequest,
+    });
+    await handoffAgent.initialize();
+    if (runtime) {
+      handoffAgent.setChannelCapabilityProvider(runtime);
+    }
+    await handoffAgent.switchSession(agent.getSessionId(), undefined, { preserveCurrentModel: true });
+    return handoffAgent;
+  }, [agent, handleApprovalRequest]);
+
+  const handleTelegramChatMessage = useCallback(async (request: TelegramChatRequest): Promise<TelegramChatResponse | string | null> => {
+    const senderLabel =
+      request.message.username
+      ? `@${request.message.username}`
+      : request.message.displayName ?? request.message.senderId ?? request.message.chatId;
+    const chatId = request.message.chatId;
+    const runKey = `${chatId}:${request.message.messageId}:${Date.now()}`;
+    const currentGoal = request.input.text?.trim() || "<media input>";
+    const existingLanes = telegramChatLanesRef.current.get(chatId) ?? [];
+    const previousLane = [...existingLanes]
+      .sort((left, right) => right.startedAt - left.startedAt)
+      .at(0);
+    const currentLane: TelegramChatLane = {
+      runKey,
+      chatId,
+      sourceMessageId: request.message.messageId,
+      goal: currentGoal,
+      draftText: "",
+      thinkingText: "",
+      startedAt: Date.now(),
+    };
+    telegramChatLanesRef.current.set(chatId, [...existingLanes, currentLane]);
+
+    let unsubscribe = () => {};
+
+    try {
+      setStatus(`Handling Telegram message from ${senderLabel}`);
+      const handoffAgent = await createTelegramHandoffAgent();
+      unsubscribe = request.preview
+        ? handoffAgent.subscribe((event) => {
+          if (event.type === "assistant-start") {
+            currentLane.draftText = "";
+            currentLane.thinkingText = "";
+            return;
+          }
+          if (event.type === "assistant-text-delta") {
+            currentLane.draftText += event.delta;
+            request.preview?.update(sanitizeTelegramReplyPreview(currentLane.draftText));
+            return;
+          }
+          if (event.type === "assistant-thinking-delta") {
+            currentLane.thinkingText += event.delta;
+          }
+        })
+        : () => {};
+
+      const result = await handoffAgent.runTask(request.input, {
+        channel: telegramChatIdToToolExecutionChannel(chatId),
+        interactionMode: "channel_chat",
+        extraTaskContext: buildTelegramContinuationContext(previousLane),
+      });
+      return formatTelegramChatResponse(result);
+    } catch (error) {
+      const message = errorMessage(error, "Failed to handle Telegram chat");
+      reportUiError(error, "Failed to handle Telegram chat");
+      return `Request failed: ${message}`;
+    } finally {
+      telegramChatLanesRef.current.set(
+        chatId,
+        (telegramChatLanesRef.current.get(chatId) ?? []).filter((lane) => lane.runKey !== runKey),
+      );
+      if ((telegramChatLanesRef.current.get(chatId)?.length ?? 0) === 0) {
+        telegramChatLanesRef.current.delete(chatId);
+      }
+      unsubscribe();
+    }
+  }, [agent, createTelegramHandoffAgent, reportUiError, setStatus]);
 
   const formatAttachmentStatus = useCallback((attachments: InputImageAttachment[]): string => {
     if (attachments.length === 0) {

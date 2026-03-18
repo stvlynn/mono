@@ -23,6 +23,8 @@ Common Telegram-specific symptoms:
 - Telegram profile save says it succeeded, but the next message fails with missing API key
   - verify the runtime is using the intended profile, not a project-level override
   - verify the profile still exists and was not removed in a concurrent Telegram action
+  - if the failure only appears in Telegram chat handoff clones, inspect whether the shared session metadata header still points at an older model/provider
+  - current handoff clones switch into the shared session with `preserveCurrentModel`, specifically to avoid an old session header overriding the active Telegram profile/model
 
 ## Telegram Button Errors
 

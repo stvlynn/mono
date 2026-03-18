@@ -118,6 +118,11 @@ interface PendingTelegramProfileApply {
   chatId: string;
 }
 
+interface ActiveTelegramTypingHeartbeat {
+  token: symbol;
+  stop: () => void;
+}
+
 export class TelegramControlRuntime implements ChannelCapabilityProvider {
   readonly #cwd: string;
   readonly #onEvent?: (event: TelegramControlEvent) => void;
@@ -138,6 +143,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
   readonly #stickerCache = new Map<string, string[]>();
   readonly #modelConfigWizard: TelegramModelConfigWizard;
   readonly #inFlightChatHandoffs = new Set<Promise<void>>();
+  readonly #typingHeartbeats = new Map<string, ActiveTelegramTypingHeartbeat>();
   #pendingProfileApply?: PendingTelegramProfileApply;
 
   constructor(options: {
@@ -862,6 +868,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     }
 
     const preview = this.#createReplyPreview(message);
+    const stopTypingHeartbeat = this.#startTypingHeartbeat(message.chatId);
     try {
       const inbound = await this.#provider.normalizeIncomingMessage(update);
       if (!inbound) {
@@ -883,12 +890,14 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         return;
       }
 
-      await this.#deliverChatResponse(message.chatId, response, preview);
+      await this.#deliverChatResponse(message.chatId, response, preview, stopTypingHeartbeat);
     } catch (error) {
       await preview?.clear().catch(() => {});
       const formatted = formatTelegramRuntimeError(error);
       this.#emit({ type: "error", message: `Telegram chat handling failed: ${formatted}` });
       await notifier.sendText(message.chatId, `Request failed: ${formatted}`).catch(() => {});
+    } finally {
+      stopTypingHeartbeat();
     }
   }
 
@@ -975,9 +984,18 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     chatId: string,
     response: TelegramChatResponse,
     preview: TelegramDraftPreviewStream | undefined,
+    stopTypingHeartbeat?: () => void,
   ): Promise<void> {
     const messages = this.#selectReplyMessagesForDelivery(response.messages);
     const [firstMessage, ...remainingMessages] = messages;
+    let heartbeatStopped = false;
+    const stopHeartbeatOnce = () => {
+      if (heartbeatStopped) {
+        return;
+      }
+      heartbeatStopped = true;
+      stopTypingHeartbeat?.();
+    };
 
     if (firstMessage) {
       const materialized = await preview?.materialize(firstMessage.text);
@@ -985,6 +1003,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         await this.#sendChatMessage(chatId, firstMessage);
         await preview?.clear();
       }
+      stopHeartbeatOnce();
 
       for (const message of remainingMessages) {
         await this.#sendTypingAction(chatId);
@@ -997,6 +1016,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
 
     if (response.sticker?.fileId || response.sticker?.emoji) {
       await this.#sendSticker(chatId, response.sticker);
+      stopHeartbeatOnce();
     }
   }
 
@@ -1395,6 +1415,60 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         fileId,
       },
     });
+  }
+
+  #startTypingHeartbeat(chatId: string): () => void {
+    const token = Symbol(chatId);
+    this.#typingHeartbeats.get(chatId)?.stop();
+
+    let stopped = false;
+    let timer: NodeJS.Timeout | undefined;
+    let consecutiveFailures = 0;
+
+    const schedule = (delayMs: number) => {
+      if (stopped) {
+        return;
+      }
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => {
+        void tick();
+      }, delayMs);
+    };
+
+    const stop = () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (this.#typingHeartbeats.get(chatId)?.token === token) {
+        this.#typingHeartbeats.delete(chatId);
+      }
+    };
+
+    const tick = async () => {
+      if (stopped || this.#typingHeartbeats.get(chatId)?.token !== token) {
+        return;
+      }
+
+      try {
+        await this.#callTelegram("sendChatAction", {
+          chat_id: chatId,
+          action: "typing",
+        });
+        consecutiveFailures = 0;
+        schedule(4000);
+      } catch {
+        consecutiveFailures += 1;
+        schedule(Math.min(30000, 4000 * Math.max(1, consecutiveFailures)));
+      }
+    };
+
+    this.#typingHeartbeats.set(chatId, { token, stop });
+    void tick();
+    return stop;
   }
 
   async #sendTypingAction(chatId: string): Promise<void> {

@@ -442,22 +442,195 @@ function coerceToolArguments(input: unknown): Record<string, unknown> {
   return {};
 }
 
+const REASONING_WRAPPER_TAGS = ["think", "thinking", "reasoning", "analysis"] as const;
+
+function findEarliestReasoningOpenTag(text: string): { index: number; tag: string; token: string } | undefined {
+  let match: { index: number; tag: string; token: string } | undefined;
+
+  for (const tag of REASONING_WRAPPER_TAGS) {
+    const token = `<${tag}>`;
+    const index = text.indexOf(token);
+    if (index < 0) {
+      continue;
+    }
+    if (!match || index < match.index) {
+      match = { index, tag, token };
+    }
+  }
+
+  return match;
+}
+
+function longestSuffixThatCouldStartToken(text: string, token: string): string {
+  const maxLength = Math.min(text.length, token.length - 1);
+  for (let length = maxLength; length > 0; length -= 1) {
+    const suffix = text.slice(-length);
+    if (token.startsWith(suffix)) {
+      return suffix;
+    }
+  }
+  return "";
+}
+
+function longestSuffixThatCouldStartAnyReasoningOpenTag(text: string): string {
+  let best = "";
+  for (const tag of REASONING_WRAPPER_TAGS) {
+    const candidate = longestSuffixThatCouldStartToken(text, `<${tag}>`);
+    if (candidate.length > best.length) {
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function extractReasoningWrappedSegments(text: string): Array<{ type: "text" | "thinking"; text: string }> {
+  const segments: Array<{ type: "text" | "thinking"; text: string }> = [];
+  let remaining = text;
+
+  const push = (type: "text" | "thinking", value: string) => {
+    if (!value) {
+      return;
+    }
+    const previous = segments.at(-1);
+    if (previous?.type === type) {
+      previous.text += value;
+      return;
+    }
+    segments.push({ type, text: value });
+  };
+
+  while (remaining.length > 0) {
+    const open = findEarliestReasoningOpenTag(remaining);
+    if (!open) {
+      push("text", remaining);
+      break;
+    }
+
+    push("text", remaining.slice(0, open.index));
+    const afterOpen = remaining.slice(open.index + open.token.length);
+    const closeToken = `</${open.tag}>`;
+    const closeIndex = afterOpen.indexOf(closeToken);
+    if (closeIndex < 0) {
+      push("thinking", afterOpen);
+      break;
+    }
+
+    push("thinking", afterOpen.slice(0, closeIndex));
+    remaining = afterOpen.slice(closeIndex + closeToken.length);
+  }
+
+  return segments;
+}
+
+function createReasoningWrapperStreamParser() {
+  let mode: "text" | "thinking" = "text";
+  let activeTag: string | undefined;
+  let pending = "";
+
+  return {
+    push(chunk: string): { textDelta: string; thinkingDelta: string } {
+      let input = pending + chunk;
+      let textDelta = "";
+      let thinkingDelta = "";
+      pending = "";
+
+      while (input.length > 0) {
+        if (mode === "text") {
+          const open = findEarliestReasoningOpenTag(input);
+          if (open) {
+            textDelta += input.slice(0, open.index);
+            input = input.slice(open.index + open.token.length);
+            mode = "thinking";
+            activeTag = open.tag;
+            continue;
+          }
+
+          const partial = longestSuffixThatCouldStartAnyReasoningOpenTag(input);
+          textDelta += input.slice(0, input.length - partial.length);
+          pending = partial;
+          input = "";
+          continue;
+        }
+
+        const closeToken = `</${activeTag}>`;
+        const closeIndex = input.indexOf(closeToken);
+        if (closeIndex >= 0) {
+          thinkingDelta += input.slice(0, closeIndex);
+          input = input.slice(closeIndex + closeToken.length);
+          mode = "text";
+          activeTag = undefined;
+          continue;
+        }
+
+        const partial = longestSuffixThatCouldStartToken(input, closeToken);
+        thinkingDelta += input.slice(0, input.length - partial.length);
+        pending = partial;
+        input = "";
+      }
+
+      return { textDelta, thinkingDelta };
+    },
+    finish(): { textDelta: string; thinkingDelta: string } {
+      if (!pending) {
+        return { textDelta: "", thinkingDelta: "" };
+      }
+
+      if (mode === "text") {
+        const textDelta = pending;
+        pending = "";
+        return { textDelta, thinkingDelta: "" };
+      }
+
+      pending = "";
+      return { textDelta: "", thinkingDelta: "" };
+    },
+  };
+}
+
 function stepToAssistantMessage<TOOLS extends Record<string, AiTool>>(options: LlmRunOptions, step: StepResult<TOOLS>): AssistantMessage {
   const content: AssistantMessage["content"] = [];
+  const seenThinking = new Set<string>();
+
+  const pushAssistantPart = (part: AssistantMessage["content"][number]) => {
+    if (part.type === "thinking") {
+      const key = part.thinking.trim();
+      if (!key || seenThinking.has(key)) {
+        return;
+      }
+      seenThinking.add(key);
+    }
+
+    const previous = content.at(-1);
+    if (previous?.type === "text" && part.type === "text") {
+      previous.text += part.text;
+      return;
+    }
+    if (previous?.type === "thinking" && part.type === "thinking") {
+      previous.thinking += part.thinking;
+      return;
+    }
+    content.push(part);
+  };
 
   for (const part of step.content) {
     if (part.type === "reasoning" && part.text) {
-      content.push({ type: "thinking", thinking: part.text });
+      pushAssistantPart({ type: "thinking", thinking: part.text });
       continue;
     }
 
     if (part.type === "text" && part.text) {
-      content.push({ type: "text", text: part.text });
+      for (const segment of extractReasoningWrappedSegments(part.text)) {
+        if (segment.type === "thinking") {
+          pushAssistantPart({ type: "thinking", thinking: segment.text });
+        } else {
+          pushAssistantPart({ type: "text", text: segment.text });
+        }
+      }
       continue;
     }
 
     if (part.type === "tool-call") {
-      content.push({
+      pushAssistantPart({
         type: "tool-call",
         id: part.toolCallId,
         name: part.toolName,
@@ -506,6 +679,7 @@ function stepToToolMessages<TOOLS extends Record<string, AiTool>>(
 export async function runAiSdkConversation(options: LlmRunOptions): Promise<ConversationMessage[]> {
   const { toolResultMap, tools } = buildTools(options);
   const providerOptions = createProviderOptions(options.model, options.thinkingLevel);
+  const wrapperParser = createReasoningWrapperStreamParser();
   let streamError: unknown;
 
   const result = streamText({
@@ -521,7 +695,13 @@ export async function runAiSdkConversation(options: LlmRunOptions): Promise<Conv
     },
     onChunk: ({ chunk }) => {
       if (chunk.type === "text-delta") {
-        options.emit({ type: "assistant-text-delta", delta: chunk.text });
+        const parsed = wrapperParser.push(chunk.text);
+        if (parsed.textDelta) {
+          options.emit({ type: "assistant-text-delta", delta: parsed.textDelta });
+        }
+        if (parsed.thinkingDelta) {
+          options.emit({ type: "assistant-thinking-delta", delta: parsed.thinkingDelta });
+        }
         return;
       }
 
@@ -539,6 +719,14 @@ export async function runAiSdkConversation(options: LlmRunOptions): Promise<Conv
       throw normalizeStreamError(streamError);
     }
     throw error;
+  }
+
+  const trailing = wrapperParser.finish();
+  if (trailing.textDelta) {
+    options.emit({ type: "assistant-text-delta", delta: trailing.textDelta });
+  }
+  if (trailing.thinkingDelta) {
+    options.emit({ type: "assistant-thinking-delta", delta: trailing.thinkingDelta });
   }
 
   const output: ConversationMessage[] = [];

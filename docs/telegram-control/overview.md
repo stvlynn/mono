@@ -145,6 +145,9 @@ Agent tool behavior:
 - Telegram DM runs can expose the generic `channel_store` tool for listing, searching, or persisting reusable sticker sources
 - Telegram chat handoff runs in a dedicated `channel_chat` interaction mode rather than the normal coding-task mode
 - `channel_chat` turns do not expose coding tools or `write_todos`; they reply in-channel and use `channel_action` / `channel_store` when needed
+- Telegram chat handoff now runs through short-lived handoff agent instances instead of borrowing the main TUI agent run slot
+- those handoff agents still switch into the current shared session rather than creating per-chat sessions
+- handoff session switches use `preserveCurrentModel` so an older shared-session metadata header cannot override the active Telegram profile/model
 - current-turn sticker metadata is injected as structured context from `TaskInput.metadata.telegram`, including `chatId`, `fileId`, `fileUniqueId`, `emoji`, and `setName`
 - recent-history sticker recovery is scoped to the active Telegram chat id, so stickers do not bleed across chats handled by the same TUI process
 - Telegram runtime keeps a global sticker search cache under `~/.mono/state/telegram/sticker-cache.json`, keyed by `fileId` / `fileUniqueId` / `setName`
@@ -309,13 +312,18 @@ Per-message behavior:
   - the reply includes the current group chat id and whether the group is already configured
 - for authorized chat handoff:
   - model-menu traffic runs before normal chat handoff
-  - the TUI calls the agent with `interactionMode: "channel_chat"` so Telegram chat replies stay in the channel-action path instead of the coding-task path
+  - the TUI creates a handoff-specific agent instance and calls it with `interactionMode: "channel_chat"`
+  - handoff agents switch into the current shared session id so Telegram chat turns stay inside the same repository session history as the TUI
+  - session switches for handoff use `preserveCurrentModel` so the shared session metadata does not silently replace the active Telegram profile/model
   - the runtime forwards Telegram channel context into the agent permission policy
   - allowlisted chats can run protected tools without approval prompts
   - authorized private chats inherit the same approval bypass through config `allowFrom` and stored pairing approvals
+  - handoffs can run in parallel; the runtime no longer rejects a new chat message just because another handoff is still running
+  - when the same chat sends a new message before the previous reply has finished, the TUI injects a `Channel Handoff Continuation Context` block containing the latest unfinished draft/thinking summary for that chat
   - private chats can preview streamed answer text through Bot API `sendMessageDraft`
   - the first reply segment can be materialized from the draft preview when generation completes
-  - the runtime can deliver one Telegram turn as multiple text messages with `typing` between segments
+  - the runtime starts `typing` as soon as a chat handoff begins and keeps it alive during generation with a lightweight heartbeat
+  - the runtime can still deliver one Telegram turn as multiple text messages with `typing` between later segments
   - the runtime can append one configured sticker after the text reply when the model emits a Telegram sticker tag
   - sticker-only replies are allowed; if the assistant emits only a valid sticker tag or file-id tag, the runtime sends just the sticker and does not add fallback text
   - for freshly received Telegram stickers, the normalized task input includes structured metadata under `metadata.telegram`
@@ -324,6 +332,7 @@ Per-message behavior:
     - the current sticker `fileId`
     - the project-local JSON store (`mono.channels.telegram.reply.stickers.storePath`)
     - the global Telegram sticker search cache
+  - reasoning/thinking content is separated from visible assistant text before the final reply is assembled, so `<think>`-style wrapper content does not leak into Telegram messages
   - the default store path is `.mono/telegram/stickers.json`
   - each store pack can either point at a Telegram sticker set or embed concrete `emoji -> fileId` entries that the agent can edit later
   - when the user asks for another sticker from the same set, the preferred flow is:
@@ -343,6 +352,7 @@ Current behavior:
 - runtime start is attempted on app mount
 - runtime notifications are surfaced as TUI toasts and status messages
 - the TUI registers the Telegram runtime as a channel capability provider backing the generic `channel_action` and `channel_store` tools
+- Telegram chat handoff now uses short-lived parallel handoff agents that switch into the current shared session instead of reusing the main interactive run slot
 - pair and Telegram slash commands execute shared service helpers and open info dialogs with the result
 - slash commands that change Telegram runtime config request a runtime reload
 - the Telegram runtime receives `listConfiguredProfiles`, `applyProfile`, and busy-state callbacks from the TUI container

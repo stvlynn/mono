@@ -41,6 +41,35 @@ describe("session manager", () => {
     expect(messages[1].role).toBe("assistant");
   });
 
+  it("serializes concurrent appends against the same session file", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
+    const sessionsDir = join(cwd, ".sessions");
+    const first = new SessionManager({ cwd, sessionsDir, sessionId: "shared-session" });
+    const second = new SessionManager({ cwd, sessionsDir, sessionId: "shared-session" });
+    await first.initialize(model);
+    await second.initialize(model);
+
+    await Promise.all([
+      first.appendMessage({
+        role: "user",
+        content: "from first",
+        timestamp: Date.now(),
+      }),
+      second.appendMessage({
+        role: "user",
+        content: "from second",
+        timestamp: Date.now() + 1,
+      }),
+    ]);
+
+    const messages = await first.loadMessages();
+    expect(messages).toHaveLength(2);
+    expect(messages.map((message) => message.role)).toEqual(["user", "user"]);
+    expect(messages
+      .map((message) => typeof message.content === "string" ? message.content : "[parts]")
+      .sort()).toEqual(["from first", "from second"]);
+  });
+
   it("persists user message metadata so channel history can recover native resources", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
     const sessionsDir = join(cwd, ".sessions");

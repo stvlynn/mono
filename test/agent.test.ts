@@ -1026,6 +1026,69 @@ describe("Agent", () => {
     delete process.env.MONO_CONFIG_DIR;
   });
 
+  it("can switch to a shared session without replacing the current model", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-preserve-model-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    const configDir = await createAgentConfig(rootDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    await writeFile(
+      join(configDir, "config.json"),
+      JSON.stringify({
+        version: 1,
+        mono: {
+          defaultProfile: "telegram-shared",
+          profiles: {
+            "telegram-shared": {
+              provider: "openai",
+              modelId: "MiniMax-M2.7-highspeed",
+              baseURL: "https://api.minimaxi.com/v1",
+              family: "openai-compatible",
+              transport: "openai-compatible",
+              providerFactory: "custom",
+              apiKeyRef: "local:telegram-shared",
+              supportsTools: true,
+              supportsReasoning: true,
+              supportsAttachments: true,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const { SessionManager } = await import("../packages/session/src/index.js");
+    const agent = new Agent({ cwd, profile: "telegram-shared" });
+    await agent.initialize();
+
+    const currentSession = agent.getSessionId();
+    const otherSession = new SessionManager({
+      cwd,
+      sessionsDir: SessionManager.rootDirFromSessionFile((agent as unknown as { state: { session: { filePath: string } } }).state.session.filePath),
+      sessionId: "telegram-shared-session",
+    });
+    await otherSession.initialize({
+      provider: "openai",
+      modelId: "gpt-5.4",
+      family: "openai-compatible",
+      baseURL: "https://api.openai.com/v1",
+      supportsTools: true,
+      supportsReasoning: true,
+    } as never);
+
+    expect(agent.getCurrentModel().modelId).toBe("MiniMax-M2.7-highspeed");
+
+    await agent.switchSession(otherSession.sessionId, undefined, { preserveCurrentModel: true });
+
+    expect(agent.getSessionId()).toBe(otherSession.sessionId);
+    expect(agent.getCurrentModel().modelId).toBe("MiniMax-M2.7-highspeed");
+    expect(agent.getSessionId()).not.toBe(currentSession);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
   it("lists configured profiles with resolved model metadata", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-profiles-"));
     const cwd = join(rootDir, "workspace");
