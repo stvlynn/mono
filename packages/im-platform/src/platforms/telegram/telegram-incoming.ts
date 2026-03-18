@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { createInputImageAttachment, guessImageMimeTypeFromPath, type UserInputOrigin } from "@mono/shared";
+import type { TaskInputPlatformMetadata } from "@mono/shared";
 import type { DispatchTarget, InboundAction, InboundMessage, InboundMessageSender } from "../../types.js";
 import { TelegramBotApiClient } from "./telegram-bot-api-client.js";
 
@@ -99,6 +100,7 @@ export async function normalizeTelegramIncomingMessage(options: {
     target: resolveTarget(message),
     text,
     attachments,
+    metadata: resolveIncomingMetadata(message),
     raw: options.payload,
   };
 }
@@ -234,6 +236,25 @@ async function downloadIncomingAttachment(
     sourceLabel: options.sourceLabel || basename(file.file_path),
     origin: options.origin,
   });
+}
+
+function resolveIncomingMetadata(message: TelegramIncomingMessage): TaskInputPlatformMetadata | undefined {
+  const sticker = message.sticker;
+  if (!sticker?.file_id || sticker.is_animated || sticker.is_video) {
+    return undefined;
+  }
+
+  return {
+    telegram: {
+      chatId: String(message.chat.id),
+      sticker: {
+        fileId: sticker.file_id,
+        fileUniqueId: sticker.file_unique_id,
+        emoji: sticker.emoji,
+        setName: sticker.set_name,
+      },
+    },
+  };
 }
 
 function resolveSender(message: TelegramIncomingMessage): InboundMessageSender {

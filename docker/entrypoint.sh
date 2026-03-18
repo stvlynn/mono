@@ -115,4 +115,47 @@ fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
   fi
 fi
 
-exec node /app/packages/cli/dist/bin.js "$@"
+APP_ROOT="/app"
+WORKSPACE_ROOT="/workspace"
+
+if [[ -f "$WORKSPACE_ROOT/package.json" && -f "$WORKSPACE_ROOT/packages/cli/src/bin.ts" ]]; then
+  if [[ ! -e "$WORKSPACE_ROOT/node_modules" ]]; then
+    ln -s "$APP_ROOT/node_modules" "$WORKSPACE_ROOT/node_modules"
+  fi
+
+  node - "$WORKSPACE_ROOT" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const root = process.argv[2];
+const packagesDir = path.join(root, "packages");
+const monoDir = path.join(root, "node_modules", "@mono");
+fs.mkdirSync(monoDir, { recursive: true });
+
+for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const packageDir = path.join(packagesDir, entry.name);
+  const packageJsonPath = path.join(packageDir, "package.json");
+  if (!fs.existsSync(packageJsonPath)) continue;
+
+  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  if (typeof pkg.name !== "string" || !pkg.name.startsWith("@mono/")) continue;
+
+  const packageName = pkg.name.slice("@mono/".length);
+  const linkPath = path.join(monoDir, packageName);
+  try {
+    const existing = fs.lstatSync(linkPath);
+    if (existing.isSymbolicLink() || existing.isDirectory() || existing.isFile()) {
+      fs.rmSync(linkPath, { recursive: true, force: true });
+    }
+  } catch {}
+  fs.symlinkSync(packageDir, linkPath, "dir");
+}
+NODE
+
+  export PATH="$APP_ROOT/node_modules/.bin:$PATH"
+  cd "$WORKSPACE_ROOT"
+  exec tsx packages/cli/src/bin.ts "$@"
+fi
+
+exec node "$APP_ROOT/packages/cli/dist/bin.js" "$@"

@@ -5,6 +5,11 @@
       "source": "sickn33/antigravity-awesome-skills",
       "sourceType": "github",
       "computedHash": "5d0e3b753d051d24e4688497947e5c018b54a889559ce50f61bb329c1d1e1848"
+    },
+    "mcp-deepwiki": {
+      "source": "aahl/skills",
+      "sourceType": "github",
+      "computedHash": "315ada9e37b494aa7aef44ba0a80d859c4105a9a030c6988fae205853a8230c5"
     }
   }
 }

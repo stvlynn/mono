@@ -200,9 +200,11 @@ If `.env` also sets `MONO_TELEGRAM_ENABLED=1` and `MONO_TELEGRAM_BOT_TOKEN`, the
 ### One-shot commands
 
 ```bash
-docker compose run --rm mono "node /app/packages/cli/dist/bin.js --help"
-docker compose run --rm mono "node /app/packages/cli/dist/bin.js --print hello"
+docker compose run --rm mono --help
+docker compose run --rm mono --print hello
 ```
+
+In the default compose setup, the container runs the mounted `/workspace` source tree through `tsx`, so repository code changes take effect after `docker compose restart` without rebuilding the image.
 
 ### Interactive attach
 

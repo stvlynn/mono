@@ -118,4 +118,83 @@ describe("tool permission policy", () => {
       channel: telegramDmChannel,
     }))).toEqual({ type: "allow" });
   });
+
+  it("allows channel_action send and sticker on the current allowlisted chat", () => {
+    const policy = new DefaultPermissionPolicy({
+      allowlistedChannels: [telegramDmChannel],
+    });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_action",
+      input: { channel: "telegram", action: "send", targetId: "123456" },
+      channel: telegramDmChannel,
+    }))).toEqual({ type: "allow" });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_action",
+      input: { channel: "telegram", action: "sticker", targetId: "123456" },
+      channel: telegramDmChannel,
+    }))).toEqual({ type: "allow" });
+  });
+
+  it("asks before channel_action edit/delete or cross-target sends", () => {
+    const policy = new DefaultPermissionPolicy({
+      allowlistedChannels: [telegramDmChannel],
+    });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_action",
+      input: { channel: "telegram", action: "edit", messageId: 12, targetId: "123456" },
+      channel: telegramDmChannel,
+    }))).toEqual({
+      type: "ask",
+      reason: "channel_action edit requires confirmation",
+    });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_action",
+      input: { channel: "telegram", action: "send", targetId: "999999" },
+      channel: telegramDmChannel,
+    }))).toEqual({
+      type: "ask",
+      reason: "channel_action targeting another conversation requires confirmation",
+    });
+  });
+
+  it("allows channel_store list/search but asks for upsert", () => {
+    const policy = new DefaultPermissionPolicy({
+      allowlistedChannels: [telegramDmChannel],
+    });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_store",
+      input: { channel: "telegram", resource: "sticker_source", action: "list" },
+      channel: telegramDmChannel,
+    }))).toEqual({ type: "allow" });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_store",
+      input: {
+        channel: "telegram",
+        resource: "sticker_source",
+        action: "search",
+        entry: { setName: "CatsPack", excludeFileId: "CAAC123" },
+      },
+      channel: telegramDmChannel,
+    }))).toEqual({ type: "allow" });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "channel_store",
+      input: {
+        channel: "telegram",
+        resource: "sticker_source",
+        action: "upsert",
+        entry: { packId: "default", emoji: "🙂", fileId: "CAAC123" },
+      },
+      channel: telegramDmChannel,
+    }))).toEqual({
+      type: "ask",
+      reason: "channel_store upsert requires confirmation",
+    });
+  });
 });

@@ -41,6 +41,14 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
       return allowDecision();
     }
 
+    if (isChannelActionPermissionRequest(request)) {
+      return this.evaluateChannelActionRequest(request);
+    }
+
+    if (isChannelStorePermissionRequest(request)) {
+      return this.evaluateChannelStoreRequest(request);
+    }
+
     if (isBashPermissionRequest(request)) {
       return this.evaluateBashRequest(request);
     }
@@ -97,6 +105,45 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
     }
 
     return null;
+  }
+
+  private evaluateChannelActionRequest(
+    request: PermissionRequest & { toolName: "channel_action"; input: object },
+  ): PermissionDecision {
+    const input = request.input as {
+      action?: string;
+      targetId?: string;
+      channel?: string;
+    };
+    const action = String(input.action ?? "").trim().toLowerCase();
+    const targetId = typeof input.targetId === "string" ? input.targetId.trim() : "";
+    const currentTargetId = request.channel?.id ?? "";
+
+    if (!this.isAllowlistedChannel(request.channel)) {
+      return askDecision("channel_action requires confirmation by default");
+    }
+
+    if (targetId && currentTargetId && targetId !== currentTargetId) {
+      return askDecision("channel_action targeting another conversation requires confirmation");
+    }
+
+    if (action === "edit" || action === "delete") {
+      return askDecision(`channel_action ${action} requires confirmation`);
+    }
+
+    return allowDecision();
+  }
+
+  private evaluateChannelStoreRequest(
+    request: PermissionRequest & { toolName: "channel_store"; input: object },
+  ): PermissionDecision {
+    const input = request.input as { action?: string };
+    const action = String(input.action ?? "").trim().toLowerCase();
+    if (action === "list" || action === "search") {
+      return allowDecision();
+    }
+
+    return askDecision(`channel_store ${action || "upsert"} requires confirmation`);
   }
 }
 
@@ -156,6 +203,18 @@ function matchesSensitiveCommand(command: string): boolean {
 
 function isBashPermissionRequest(request: PermissionRequest): request is PermissionRequest & { toolName: "bash"; input: object } {
   return request.toolName === "bash" && typeof request.input === "object" && request.input !== null;
+}
+
+function isChannelActionPermissionRequest(
+  request: PermissionRequest,
+): request is PermissionRequest & { toolName: "channel_action"; input: object } {
+  return request.toolName === "channel_action" && typeof request.input === "object" && request.input !== null;
+}
+
+function isChannelStorePermissionRequest(
+  request: PermissionRequest,
+): request is PermissionRequest & { toolName: "channel_store"; input: object } {
+  return request.toolName === "channel_store" && typeof request.input === "object" && request.input !== null;
 }
 
 function getNormalizedBashCommand(input: object): string {

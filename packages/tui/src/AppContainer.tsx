@@ -14,6 +14,7 @@ import {
   executePairCommand,
   executeTelegramCommand,
   type TelegramChatRequest,
+  type TelegramChatResponse,
   TelegramControlRuntime,
   type TelegramControlEvent,
 } from "@mono/telegram-control";
@@ -41,7 +42,7 @@ import { useRepeatedKeyPress } from "./hooks/useRepeatedKeyPress.js";
 import { useTuiShutdown } from "./hooks/useTuiShutdown.js";
 import { useSlashCommands } from "./hooks/useSlashCommands.js";
 import { createConfiguredProfileItems, createMemoryItems, createSessionItems, createSkillItems, createTreeItems } from "./selector-items.js";
-import { formatTelegramChatReply } from "./telegram-chat-reply.js";
+import { formatTelegramChatResponse, sanitizeTelegramReplyPreview } from "./telegram-chat-reply.js";
 import { FatalScreen } from "./components/FatalScreen.js";
 import { TuiErrorBoundary } from "./components/TuiErrorBoundary.js";
 import { isRecoverableRuntimeError } from "./error-classification.js";
@@ -491,7 +492,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     pushToast(level, event.message);
   }, [pushToast]);
 
-  const handleTelegramChatMessage = useCallback(async (request: TelegramChatRequest): Promise<string | null> => {
+  const handleTelegramChatMessage = useCallback(async (request: TelegramChatRequest): Promise<TelegramChatResponse | string | null> => {
     if (agent.isRunning()) {
       return "Agent is busy with another task. Try again in a moment.";
     }
@@ -511,7 +512,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
         }
         if (event.type === "assistant-text-delta") {
           streamedReply += event.delta;
-          request.preview?.update(streamedReply);
+          request.preview?.update(sanitizeTelegramReplyPreview(streamedReply));
         }
       })
       : () => {};
@@ -519,8 +520,9 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     try {
       const result = await agent.runTask(request.input, {
         channel: telegramChatIdToToolExecutionChannel(request.message.chatId),
+        interactionMode: "channel_chat",
       });
-      return formatTelegramChatReply(result);
+      return formatTelegramChatResponse(result);
     } catch (error) {
       const message = errorMessage(error, "Failed to handle Telegram chat");
       reportUiError(error, "Failed to handle Telegram chat");
@@ -1211,12 +1213,14 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       },
       isAgentBusy: () => agent.isRunning(),
     });
+    agent.setChannelCapabilityProvider(runtime);
     telegramRuntimeRef.current = runtime;
     void runtime.start().catch((error) => {
       reportUiError(error, "Failed to start Telegram runtime");
     });
 
     return () => {
+      agent.setChannelCapabilityProvider(undefined);
       telegramRuntimeRef.current = null;
       void runtime.stop();
     };

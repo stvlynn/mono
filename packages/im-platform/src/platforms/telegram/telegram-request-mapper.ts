@@ -60,6 +60,16 @@ export function mapTelegramDispatchRequest(context: TelegramDispatchContext): Te
           replyMarkup,
         ),
       ];
+    case "sticker":
+      return [{
+        method: "sendSticker",
+        body: {
+          ...targetParams,
+          ...optionFields,
+          sticker: context.content.fileId,
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+        },
+      }];
     case "media-group":
       return [mapMediaGroupOperation(context.content.items, targetParams, optionFields, context.defaultTextFormat)];
   }

@@ -75,7 +75,8 @@ describe("tui app bootstrap", () => {
 
     expect(appContainer).toContain("request.preview");
     expect(appContainer).toContain('event.type === "assistant-text-delta"');
-    expect(appContainer).toContain("request.preview?.update(streamedReply)");
+    expect(appContainer).toContain("sanitizeTelegramReplyPreview(streamedReply)");
+    expect(appContainer).toContain('interactionMode: "channel_chat"');
   });
 
   it("refreshes the registry before Telegram profile listing and apply", () => {
@@ -83,6 +84,7 @@ describe("tui app bootstrap", () => {
 
     expect(appContainer).toContain("applyProfile: async (profileName) => {\n        await agent.refreshRegistry();");
     expect(appContainer).toContain("listConfiguredProfiles: async () => {\n        await agent.refreshRegistry();");
+    expect(appContainer).toContain("agent.setChannelCapabilityProvider(runtime)");
     expect(appContainer).toContain("setTimeout(() => {\n          void telegramRuntimeRef.current?.flushPendingProfileApplication();\n        }, 0);");
   });
 

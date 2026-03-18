@@ -1,7 +1,10 @@
 import type {
+  MonoTelegramActionsConfig,
   MonoTelegramApprovalConfig,
   MonoTelegramConfig,
   MonoTelegramGroupConfig,
+  MonoTelegramReplyConfig,
+  MonoTelegramReplyStickersConfig,
   ToolExecutionChannel,
 } from "./types.js";
 
@@ -89,6 +92,28 @@ export function normalizeTelegramApprovalConfig(
   };
 }
 
+export function normalizeTelegramActionsConfig(
+  actions: Partial<MonoTelegramActionsConfig> | undefined,
+): MonoTelegramActionsConfig {
+  return {
+    send: actions?.send ?? true,
+    sticker: actions?.sticker ?? true,
+    edit: actions?.edit ?? true,
+    delete: actions?.delete ?? true,
+    react: actions?.react ?? true,
+  };
+}
+
+export function normalizeTelegramReplyConfig(
+  reply: Partial<MonoTelegramReplyConfig> | undefined,
+): MonoTelegramReplyConfig {
+  return {
+    multiMessage: reply?.multiMessage ?? true,
+    splitDelayMs: normalizePositiveInteger(reply?.splitDelayMs, 800),
+    stickers: normalizeTelegramReplyStickersConfig(reply?.stickers),
+  };
+}
+
 export function mergeTelegramAllowFrom(
   config: MonoTelegramConfig,
   storeAllowFrom: ReadonlyArray<string>,
@@ -168,4 +193,27 @@ function normalizeCommandPatterns(values: ReadonlyArray<string> | undefined): st
   }
 
   return normalized;
+}
+
+function normalizeTelegramReplyStickersConfig(
+  stickers: Partial<MonoTelegramReplyStickersConfig> | undefined,
+): MonoTelegramReplyStickersConfig {
+  return {
+    enabled: stickers?.enabled ?? true,
+    storePath: normalizeTelegramStickerStorePath(stickers?.storePath),
+  };
+}
+
+function normalizeTelegramStickerStorePath(value: string | undefined): string {
+  const normalized = value?.trim();
+  return normalized || ".mono/telegram/stickers.json";
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : fallback;
 }

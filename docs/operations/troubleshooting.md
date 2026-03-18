@@ -14,7 +14,7 @@ Checks:
 - provider env vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MOONSHOT_API_KEY`
 - verify whether the active profile uses `apiKeyRef` and that `~/.mono/local/secrets.json` contains the expected profile entry
 - when running in Docker, verify from inside the container:
-  - `node /app/packages/cli/dist/bin.js auth status`
+  - `docker compose exec -T mono -- auth status`
 - check whether `.mono/config.json` in the project overrides the global default profile
 - blank env vars such as `MONO_API_KEY=` should be treated as unset; if a container or wrapper injects empty strings, re-check the resolved `API key source`
 

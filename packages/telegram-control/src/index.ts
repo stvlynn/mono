@@ -6,5 +6,6 @@ export * from "./inbound.js";
 export * from "./model-config.js";
 export * from "./outbound.js";
 export * from "./pairing-store.js";
+export * from "./sticker-store.js";
 export * from "./draft-stream.js";
 export * from "./runtime.js";

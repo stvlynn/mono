@@ -1,9 +1,9 @@
-import type { InputImageAttachment, TaskInput } from "@mono/shared";
+import type { InputImageAttachment, TaskInput, TaskInputPlatformMetadata } from "@mono/shared";
 
 export type DispatchTargetKind = "channel" | "dm";
 export type DispatchTextFormat = "plain" | "markdown" | "html";
 export type DispatchDeliveryMode = "immediate" | "native-draft";
-export type DispatchContentType = "text" | "photo" | "video" | "document" | "media-group";
+export type DispatchContentType = "text" | "photo" | "video" | "document" | "sticker" | "media-group";
 export type DispatchActionStyle = "default" | "primary" | "danger";
 
 export interface DispatchBinaryFile {
@@ -64,6 +64,11 @@ export interface DocumentDispatchContent {
   format?: DispatchTextFormat;
 }
 
+export interface StickerDispatchContent {
+  type: "sticker";
+  fileId: string;
+}
+
 export interface MediaGroupDispatchItem {
   type: "photo" | "video" | "document";
   source: DispatchMediaSource;
@@ -82,6 +87,7 @@ export type DispatchContent =
   | PhotoDispatchContent
   | VideoDispatchContent
   | DocumentDispatchContent
+  | StickerDispatchContent
   | MediaGroupDispatchContent;
 
 export interface DispatchRequest {
@@ -112,6 +118,7 @@ export interface InboundMessage {
   target: DispatchTarget;
   text: string;
   attachments: InputImageAttachment[];
+  metadata?: TaskInputPlatformMetadata;
   raw?: unknown;
 }
 
@@ -140,5 +147,6 @@ export function inboundMessageToTaskInput(message: InboundMessage): TaskInput {
   return {
     text: message.text,
     attachments: message.attachments,
+    ...(message.metadata ? { metadata: message.metadata } : {}),
   };
 }

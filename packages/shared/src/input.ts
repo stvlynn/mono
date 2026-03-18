@@ -35,6 +35,7 @@ export function normalizeTaskInput(input: string | TaskInput): TaskInput {
   return {
     text: input.text,
     attachments: input.attachments?.slice() ?? [],
+    metadata: input.metadata,
   };
 }
 
@@ -53,6 +54,7 @@ export function taskInputToUserMessage(input: string | TaskInput, timestamp = Da
       role: "user",
       content: text,
       timestamp,
+      ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
     };
   }
 
@@ -66,6 +68,7 @@ export function taskInputToUserMessage(input: string | TaskInput, timestamp = Da
     role: "user",
     content,
     timestamp,
+    ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
   };
 }
 

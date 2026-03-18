@@ -39,6 +39,14 @@ function createResolvedConfig(): ResolvedMonoConfig {
           allowChats: [],
           commandDenylist: [],
         },
+        reply: {
+          multiMessage: true,
+          splitDelayMs: 800,
+          stickers: {
+            enabled: true,
+            storePath: ".mono/telegram/stickers.json",
+          },
+        },
         dmPolicy: "pairing",
         pollingTimeoutSeconds: 20,
       },

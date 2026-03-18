@@ -22,7 +22,7 @@ export function prepareTelegramTextChunks(
   fallback: DispatchTextFormat | undefined,
 ): PreparedTelegramText[] {
   const format = resolveTelegramTextFormat(requested, fallback);
-  return splitMessage(text, 4096).map((chunk) => prepareTelegramText(chunk, format));
+  return splitTelegramMessageText(text).map((chunk) => prepareTelegramText(chunk, format));
 }
 
 export function prepareTelegramCaption(
@@ -44,6 +44,10 @@ export function prepareTelegramSingleText(
 ): PreparedTelegramText {
   const format = resolveTelegramTextFormat(requested, fallback);
   return prepareTelegramText(text, format);
+}
+
+export function splitTelegramMessageText(text: string, threshold = 4096): string[] {
+  return splitMessage(text, threshold);
 }
 
 function prepareTelegramText(text: string, format: DispatchTextFormat): PreparedTelegramText {

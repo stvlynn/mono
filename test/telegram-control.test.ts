@@ -12,6 +12,7 @@ import {
   executeTelegramCommand,
   listTelegramPairingRequests,
   processTelegramIncomingMessage,
+  readTelegramStickerStore,
   readTelegramAllowFromStore,
   upsertTelegramPairingRequest,
 } from "@mono/telegram-control";
@@ -51,8 +52,23 @@ describe("telegram control", () => {
     expect(resolved.channels.telegram.dmPolicy).toBe("pairing");
     expect(resolved.channels.telegram.allowFrom).toEqual([]);
     expect(resolved.channels.telegram.groups).toEqual({});
+    expect(resolved.channels.telegram.actions).toEqual({
+      send: true,
+      sticker: true,
+      edit: true,
+      delete: true,
+      react: true,
+    });
     expect(resolved.channels.telegram.approval.allowChats).toEqual([]);
     expect(resolved.channels.telegram.approval.commandDenylist).toEqual([]);
+    expect(resolved.channels.telegram.reply).toEqual({
+      multiMessage: true,
+      splitDelayMs: 800,
+      stickers: {
+        enabled: true,
+        storePath: ".mono/telegram/stickers.json",
+      },
+    });
   });
 
   it("rejects allowlist mode without a configured allowFrom entry", async () => {
@@ -77,6 +93,7 @@ describe("telegram control", () => {
         },
         channels: {
           telegram: {
+            ...createDefaultTelegramConfig(),
             enabled: true,
             botToken: "123456:ABCDEFGHIJKLMNO",
             dmPolicy: "allowlist",
@@ -130,6 +147,178 @@ describe("telegram control", () => {
     expect(resolved.channels.telegram.approval).toEqual({
       allowChats: ["123456", "-1009876543210"],
       commandDenylist: ["pnpm publish", "git push"],
+    });
+  });
+
+  it("normalizes telegram actions config", async () => {
+    const { cwd, configDir } = await createTempWorkspace("mono-telegram-actions");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true,
+          },
+        },
+        channels: {
+          telegram: {
+            ...createDefaultTelegramConfig(),
+            actions: {
+              send: true,
+              sticker: false,
+              edit: false,
+              delete: true,
+              react: false,
+            },
+          },
+        },
+      },
+      projects: {},
+    } satisfies MonoGlobalConfig);
+
+    const resolved = await resolveMonoConfig({ cwd });
+    expect(resolved.channels.telegram.actions).toEqual({
+      send: true,
+      sticker: false,
+      edit: false,
+      delete: true,
+      react: false,
+    });
+  });
+
+  it("normalizes telegram reply config", async () => {
+    const { cwd, configDir } = await createTempWorkspace("mono-telegram-reply-config");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true,
+          },
+        },
+        channels: {
+          telegram: {
+            ...createDefaultTelegramConfig(),
+            reply: {
+              multiMessage: false,
+              splitDelayMs: 250,
+              stickers: {
+                enabled: true,
+                storePath: " .mono/custom-stickers.json ",
+              },
+            },
+          },
+        },
+      },
+      projects: {},
+    } satisfies MonoGlobalConfig);
+
+    const resolved = await resolveMonoConfig({ cwd });
+
+    expect(resolved.channels.telegram.reply).toEqual({
+      multiMessage: false,
+      splitDelayMs: 250,
+      stickers: {
+        enabled: true,
+        storePath: ".mono/custom-stickers.json",
+      },
+    });
+  });
+
+  it("loads and normalizes the project Telegram sticker store", async () => {
+    const { cwd, configDir } = await createTempWorkspace("mono-telegram-sticker-store");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true,
+          },
+        },
+        channels: {
+          telegram: {
+            ...createDefaultTelegramConfig(),
+            reply: {
+              multiMessage: true,
+              splitDelayMs: 800,
+              stickers: {
+                enabled: true,
+                storePath: ".mono/telegram/custom-stickers.json",
+              },
+            },
+          },
+        },
+      },
+      projects: {},
+    } satisfies MonoGlobalConfig);
+
+    await writeJsonFile(join(cwd, ".mono", "telegram", "custom-stickers.json"), {
+      version: 1,
+      packs: [
+        {
+          id: " custom ",
+          stickers: [
+            { emoji: "🙂", fileId: "sticker-1" },
+            { emoji: "🙂", fileId: "sticker-1" },
+            { emoji: "", fileId: "skip" },
+          ],
+        },
+        {
+          id: "remote",
+          telegramSetName: " CatsPack ",
+        },
+        {
+          id: "custom",
+          stickers: [{ emoji: "😄", fileId: "sticker-2" }],
+        },
+      ],
+    });
+
+    const resolved = await resolveMonoConfig({ cwd });
+    const store = await readTelegramStickerStore(cwd, resolved.channels.telegram);
+
+    expect(store).toEqual({
+      version: 1,
+      packs: [
+        {
+          id: "custom",
+          stickers: [{ emoji: "🙂", fileId: "sticker-1" }],
+        },
+        {
+          id: "remote",
+          telegramSetName: "CatsPack",
+        },
+      ],
     });
   });
 

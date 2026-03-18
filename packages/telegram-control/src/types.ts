@@ -53,6 +53,21 @@ export interface TelegramReplyPreview {
   update(text: string): void;
 }
 
+export interface TelegramChatResponseMessage {
+  text: string;
+  format?: "markdown" | "plain";
+}
+
+export interface TelegramChatResponseSticker {
+  emoji?: string;
+  fileId?: string;
+}
+
+export interface TelegramChatResponse {
+  messages: TelegramChatResponseMessage[];
+  sticker?: TelegramChatResponseSticker;
+}
+
 export interface TelegramChatRequest {
   input: TaskInput;
   message: TelegramIncomingMessage;

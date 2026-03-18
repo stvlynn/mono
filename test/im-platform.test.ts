@@ -151,6 +151,34 @@ describe("@mono/im-platform", () => {
     expect(String(body.text)).toContain("| foo");
   });
 
+  it("dispatches Telegram stickers through sendSticker", async () => {
+    const { fetchImpl, calls } = createFetchStub([
+      { ok: true, result: { message_id: 108, chat: { id: 55 } } },
+    ]);
+    const distributor = createDistributor({
+      builtInProviders: [createTelegramConfig(fetchImpl)],
+    });
+
+    const result = await distributor.dispatch({
+      provider: "primary-dispatch",
+      target: {
+        kind: "dm",
+        address: 55,
+      },
+      content: {
+        type: "sticker",
+        fileId: "sticker-file-1",
+      },
+    });
+
+    expect(result.remoteMessageIds).toEqual(["108"]);
+    expect(calls[0]?.url.endsWith("/sendSticker")).toBe(true);
+
+    const body = await readJsonBody(calls[0]!);
+    expect(body.chat_id).toBe(55);
+    expect(body.sticker).toBe("sticker-file-1");
+  });
+
   it("escapes raw HTML embedded inside markdown text", async () => {
     const { fetchImpl, calls } = createFetchStub([
       { ok: true, result: { message_id: 106, chat: { id: 55 } } },
@@ -553,6 +581,8 @@ describe("@mono/im-platform", () => {
         sticker: {
           file_id: "static-sticker",
           file_unique_id: "sticker-unique",
+          emoji: "🙂",
+          set_name: "CatsPack",
           width: 512,
           height: 512,
           is_animated: false,
@@ -563,6 +593,17 @@ describe("@mono/im-platform", () => {
 
     expect(incoming).not.toBeNull();
     expect(incoming?.text).toBe("<media:sticker>");
+    expect(incoming?.metadata).toEqual({
+      telegram: {
+        chatId: "42",
+        sticker: {
+          fileId: "static-sticker",
+          fileUniqueId: "sticker-unique",
+          emoji: "🙂",
+          setName: "CatsPack",
+        },
+      },
+    });
     expect(incoming?.attachments).toHaveLength(1);
     expect(incoming?.attachments[0]).toMatchObject({
       kind: "image",

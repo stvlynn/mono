@@ -21,11 +21,25 @@ describe("input attachments", () => {
           origin: "local_cli",
         },
       ],
+      metadata: {
+        telegram: {
+          sticker: {
+            fileId: "CAAC123",
+          },
+        },
+      },
     }, 123);
 
     expect(message).toEqual({
       role: "user",
       timestamp: 123,
+      metadata: {
+        telegram: {
+          sticker: {
+            fileId: "CAAC123",
+          },
+        },
+      },
       content: [
         { type: "text", text: "describe this screenshot" },
         { type: "image", mimeType: "image/png", data: "aGVsbG8=" },

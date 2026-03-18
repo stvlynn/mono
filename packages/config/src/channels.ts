@@ -1,21 +1,46 @@
 import type {
+  MonoTelegramActionsConfig,
   MonoChannelsConfig,
   MonoGlobalConfig,
   MonoTelegramApprovalConfig,
   MonoTelegramConfig,
+  MonoTelegramReplyConfig,
 } from "@mono/shared";
 import {
+  normalizeTelegramActionsConfig,
   looksLikeTelegramBotToken,
   normalizeTelegramApprovalConfig,
   normalizeTelegramAllowFromEntries,
   normalizeTelegramBotId,
   normalizeTelegramGroupsConfig,
+  normalizeTelegramReplyConfig,
 } from "@mono/shared";
+
+export function createDefaultTelegramActionsConfig(): MonoTelegramActionsConfig {
+  return {
+    send: true,
+    sticker: true,
+    edit: true,
+    delete: true,
+    react: true,
+  };
+}
 
 export function createDefaultTelegramApprovalConfig(): MonoTelegramApprovalConfig {
   return {
     allowChats: [],
     commandDenylist: [],
+  };
+}
+
+export function createDefaultTelegramReplyConfig(): MonoTelegramReplyConfig {
+  return {
+    multiMessage: true,
+    splitDelayMs: 800,
+    stickers: {
+      enabled: true,
+      storePath: ".mono/telegram/stickers.json",
+    },
   };
 }
 
@@ -27,7 +52,9 @@ export function createDefaultTelegramConfig(): MonoTelegramConfig {
     allowFrom: [],
     groupAllowFrom: [],
     groups: {},
+    actions: createDefaultTelegramActionsConfig(),
     approval: createDefaultTelegramApprovalConfig(),
+    reply: createDefaultTelegramReplyConfig(),
     dmPolicy: "pairing",
     pollingTimeoutSeconds: 20,
   };
@@ -52,7 +79,9 @@ export function resolveChannelsConfig(globalConfig: MonoGlobalConfig): MonoChann
       allowFrom: normalizeTelegramAllowFromEntries(telegram?.allowFrom),
       groupAllowFrom: normalizeTelegramAllowFromEntries(telegram?.groupAllowFrom),
       groups: normalizeTelegramGroupsConfig(telegram?.groups),
+      actions: normalizeTelegramActionsConfig(telegram?.actions),
       approval: normalizeTelegramApprovalConfig(telegram?.approval),
+      reply: normalizeTelegramReplyConfig(telegram?.reply),
     },
   };
 }

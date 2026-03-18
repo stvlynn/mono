@@ -22,6 +22,7 @@ services:
       MONO_TELEGRAM_DM_POLICY: ${MONO_TELEGRAM_DM_POLICY:-pairing}
     volumes:
       - .:/workspace
+      - ./docker:/app/docker:ro
       - ${MONO_CONFIG_DIR_HOST:-${HOME}/.mono}:/data/home/.mono
     stdin_open: true
     tty: true

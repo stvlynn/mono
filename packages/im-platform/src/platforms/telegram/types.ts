@@ -22,7 +22,7 @@ export interface TelegramTargetParams {
 }
 
 export interface TelegramOperation {
-  method: "sendMessage" | "sendPhoto" | "sendVideo" | "sendDocument" | "sendMediaGroup";
+  method: "sendMessage" | "sendPhoto" | "sendVideo" | "sendDocument" | "sendSticker" | "sendMediaGroup";
   body: FormData | Record<string, unknown>;
   fallbackText?: string;
   expectCollection?: boolean;

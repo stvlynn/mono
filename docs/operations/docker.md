@@ -87,9 +87,17 @@ Detach without stopping the container with `Ctrl-p` followed by `Ctrl-q`.
 ## One-shot commands
 
 ```bash
-docker compose run --rm mono "node /app/packages/cli/dist/bin.js --help"
-docker compose run --rm mono "node /app/packages/cli/dist/bin.js --print hello"
+docker compose run --rm mono --help
+docker compose run --rm mono --print hello
 ```
+
+Current compose/runtime behavior:
+
+- the container still ships a built `/app` image
+- the compose file mounts the repository into `/workspace`
+- the mounted `./docker` directory is also mounted into `/app/docker`
+- when `/workspace` contains the repo, the entrypoint runs `tsx packages/cli/src/bin.ts` from `/workspace`
+- this means source changes in the mounted workspace take effect after `docker compose restart` without rebuilding the image
 
 ## Secrets
 
@@ -106,7 +114,7 @@ Operational note:
 - if a wrapper or environment manager injects an empty string, verify the resolved key source from inside the container with:
 
 ```bash
-docker compose exec -T mono node /app/packages/cli/dist/bin.js auth status
+docker compose exec -T mono -- auth status
 ```
 
 ## Notes

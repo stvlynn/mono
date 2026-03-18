@@ -31,7 +31,7 @@ It currently owns:
 - normalization of provider results into a stable package-level contract
 - one built-in Telegram provider
 - Telegram-specific validation, request mapping, formatting, and HTTP transport
-- Telegram-specific inbound update normalization for image-bearing messages and callback actions
+- Telegram-specific inbound update normalization for image-bearing messages, static stickers, and callback actions
 
 It does not currently own:
 
@@ -141,12 +141,13 @@ The target model is intentionally generic. Provider implementations decide how t
 
 ### Content
 
-`DispatchContent` supports five variants:
+`DispatchContent` supports six variants:
 
 - `text`
 - `photo`
 - `video`
 - `document`
+- `sticker`
 - `media-group`
 
 Text and captions can declare a format:
@@ -247,6 +248,7 @@ Current supported inbound image sources:
 
 - `message.photo`
 - `message.document` where `mime_type` is `image/*`
+- static `message.sticker`
 
 Current behavior:
 
@@ -254,7 +256,22 @@ Current behavior:
 - resolve the file through `getFile`
 - download the Bot API file payload
 - normalize the image into `InputImageAttachment`
+- attach Telegram-native metadata before converting to `TaskInput`
 - return a generic `InboundMessage` that can be converted to `TaskInput`
+
+Current Telegram metadata projection:
+
+- `metadata.telegram.chatId`
+- `metadata.telegram.sticker.fileId`
+- `metadata.telegram.sticker.fileUniqueId`
+- `metadata.telegram.sticker.emoji`
+- `metadata.telegram.sticker.setName`
+
+This metadata is what later lets the Telegram runtime:
+
+- recover the current sticker by `fileId`
+- scope recent-history sticker recovery to the active chat id
+- discover other stickers from the same `setName`
 
 ### Target mapping
 
@@ -279,6 +296,7 @@ Current mappings:
 - `photo` -> `sendPhoto`
 - `video` -> `sendVideo`
 - `document` -> `sendDocument`
+- `sticker` -> `sendSticker`
 - `media-group` -> `sendMediaGroup`
 
 `text` may expand into multiple Telegram operations because the package chunks long messages before transport.

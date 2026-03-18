@@ -26,9 +26,24 @@ export interface InputImageAttachment {
   origin?: UserInputOrigin;
 }
 
+export interface TelegramStickerInputMetadata {
+  fileId?: string;
+  fileUniqueId?: string;
+  emoji?: string;
+  setName?: string;
+}
+
+export interface TaskInputPlatformMetadata {
+  telegram?: {
+    chatId?: string;
+    sticker?: TelegramStickerInputMetadata;
+  };
+}
+
 export interface TaskInput {
   text?: string;
   attachments?: InputImageAttachment[];
+  metadata?: TaskInputPlatformMetadata;
 }
 
 export interface ToolCallPart {
@@ -46,6 +61,7 @@ export interface UserMessage {
   role: "user";
   content: string | UserPart[];
   timestamp: number;
+  metadata?: TaskInputPlatformMetadata;
 }
 
 export interface AssistantMessage {
@@ -129,6 +145,25 @@ export interface MonoTelegramApprovalConfig {
   commandDenylist: string[];
 }
 
+export interface MonoTelegramActionsConfig {
+  send: boolean;
+  sticker: boolean;
+  edit: boolean;
+  delete: boolean;
+  react: boolean;
+}
+
+export interface MonoTelegramReplyStickersConfig {
+  enabled: boolean;
+  storePath: string;
+}
+
+export interface MonoTelegramReplyConfig {
+  multiMessage: boolean;
+  splitDelayMs: number;
+  stickers: MonoTelegramReplyStickersConfig;
+}
+
 export interface MonoTelegramGroupConfig {
   allow?: boolean;
   requireMention?: boolean;
@@ -142,7 +177,9 @@ export interface MonoTelegramConfig {
   allowFrom: string[];
   groupAllowFrom: string[];
   groups: Record<string, MonoTelegramGroupConfig>;
+  actions: MonoTelegramActionsConfig;
   approval: MonoTelegramApprovalConfig;
+  reply: MonoTelegramReplyConfig;
   dmPolicy: MonoTelegramDmPolicy;
   pollingTimeoutSeconds: number;
 }
@@ -492,6 +529,12 @@ export interface TaskResult {
   summary: string;
   turns: number;
   verification?: VerificationState;
+  channelDelivery?: {
+    nativeActionRequired: boolean;
+    action?: string;
+    reason?: string;
+    satisfied: boolean;
+  };
   messages: ConversationMessage[];
 }
 
@@ -631,6 +674,170 @@ export interface PermissionRequest {
   cwd: string;
   sessionId: string;
   channel?: ToolExecutionChannel;
+}
+
+export interface ChannelActionRequest {
+  channel?: string;
+  action: string;
+  targetId?: string;
+  messageId?: string | number;
+  replyToMessageId?: string | number;
+  threadId?: string | number;
+  payload?: Record<string, unknown>;
+}
+
+export interface ChannelActionResult {
+  ok: boolean;
+  channel: string;
+  action: string;
+  targetId: string;
+  messageId?: string;
+  messageIds?: string[];
+  reason?: string;
+}
+
+export type ChannelActionExecutor = (
+  request: ChannelActionRequest,
+  context: { channel: ToolExecutionChannel },
+) => Promise<ChannelActionResult>;
+
+export type ChannelStoreAction = "list" | "search" | "upsert";
+
+export interface ChannelStoreRequest {
+  channel?: string;
+  resource: string;
+  action: ChannelStoreAction;
+  entry?: Record<string, unknown>;
+}
+
+export interface ChannelStoreResult {
+  ok: boolean;
+  channel: string;
+  resource: string;
+  action: ChannelStoreAction;
+  path?: string;
+  entryCount?: number;
+  count?: number;
+  items?: Array<Record<string, string>>;
+  reason?: string;
+}
+
+export type ChannelStoreExecutor = (
+  request: ChannelStoreRequest,
+  context: { channel: ToolExecutionChannel },
+) => Promise<ChannelStoreResult>;
+
+export type ChannelContextResourceSource = "current_input" | "recent_history";
+
+export interface ChannelContextResource {
+  kind: string;
+  available: boolean;
+  source?: ChannelContextResourceSource;
+  attributes?: Record<string, string>;
+}
+
+export interface ChannelContextStore {
+  resource: string;
+  path?: string;
+  exists: boolean;
+  readable: boolean;
+  entryCount: number;
+  searchSupported?: boolean;
+}
+
+export interface ChannelCapabilityContext {
+  channel: string;
+  actions: string[];
+  storeResources: string[];
+  currentResource?: ChannelContextResource;
+  store?: ChannelContextStore;
+  recommendedAction?: {
+    action: string;
+    targetId?: string;
+    payload?: Record<string, string>;
+  };
+  requiredAction?: {
+    required: boolean;
+    action?: string;
+    reason?: string;
+    textOnlyFallbackAllowed: boolean;
+  };
+  notes?: string[];
+}
+
+export interface ChannelCapabilityProvider {
+  supportsChannel(channel: ToolExecutionChannel | undefined): boolean;
+  listAvailableActions(channel: ToolExecutionChannel): string[];
+  listStoreResources(channel: ToolExecutionChannel): string[];
+  buildContext(input: TaskInput, channel: ToolExecutionChannel, history: ConversationMessage[]): Promise<ChannelCapabilityContext>;
+  executeAction(request: ChannelActionRequest, context: { channel: ToolExecutionChannel }): Promise<ChannelActionResult>;
+  executeStore(request: ChannelStoreRequest, context: { channel: ToolExecutionChannel }): Promise<ChannelStoreResult>;
+}
+
+export type TelegramActionName = "send" | "sticker" | "edit" | "delete" | "react";
+export type TelegramActionTextFormat = "plain" | "markdown";
+
+export interface TelegramActionRequest {
+  action: TelegramActionName;
+  chatId?: string;
+  messageId?: number;
+  replyToMessageId?: number;
+  messageThreadId?: number;
+  text?: string;
+  format?: TelegramActionTextFormat;
+  fileId?: string;
+  emoji?: string;
+  remove?: boolean;
+}
+
+export interface TelegramActionResult {
+  ok: boolean;
+  action: TelegramActionName;
+  chatId: string;
+  messageId?: string;
+  messageIds?: string[];
+  reason?: string;
+}
+
+export type TelegramActionExecutor = (
+  request: TelegramActionRequest,
+  context: { channel: ToolExecutionChannel },
+) => Promise<TelegramActionResult>;
+
+export interface TelegramStickerStoreEntry {
+  emoji: string;
+  fileId: string;
+}
+
+export interface TelegramStickerStorePack {
+  id: string;
+  telegramSetName?: string;
+  stickers?: TelegramStickerStoreEntry[];
+}
+
+export interface TelegramStickerStoreFile {
+  version: 1;
+  packs: TelegramStickerStorePack[];
+}
+
+export type TelegramStickerStoreAction = "list" | "upsert";
+
+export interface TelegramStickerStoreRequest {
+  action: TelegramStickerStoreAction;
+  packId?: string;
+  emoji?: string;
+  fileId?: string;
+  telegramSetName?: string;
+}
+
+export interface TelegramStickerStoreResult {
+  ok: boolean;
+  action: TelegramStickerStoreAction;
+  path: string;
+  packCount: number;
+  stickerCount: number;
+  packId?: string;
+  reason?: string;
 }
 
 export type PermissionDecision =

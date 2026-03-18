@@ -79,8 +79,17 @@ The resolved config shape is:
 - `allowFrom`
 - `groupAllowFrom`
 - `groups`
+- `actions.send`
+- `actions.sticker`
+- `actions.edit`
+- `actions.delete`
+- `actions.react`
 - `approval.allowChats`
 - `approval.commandDenylist`
+- `reply.multiMessage`
+- `reply.splitDelayMs`
+- `reply.stickers.enabled`
+- `reply.stickers.storePath`
 - `dmPolicy`
 - `pollingTimeoutSeconds`
 
@@ -90,7 +99,31 @@ Default behavior:
 - DM policy defaults to `pairing`
 - approval allowChats defaults to empty
 - approval commandDenylist defaults to empty
+- Telegram actions default to enabled for `send`, `sticker`, `edit`, `delete`, and `react`
+- multi-message replies default to enabled
+- reply split delay defaults to 800ms
+- sticker replies default to enabled with a project-local sticker store path
 - the runtime polls with a 20 second Bot API timeout
+
+Default sticker store shape:
+
+```json
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "custom-default",
+      "stickers": [
+        { "emoji": "🙂", "fileId": "<telegram file_id>" }
+      ]
+    },
+    {
+      "id": "cats-pack",
+      "telegramSetName": "CatsPack"
+    }
+  ]
+}
+```
 
 Validation rules enforced during config resolution:
 
@@ -105,6 +138,18 @@ Approval behavior:
 - authorized Telegram private chats also bypass interactive tool approval through `allowFrom` and stored pairing approvals
 - `approval.commandDenylist` is a Telegram-scoped bash denylist checked before allowlist bypass
 - destructive bash commands still hard-deny even when the chat is allowlisted
+
+Agent tool behavior:
+
+- Telegram DM runs can expose the generic `channel_action` tool for explicit `send` / `sticker` / `edit` / `delete` / `react` actions
+- Telegram DM runs can expose the generic `channel_store` tool for listing, searching, or persisting reusable sticker sources
+- Telegram chat handoff runs in a dedicated `channel_chat` interaction mode rather than the normal coding-task mode
+- `channel_chat` turns do not expose coding tools or `write_todos`; they reply in-channel and use `channel_action` / `channel_store` when needed
+- current-turn sticker metadata is injected as structured context from `TaskInput.metadata.telegram`, including `chatId`, `fileId`, `fileUniqueId`, `emoji`, and `setName`
+- recent-history sticker recovery is scoped to the active Telegram chat id, so stickers do not bleed across chats handled by the same TUI process
+- Telegram runtime keeps a global sticker search cache under `~/.mono/state/telegram/sticker-cache.json`, keyed by `fileId` / `fileUniqueId` / `setName`
+- `channel_store(resource="sticker_source", action="search", ...)` can search that cache and return other stickers from the same set before `channel_action(sticker)` sends one
+- missing `.mono/telegram/stickers.json` blocks “save this as a default/common sticker source”, but does not block sending the current-turn sticker back when `Sticker.fileId` is available
 - allowlisted Telegram private chats can receive inline approval buttons for sensitive bash commands instead of relying on the local TUI
 
 ## Pairing and Allowlist State
@@ -120,6 +165,7 @@ Current file roles:
 - `pairing.json` stores pending DM pairing requests
 - `allowFrom.json` stores approved Telegram DM sender ids
 - `model-config.json` stores in-progress Telegram model-menu sessions and persisted per-sender language preferences
+- `sticker-cache.json` stores discovered Telegram stickers for later search by `setName`, `emoji`, or description
 
 Pairing request behavior:
 
@@ -263,12 +309,28 @@ Per-message behavior:
   - the reply includes the current group chat id and whether the group is already configured
 - for authorized chat handoff:
   - model-menu traffic runs before normal chat handoff
+  - the TUI calls the agent with `interactionMode: "channel_chat"` so Telegram chat replies stay in the channel-action path instead of the coding-task path
   - the runtime forwards Telegram channel context into the agent permission policy
   - allowlisted chats can run protected tools without approval prompts
   - authorized private chats inherit the same approval bypass through config `allowFrom` and stored pairing approvals
   - private chats can preview streamed answer text through Bot API `sendMessageDraft`
-  - the draft preview is materialized into a final message when generation completes
-  - if draft transport is unavailable or rejected, delivery falls back to the normal final message path
+  - the first reply segment can be materialized from the draft preview when generation completes
+  - the runtime can deliver one Telegram turn as multiple text messages with `typing` between segments
+  - the runtime can append one configured sticker after the text reply when the model emits a Telegram sticker tag
+  - sticker-only replies are allowed; if the assistant emits only a valid sticker tag or file-id tag, the runtime sends just the sticker and does not add fallback text
+  - for freshly received Telegram stickers, the normalized task input includes structured metadata under `metadata.telegram`
+  - the model can reply with `[telegram-sticker-file:<file_id>]` to send that exact sticker immediately
+  - sticker delivery can use:
+    - the current sticker `fileId`
+    - the project-local JSON store (`mono.channels.telegram.reply.stickers.storePath`)
+    - the global Telegram sticker search cache
+  - the default store path is `.mono/telegram/stickers.json`
+  - each store pack can either point at a Telegram sticker set or embed concrete `emoji -> fileId` entries that the agent can edit later
+  - when the user asks for another sticker from the same set, the preferred flow is:
+    1. `channel_store(resource="sticker_source", action="search", entry={ setName, excludeFileId })`
+    2. choose a different `fileId`
+    3. `channel_action(action="sticker", payload.fileId=...)`
+  - if draft transport is unavailable or rejected, delivery falls back to the normal final-message path
 
 Outbound control replies use `@mono/im-platform` rather than duplicating Telegram send logic in the control runtime.
 
@@ -280,6 +342,7 @@ Current behavior:
 
 - runtime start is attempted on app mount
 - runtime notifications are surfaced as TUI toasts and status messages
+- the TUI registers the Telegram runtime as a channel capability provider backing the generic `channel_action` and `channel_store` tools
 - pair and Telegram slash commands execute shared service helpers and open info dialogs with the result
 - slash commands that change Telegram runtime config request a runtime reload
 - the Telegram runtime receives `listConfiguredProfiles`, `applyProfile`, and busy-state callbacks from the TUI container

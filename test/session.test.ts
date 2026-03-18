@@ -41,6 +41,36 @@ describe("session manager", () => {
     expect(messages[1].role).toBe("assistant");
   });
 
+  it("persists user message metadata so channel history can recover native resources", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
+    const sessionsDir = join(cwd, ".sessions");
+    const manager = new SessionManager({ cwd, sessionsDir, sessionId: "session-metadata" });
+    await manager.initialize(model);
+    await manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "<media:sticker>" }],
+      timestamp: Date.now(),
+      metadata: {
+        telegram: {
+          sticker: {
+            fileId: "CAAC123",
+            fileUniqueId: "unique-1",
+            emoji: "🙂",
+            setName: "CatsPack",
+          },
+        },
+      },
+    });
+
+    const entries = await manager.readEntries();
+    const userEntry = entries.find((entry) => entry.entryType === "user");
+    const messages = await manager.loadMessages();
+    const userMessage = messages[0] as { role: string; metadata?: { telegram?: { sticker?: { fileId?: string } } } };
+
+    expect((userEntry?.payload as { metadata?: { telegram?: { sticker?: { fileId?: string } } } })?.metadata?.telegram?.sticker?.fileId).toBe("CAAC123");
+    expect(userMessage.metadata?.telegram?.sticker?.fileId).toBe("CAAC123");
+  });
+
   it("lists the latest session for a workspace", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
     const sessionsDir = join(cwd, ".sessions");

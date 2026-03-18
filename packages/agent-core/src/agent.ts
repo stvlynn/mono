@@ -1,5 +1,8 @@
 import {
   type ApprovalRequest,
+  type ChannelCapabilityContext,
+  type ChannelCapabilityProvider,
+  type RuntimeEvent,
   type ContextAssemblyReport,
   type ConversationMessage,
   hasTaskInputContent,
@@ -8,7 +11,6 @@ import {
   type MemorySearchMatch,
   type MonoConfigSummary,
   type ResolvedMonoConfig,
-  type RuntimeEvent,
   type SessionNodeSummary,
   type SessionSummary,
   readJsonFile,
@@ -54,7 +56,13 @@ import {
   type MemoryStore
 } from "@mono/memory";
 import { SessionManager } from "@mono/session";
-import { createProtectedCodingTools, DefaultPermissionPolicy } from "@mono/tools";
+import {
+  createProtectedCodingTools,
+  createChannelActionTool,
+  createChannelStoreTool,
+  DefaultPermissionPolicy,
+  wrapToolWithPermissions,
+} from "@mono/tools";
 import {
   buildDetailedTrace,
   collapseRecallAccumulator,
@@ -87,7 +95,17 @@ interface TaskRunContext {
   controller: AbortController;
   session: SessionManager;
   model: UnifiedModel;
+  interactionMode: "default" | "channel_chat";
   channel?: ToolExecutionChannel;
+  input: TaskInput;
+  channelContext?: ChannelCapabilityContext | null;
+  channelActionRequirement?: {
+    nativeActionRequired: boolean;
+    action?: string;
+    reason?: string;
+    textOnlyFallbackAllowed: boolean;
+  };
+  channelActionFeedback?: string;
   userMessage: UserMessage;
   taskMessages: ConversationMessage[];
   recallAccumulator: RecallAccumulator;
@@ -97,6 +115,7 @@ interface TaskRunContext {
 
 export interface RunTaskOptions {
   channel?: ToolExecutionChannel;
+  interactionMode?: "default" | "channel_chat";
 }
 
 export interface AgentOptions {
@@ -111,6 +130,7 @@ export interface AgentOptions {
   autoApprove?: boolean;
   continueSession?: boolean;
   requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
+  channelCapabilityProvider?: ChannelCapabilityProvider;
 }
 
 export interface AgentState {
@@ -204,6 +224,7 @@ export class Agent {
   private readonly autoApprove: boolean;
   private readonly verificationMode?: VerificationMode;
   private requestApprovalHandler?: (request: ApprovalRequest) => Promise<boolean>;
+  private channelCapabilityProvider?: ChannelCapabilityProvider;
   private initialized = false;
   private registryLoaded = false;
   private modelSelection?: string;
@@ -225,6 +246,7 @@ export class Agent {
     this.verificationMode = options.verificationMode;
     this.autoApprove = options.autoApprove ?? false;
     this.requestApprovalHandler = options.requestApproval;
+    this.channelCapabilityProvider = options.channelCapabilityProvider;
     this.modelSelection = options.model;
     this.profileSelection = options.profile;
     this.baseURLOverride = options.baseURL;
@@ -285,6 +307,10 @@ export class Agent {
     this.requestApprovalHandler = handler;
   }
 
+  setChannelCapabilityProvider(provider?: ChannelCapabilityProvider): void {
+    this.channelCapabilityProvider = provider;
+  }
+
   async prompt(input: string | TaskInput, options: RunTaskOptions = {}): Promise<ConversationMessage[]> {
     const result = await this.runTask(input, options);
     return result.messages;
@@ -313,7 +339,7 @@ export class Agent {
         existingMessages: this.state.messages,
         maxTurns: this.maxTurns
       });
-      task = this.applyVerificationOverride(task);
+      task = this.applyRunMode(task, runContext);
       const existingTodoRecord = await this.state.taskTodoStore.get(task.taskId);
       if (existingTodoRecord) {
         task.currentTodoMemoryId = existingTodoRecord.id;
@@ -333,6 +359,26 @@ export class Agent {
         const newMessages = await this.runTaskTurn(runContext, task);
         if (!this.isRunCurrent(runContext.runId)) {
           return this.buildAbortedTaskResult(runContext.taskMessages);
+        }
+
+        if (runContext.channelActionRequirement?.nativeActionRequired) {
+          const nativeActionSatisfied = didSatisfyChannelActionRequirement(
+            newMessages,
+            runContext.channelActionRequirement.action,
+          );
+          if (!nativeActionSatisfied) {
+            runContext.channelActionFeedback = buildChannelActionRetryFeedback(
+              runContext.channelActionRequirement,
+              runContext.channelContext,
+            );
+
+            if (attempt < this.maxTurns - 1) {
+              task = await this.transitionTaskPhase(runContext.runId, runContext.session, task, "execute");
+              continue;
+            }
+          }
+        } else {
+          runContext.channelActionFeedback = undefined;
         }
 
         const update = updateTaskAfterTurn({ task, turnMessages: newMessages });
@@ -369,7 +415,12 @@ export class Agent {
         task = await this.transitionTaskPhase(runContext.runId, runContext.session, task, "summarize");
       }
 
-      const result = this.createTaskResult(task, runContext.taskMessages, loopDetected);
+      const result = this.createTaskResult(
+        task,
+        runContext.taskMessages,
+        loopDetected,
+        runContext.channelActionRequirement,
+      );
       await this.persistTaskMemory(runContext);
       task = await this.finishTask(runContext.runId, runContext.session, task, result);
       this.emitIfCurrent(runContext.runId, { type: "task-summary", result });
@@ -1024,7 +1075,12 @@ export class Agent {
       controller: run.controller,
       session: this.state.session,
       model: this.state.model,
+      interactionMode: options.interactionMode ?? "default",
       channel: options.channel,
+      input: typeof input === "string" ? { text: input } : input,
+      channelContext: null,
+      channelActionRequirement: undefined,
+      channelActionFeedback: undefined,
       userMessage: taskInputToUserMessage(input),
       taskMessages: [],
       recallAccumulator: createRecallAccumulator(),
@@ -1040,7 +1096,10 @@ export class Agent {
     this.emitIfCurrent(context.runId, { type: "message", message: context.userMessage });
   }
 
-  private applyVerificationOverride(task: TaskState): TaskState {
+  private applyRunMode(task: TaskState, context: TaskRunContext): TaskState {
+    if (context.interactionMode === "channel_chat") {
+      return applyVerificationMode(task, "none");
+    }
     return this.verificationMode ? applyVerificationMode(task, this.verificationMode) : task;
   }
 
@@ -1100,6 +1159,16 @@ export class Agent {
   private async runTaskTurn(context: TaskRunContext, task: TaskState): Promise<ConversationMessage[]> {
     const memoryContext = await this.loadMemoryContextForTaskTurn(context);
     const skillsContext = await this.loadSkillsContextForTaskTurn(task.goal);
+    const channelContext = await this.loadChannelCapabilityContext(context.input, context.channel);
+    context.channelContext = channelContext;
+    context.channelActionRequirement = channelContext?.requiredAction
+      ? {
+        nativeActionRequired: channelContext.requiredAction.required,
+        action: channelContext.requiredAction.action,
+        reason: channelContext.requiredAction.reason,
+        textOnlyFallbackAllowed: channelContext.requiredAction.textOnlyFallbackAllowed,
+      }
+      : inferChannelNativeActionRequirement(context.input, channelContext);
     const todoRecord = await this.state.taskTodoStore.get(task.taskId);
     context.taskTodoRecord = todoRecord;
     this.state.currentTodoRecord = todoRecord ?? undefined;
@@ -1113,7 +1182,27 @@ export class Agent {
       this.emitIfCurrent(context.runId, { type: "task-verify-start", task });
     }
     this.emitIfCurrent(context.runId, { type: "assistant-start" });
-    const taskContext = `${buildTaskContext(task, todoRecord)}\n${turnPlan.prompt}`;
+    const taskContext = [
+      this.buildTaskContextForRun(task, todoRecord, context.interactionMode),
+      turnPlan.prompt,
+      this.buildChannelReplyInstructions(channelContext),
+      this.buildChannelPlatformContext(channelContext),
+      context.channelActionRequirement
+        ? [
+          "Required Channel Action:",
+          `- RequestedNativeActionRequired: ${context.channelActionRequirement.nativeActionRequired ? "yes" : "no"}`,
+          context.channelActionRequirement.action ? `- RequestedNativeAction: ${context.channelActionRequirement.action}` : "",
+          context.channelActionRequirement.reason ? `- RequestedNativeActionReason: ${context.channelActionRequirement.reason}` : "",
+          `- TextOnlyFallbackAllowed: ${context.channelActionRequirement.textOnlyFallbackAllowed ? "yes" : "no"}`,
+          context.channelActionRequirement.nativeActionRequired
+            ? "- A plain-text response does not satisfy this turn."
+            : "",
+        ].filter(Boolean).join("\n")
+        : "",
+      context.channelActionFeedback
+        ? `Channel Action Retry Feedback:\n- ${context.channelActionFeedback}`
+        : "",
+    ].filter(Boolean).join("\n");
     const assembledPrompt = await assemblePromptContext({
       cwd: this.cwd,
       sessionId: context.session.sessionId,
@@ -1183,6 +1272,92 @@ export class Agent {
     return renderSkillsContext(skills, prompt, this.cwd);
   }
 
+  private async loadChannelCapabilityContext(
+    input: TaskInput,
+    channel: ToolExecutionChannel | undefined,
+  ): Promise<ChannelCapabilityContext | null> {
+    if (!this.channelCapabilityProvider?.supportsChannel(channel) || !channel) {
+      return null;
+    }
+
+    return this.channelCapabilityProvider.buildContext(input, channel, this.state.messages);
+  }
+
+  private buildChannelReplyInstructions(context: ChannelCapabilityContext | null): string {
+    if (!context) {
+      return "";
+    }
+
+    if (context.actions.length === 0 && context.storeResources.length === 0) {
+      return [
+        "Channel Delivery Notes:",
+        "- Write a normal user-facing reply.",
+        "- The runtime may split long answers into multiple platform messages automatically when needed.",
+      ].join("\n");
+    }
+
+    return [
+      "Channel Delivery Notes:",
+      "- Write a normal user-facing reply.",
+      "- Use the channel_action tool for platform-native sends, edits, deletes, reactions, or native media actions when a direct channel action is needed.",
+      "- Use the channel_store tool when the user wants to save a reusable channel-native source for future runs.",
+      "- The runtime may split long answers into multiple platform messages automatically when needed.",
+      `- Available channel actions: ${context.actions.join(", ") || "<none>"}.`,
+      `- Available channel store resources: ${context.storeResources.join(", ") || "<none>"}.`,
+      context.currentResource?.available
+        ? `- Current-turn ${context.currentResource.kind} is available; prefer channel_action over placeholder text or emoji when the user wants the real platform-native resource.`
+        : "",
+      context.recommendedAction
+        ? `- RecommendedChannelAction: ${context.recommendedAction.action} targeting ${context.recommendedAction.targetId ?? "the current conversation"}.`
+        : "",
+      context.recommendedAction?.payload
+        ? `- RecommendedChannelActionPayload: ${formatRecommendedChannelActionPayload(context.recommendedAction.payload)}.`
+        : "",
+      context.store && !context.store.exists
+        ? `- Missing durable store for ${context.store.resource} does not block sending the current-turn resource now.`
+        : "",
+      context.currentResource?.kind === "sticker"
+        && context.currentResource?.attributes?.setName
+        && context.store?.searchSupported
+        ? `- When the user asks for another sticker from the same set, first call channel_store(resource="${context.store.resource}", action="search", entry={ setName: "${context.currentResource.attributes.setName}", excludeFileId: "${context.currentResource.attributes.fileId ?? ""}" }) and then send a different fileId with channel_action.`
+        : "",
+      context.store
+        ? `- Persist reusable future sources with channel_store(resource="${context.store.resource}", action="upsert", ...).`
+        : "",
+      ...(context.notes ?? []),
+    ].join("\n");
+  }
+
+  private buildChannelPlatformContext(context: ChannelCapabilityContext | null): string {
+    if (!context) {
+      return "";
+    }
+
+    return [
+      "Channel Native Resource Context:",
+      `- Channel: ${context.channel}`,
+      `- AvailableChannelActions: ${context.actions.join(", ") || "<none>"}`,
+      `- AvailableChannelStoreResources: ${context.storeResources.join(", ") || "<none>"}`,
+      context.store ? `- Store.resource: ${context.store.resource}` : "",
+      context.store?.path ? `- Store.path: ${context.store.path}` : "",
+      context.store ? `- Store.exists: ${context.store.exists ? "yes" : "no"}` : "",
+      context.store ? `- Store.readable: ${context.store.readable ? "yes" : "no"}` : "",
+      context.store ? `- Store.entryCount: ${context.store.entryCount}` : "",
+      context.store ? `- Store.searchSupported: ${context.store.searchSupported ? "yes" : "no"}` : "",
+      context.currentResource ? `- CurrentTurnNativeResourceKind: ${context.currentResource.kind}` : "",
+      context.currentResource ? `- CurrentTurnNativeResourceAvailable: ${context.currentResource.available ? "yes" : "no"}` : "",
+      context.currentResource?.source ? `- CurrentTurnNativeResourceSource: ${context.currentResource.source}` : "",
+      ...Object.entries(context.currentResource?.attributes ?? {}).map(([key, value]) => `- Resource.${key}: ${value}`),
+      context.requiredAction ? `- RequiredChannelAction.required: ${context.requiredAction.required ? "yes" : "no"}` : "",
+      context.requiredAction?.action ? `- RequiredChannelAction.action: ${context.requiredAction.action}` : "",
+      context.requiredAction?.reason ? `- RequiredChannelAction.reason: ${context.requiredAction.reason}` : "",
+      context.requiredAction ? `- RequiredChannelAction.textOnlyFallbackAllowed: ${context.requiredAction.textOnlyFallbackAllowed ? "yes" : "no"}` : "",
+      context.recommendedAction ? `- RecommendedChannelAction.action: ${context.recommendedAction.action}` : "",
+      context.recommendedAction?.targetId ? `- RecommendedChannelAction.targetId: ${context.recommendedAction.targetId}` : "",
+      ...Object.entries(context.recommendedAction?.payload ?? {}).map(([key, value]) => `- RecommendedChannelAction.payload.${key}: ${value}`),
+    ].filter(Boolean).join("\n");
+  }
+
   private buildInspectableTaskContext(goal: string): string {
     const promptGoal = goal.trim();
     if (this.state.currentTask) {
@@ -1203,47 +1378,112 @@ export class Agent {
     ].join("\n");
   }
 
+  private buildTaskContextForRun(
+    task: TaskState,
+    todoRecord: TaskTodoRecord | null,
+    interactionMode: "default" | "channel_chat",
+  ): string {
+    if (interactionMode !== "channel_chat") {
+      return buildTaskContext(task, todoRecord);
+    }
+
+    const verificationLine =
+      task.verification.mode === "none"
+        ? "Verification: not required"
+        : `Verification: ${task.verification.passed ? "passed" : task.verification.reason ?? "pending"}`;
+    return [
+      "<TaskContext>",
+      `Goal: ${task.goal}`,
+      `Phase: ${task.phase}`,
+      `Attempts: ${task.attempts}`,
+      verificationLine,
+      "Mode: channel_chat",
+      "This is a live channel chat turn.",
+      "Do not plan engineering work or use write_todos.",
+      "Respond in-channel and prefer channel_action for required native actions.",
+      "</TaskContext>",
+    ].join("\n");
+  }
+
   private async createToolsForRun(context: TaskRunContext, task: TaskState) {
     const policy = await this.createPermissionPolicy(context.channel);
-    const protectedTools = createProtectedCodingTools(this.cwd, {
+    const wrappedToolOptions = {
       sessionId: context.session.sessionId,
       channel: context.channel,
-      requestApproval: (request) => this.requestApproval(request),
-      emit: (event) => this.emitIfCurrent(context.runId, event),
+      requestApproval: (request: ApprovalRequest) => this.requestApproval(request),
+      emit: (event: { type: "approval-request"; request: ApprovalRequest } | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }) =>
+        this.emitIfCurrent(context.runId, event),
       policy,
-    });
-    const writeTodosTool = createWriteTodosTool({
       cwd: this.cwd,
-      taskId: task.taskId,
-      goal: task.goal,
-      sessionId: context.session.sessionId,
-      branchHeadId: context.session.getHeadId(),
-      verificationMode: task.verification.mode,
-      store: this.state.taskTodoStore,
-      onUpdated: (record) => {
-        context.taskTodoRecord = record;
-        context.taskTodosDirty = true;
-        this.state.currentTodoRecord = record ?? undefined;
-        this.state.currentTask = {
-          ...(this.state.currentTask ?? task),
-          currentTodoMemoryId: record?.id
-        };
-        if (record) {
-          void context.session.appendTaskPointer({
-            taskId: task.taskId,
-            todoMemoryId: record.id,
-            goal: task.goal,
-            phase: this.state.currentTask?.phase ?? task.phase,
-            attempts: this.state.currentTask?.attempts ?? task.attempts,
-            verification: this.state.currentTask?.verification ?? task.verification
-          });
-          this.emitIfCurrent(context.runId, { type: "task-todos-updated", record });
-        } else {
-          this.emitIfCurrent(context.runId, { type: "task-todos-cleared", taskId: task.taskId });
+    } as const;
+    const protectedTools = context.interactionMode === "channel_chat"
+      ? []
+      : createProtectedCodingTools(this.cwd, {
+        sessionId: context.session.sessionId,
+        channel: context.channel,
+        requestApproval: (request) => this.requestApproval(request),
+        emit: (event) => this.emitIfCurrent(context.runId, event),
+        policy,
+      });
+    const writeTodosTool = context.interactionMode === "channel_chat"
+      ? null
+      : createWriteTodosTool({
+        cwd: this.cwd,
+        taskId: task.taskId,
+        goal: task.goal,
+        sessionId: context.session.sessionId,
+        branchHeadId: context.session.getHeadId(),
+        verificationMode: task.verification.mode,
+        store: this.state.taskTodoStore,
+        onUpdated: (record) => {
+          context.taskTodoRecord = record;
+          context.taskTodosDirty = true;
+          this.state.currentTodoRecord = record ?? undefined;
+          this.state.currentTask = {
+            ...(this.state.currentTask ?? task),
+            currentTodoMemoryId: record?.id
+          };
+          if (record) {
+            void context.session.appendTaskPointer({
+              taskId: task.taskId,
+              todoMemoryId: record.id,
+              goal: task.goal,
+              phase: this.state.currentTask?.phase ?? task.phase,
+              attempts: this.state.currentTask?.attempts ?? task.attempts,
+              verification: this.state.currentTask?.verification ?? task.verification
+            });
+            this.emitIfCurrent(context.runId, { type: "task-todos-updated", record });
+          } else {
+            this.emitIfCurrent(context.runId, { type: "task-todos-cleared", taskId: task.taskId });
+          }
         }
-      }
-    });
-    return [writeTodosTool, ...protectedTools];
+      });
+    const channelActionTool = context.channel && this.channelCapabilityProvider?.supportsChannel(context.channel)
+      && this.channelCapabilityProvider.listAvailableActions(context.channel).length > 0
+      ? wrapToolWithPermissions(createChannelActionTool({
+        channel: context.channel,
+        executeChannelAction: (request, callContext) =>
+          this.channelCapabilityProvider!.executeAction(request, callContext),
+        availableActionsDescription: `Available actions for this run: ${context.channelContext?.actions.join(", ") || "<none>"}.`,
+        recommendedActionDescription: context.channelContext?.recommendedAction
+          ? `Recommended action for this turn: ${context.channelContext.recommendedAction.action}${context.channelContext.recommendedAction.targetId ? ` targetId=\"${context.channelContext.recommendedAction.targetId}\"` : ""}${context.channelContext.recommendedAction.payload ? ` ${formatRecommendedChannelActionPayload(context.channelContext.recommendedAction.payload)}` : ""}.`
+          : undefined,
+      }), wrappedToolOptions)
+      : null;
+    const channelStoreTool = context.channel && this.channelCapabilityProvider?.supportsChannel(context.channel)
+      && this.channelCapabilityProvider.listStoreResources(context.channel).length > 0
+      ? wrapToolWithPermissions(createChannelStoreTool({
+        channel: context.channel,
+        executeChannelStore: (request, callContext) =>
+          this.channelCapabilityProvider!.executeStore(request, callContext),
+      }), wrappedToolOptions)
+      : null;
+    return [
+      ...(writeTodosTool ? [writeTodosTool] : []),
+      ...(channelActionTool ? [channelActionTool] : []),
+      ...(channelStoreTool ? [channelStoreTool] : []),
+      ...protectedTools,
+    ];
   }
 
   private async createPermissionPolicy(channel: ToolExecutionChannel | undefined): Promise<DefaultPermissionPolicy> {
@@ -1301,8 +1541,24 @@ export class Agent {
     }
   }
 
-  private createTaskResult(task: TaskState, messages: ConversationMessage[], loopDetected: boolean): TaskResult {
-    const status = loopDetected
+  private createTaskResult(
+    task: TaskState,
+    messages: ConversationMessage[],
+    loopDetected: boolean,
+    channelActionRequirement?: {
+      nativeActionRequired: boolean;
+      action?: string;
+      reason?: string;
+      textOnlyFallbackAllowed: boolean;
+    },
+  ): TaskResult {
+    const nativeActionSatisfied = channelActionRequirement?.nativeActionRequired
+      ? didSatisfyChannelActionRequirement(messages, channelActionRequirement.action)
+      : true;
+
+    const status = !nativeActionSatisfied
+      ? "incomplete"
+      : loopDetected
       ? "blocked"
       : task.verification.mode === "none" || task.verification.passed
         ? "done"
@@ -1317,6 +1573,16 @@ export class Agent {
       summary: buildTaskSummary(task, messages, status),
       turns: task.attempts,
       verification: task.verification,
+      ...(channelActionRequirement
+        ? {
+          channelDelivery: {
+            nativeActionRequired: channelActionRequirement.nativeActionRequired,
+            action: channelActionRequirement.action,
+            reason: channelActionRequirement.reason,
+            satisfied: nativeActionSatisfied,
+          },
+        }
+        : {}),
       messages
     };
   }
@@ -1514,4 +1780,126 @@ function dedupeToolExecutionChannels(channels: ToolExecutionChannel[]): ToolExec
   }
 
   return [...unique.values()];
+}
+
+function inferChannelNativeActionRequirement(
+  input: TaskInput,
+  context: ChannelCapabilityContext | null,
+): { nativeActionRequired: boolean; action?: string; reason?: string; textOnlyFallbackAllowed: boolean } | undefined {
+  if (!context || context.actions.length === 0) {
+    return undefined;
+  }
+
+  const text = (input.text ?? "").trim().toLowerCase();
+  const currentKind = context.currentResource?.kind?.toLowerCase();
+  const currentSource = context.currentResource?.source;
+
+  if (!text) {
+    if (context.currentResource?.available && currentSource === "current_input" && currentKind && context.actions.includes(currentKind)) {
+      return {
+        nativeActionRequired: true,
+        action: currentKind,
+        reason: "current_input_native_resource",
+        textOnlyFallbackAllowed: false,
+      };
+    }
+    return undefined;
+  }
+
+  const hasSendVerb = /\b(send|reply|use)\b/.test(text) || /发|回|用/.test(text);
+  const rejectsText = /don't use text|do not use text|not text|不要用文本|不要文本/.test(text);
+  const rejectsEmoji = /not emoji|don't use emoji|do not use emoji|不是emoji|不要emoji/.test(text);
+  const refersToCurrentResource = /这个|这套|this|same/.test(text) && context.currentResource?.available;
+  const searchableActions = context.actions.filter((action) => action.toLowerCase() !== "send");
+
+  const candidateAction = [
+    currentKind && searchableActions.includes(currentKind) && text.includes(currentKind) ? currentKind : null,
+    currentKind && context.currentResource?.available && refersToCurrentResource ? currentKind : null,
+    searchableActions.find((action) => text.includes(action.toLowerCase())) ?? null,
+  ].find((value): value is string => Boolean(value));
+
+  if (!candidateAction) {
+    return undefined;
+  }
+
+  if (!hasSendVerb && !rejectsText && !rejectsEmoji) {
+    return undefined;
+  }
+
+  return {
+    nativeActionRequired: true,
+    action: candidateAction,
+    reason: refersToCurrentResource && currentSource === "recent_history"
+      ? "recent_history_reference"
+      : refersToCurrentResource && currentSource === "current_input"
+        ? "current_input_native_resource"
+        : "explicit_native_send",
+    textOnlyFallbackAllowed: false,
+  };
+}
+
+function didSatisfyChannelActionRequirement(
+  messages: ConversationMessage[],
+  action: string | undefined,
+): boolean {
+  return messages.some((message) =>
+    message.role === "tool"
+      && message.toolName === "channel_action"
+      && !message.isError
+      && typeof message.input === "object"
+      && message.input !== null
+      && didChannelActionToolSucceed(message)
+      && (action
+        ? String((message.input as { action?: string }).action ?? "").trim().toLowerCase() === action.trim().toLowerCase()
+        : true)
+  );
+}
+
+function buildChannelActionRetryFeedback(
+  requirement: {
+    nativeActionRequired: boolean;
+    action?: string;
+    reason?: string;
+    textOnlyFallbackAllowed: boolean;
+  },
+  context: ChannelCapabilityContext | null | undefined,
+): string {
+  const lines = [
+    "Previous turn failed to invoke the required native channel action.",
+    "Do not answer with plain text for this turn.",
+    requirement.action
+      ? `Call channel_action with action="${requirement.action}".`
+      : "Call channel_action with the required native action.",
+  ];
+
+  if (requirement.reason) {
+    lines.push(`Requirement reason: ${requirement.reason}.`);
+  }
+  if (context?.recommendedAction?.targetId) {
+    lines.push(`Recommended targetId="${context.recommendedAction.targetId}".`);
+  }
+  if (context?.recommendedAction?.payload && Object.keys(context.recommendedAction.payload).length > 0) {
+    lines.push(`Recommended ${formatRecommendedChannelActionPayload(context.recommendedAction.payload)}.`);
+  }
+
+  return lines.join(" ");
+}
+
+function formatRecommendedChannelActionPayload(payload: Record<string, string>): string {
+  return Object.entries(payload)
+    .map(([key, value]) => `payload.${key}="${value}"`)
+    .join(" ");
+}
+
+function didChannelActionToolSucceed(message: Extract<ConversationMessage, { role: "tool" }>): boolean {
+  if (typeof message.content !== "string") {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(message.content) as { ok?: unknown };
+    return parsed.ok === true;
+  } catch {
+    return false;
+  }
 }

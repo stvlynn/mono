@@ -6,16 +6,29 @@ import {
   type InboundAction,
   inboundMessageToTaskInput,
   prepareTelegramSingleText,
+  prepareTelegramTextChunks,
 } from "@mono/im-platform";
 import type { Distributor, ImPlatformProvider } from "@mono/im-platform";
 import {
+  type ChannelActionRequest,
+  type ChannelActionResult,
+  type ChannelCapabilityContext,
+  type ChannelCapabilityProvider,
+  type ChannelContextResourceSource,
+  type ChannelStoreRequest,
+  type ChannelStoreResult,
+  readJsonFile,
   isTelegramSenderAllowed,
   mergeTelegramAllowFrom,
   type ApprovalRequest,
   type MonoTelegramConfig,
+  type TelegramActionRequest,
+  type TelegramActionResult,
 } from "@mono/shared";
 import type {
   TelegramBotIdentity,
+  TelegramChatResponse,
+  TelegramChatResponseMessage,
   TelegramChatRequest,
   TelegramControlEvent,
   TelegramCommandResult,
@@ -27,7 +40,7 @@ import {
   parseTelegramApprovalActionId,
 } from "./approval-buttons.js";
 import { parseTelegramBotCommand } from "./bot-command.js";
-import { createTelegramDraftPreviewStream } from "./draft-stream.js";
+import { createTelegramDraftPreviewStream, type TelegramDraftPreviewStream } from "./draft-stream.js";
 import { t } from "./language.js";
 import {
   buildTelegramModelMenuResult,
@@ -37,6 +50,16 @@ import {
 } from "./model-config.js";
 import { createNotifierFromDistributor } from "./outbound.js";
 import { readTelegramAllowFromStore } from "./pairing-store.js";
+import {
+  cacheTelegramSticker,
+  cacheTelegramStickerSet,
+  readTelegramStickerStore,
+  resolveTelegramStickerCachePath,
+  searchTelegramStickerCache,
+  resolveTelegramStickerStorePath,
+  summarizeTelegramStickerStore,
+  upsertTelegramStickerStore,
+} from "./sticker-store.js";
 import { processTelegramIncomingMessage } from "./inbound.js";
 
 const TELEGRAM_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -95,7 +118,7 @@ interface PendingTelegramProfileApply {
   chatId: string;
 }
 
-export class TelegramControlRuntime {
+export class TelegramControlRuntime implements ChannelCapabilityProvider {
   readonly #cwd: string;
   readonly #onEvent?: (event: TelegramControlEvent) => void;
   #abortController?: AbortController;
@@ -106,12 +129,13 @@ export class TelegramControlRuntime {
   #distributor?: Distributor;
   #provider?: ImPlatformProvider;
   #token?: string;
-  readonly #onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
+  readonly #onChatMessage?: (request: TelegramChatRequest) => Promise<TelegramChatResponse | string | null>;
   readonly #applyProfile?: (profileName: string) => Promise<void>;
   readonly #listConfiguredProfiles?: () => Promise<TelegramSelectableProfile[]>;
   readonly #isAgentBusy?: () => boolean;
   readonly #fetchImpl: typeof fetch;
   readonly #pendingApprovals = new Map<string, PendingTelegramApproval>();
+  readonly #stickerCache = new Map<string, string[]>();
   readonly #modelConfigWizard: TelegramModelConfigWizard;
   readonly #inFlightChatHandoffs = new Set<Promise<void>>();
   #pendingProfileApply?: PendingTelegramProfileApply;
@@ -119,7 +143,7 @@ export class TelegramControlRuntime {
   constructor(options: {
     cwd?: string;
     onEvent?: (event: TelegramControlEvent) => void;
-    onChatMessage?: (request: TelegramChatRequest) => Promise<string | null>;
+    onChatMessage?: (request: TelegramChatRequest) => Promise<TelegramChatResponse | string | null>;
     applyProfile?: (profileName: string) => Promise<void>;
     listConfiguredProfiles?: () => Promise<TelegramSelectableProfile[]>;
     isAgentBusy?: () => boolean;
@@ -164,6 +188,7 @@ export class TelegramControlRuntime {
     });
     this.#botIdentity = await this.#fetchBotIdentity();
     await this.#syncCommandMenu();
+    await this.#loadStickerPacks();
     this.#abortController = new AbortController();
     this.#loopPromise = this.#pollLoop(this.#abortController.signal).finally(() => {
       this.#loopPromise = undefined;
@@ -185,6 +210,7 @@ export class TelegramControlRuntime {
       await this.#loopPromise.catch(() => {});
     }
     this.#clearPendingApprovals(false);
+    this.#stickerCache.clear();
     this.#abortController = undefined;
     this.#provider = undefined;
     this.#emit({ type: "stopped", message: "Telegram runtime stopped." });
@@ -244,6 +270,317 @@ export class TelegramControlRuntime {
         reject(error);
       });
     });
+  }
+
+  supportsChannel(channel: { platform: string; kind: "dm" | "channel"; id: string } | undefined): boolean {
+    return channel?.platform === "telegram";
+  }
+
+  listAvailableActions(channel: { platform: string; kind: "dm" | "channel"; id: string }): string[] {
+    if (!this.supportsChannel(channel) || !this.#config) {
+      return [];
+    }
+
+    return [
+      this.#config.actions.send ? "send" : null,
+      this.#config.actions.sticker ? "sticker" : null,
+      this.#config.actions.edit ? "edit" : null,
+      this.#config.actions.delete ? "delete" : null,
+      this.#config.actions.react ? "react" : null,
+    ].filter((value): value is string => value !== null);
+  }
+
+  listStoreResources(channel: { platform: string; kind: "dm" | "channel"; id: string }): string[] {
+    if (!this.supportsChannel(channel) || !this.#config?.reply.stickers.enabled) {
+      return [];
+    }
+
+    return ["sticker_source"];
+  }
+
+  async buildContext(
+    input: { text?: string; metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } },
+    channel: { platform: string; kind: "dm" | "channel"; id: string },
+    history: Array<{ role: string; metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } }>,
+  ): Promise<ChannelCapabilityContext> {
+    const stickerContext = resolveTelegramStickerContext(input, history, channel.id);
+    const sticker = stickerContext?.sticker;
+    const actions = this.listAvailableActions(channel);
+    const storeResources = this.listStoreResources(channel);
+    const requestsAlternativeSticker = resolveTelegramAlternativeStickerRequest(input, stickerContext?.sticker);
+    const requiredAction = resolveTelegramRequiredAction(input, actions, {
+      sticker,
+      source: stickerContext?.source,
+    });
+    const storePath = this.#config ? resolveTelegramStickerStorePath(this.#cwd, this.#config) : undefined;
+    const cachePath = resolveTelegramStickerCachePath(this.#cwd);
+    let storeExists = false;
+    let storeReadable = true;
+    let entryCount = 0;
+
+    if (sticker?.fileId) {
+      await cacheTelegramSticker(this.#cwd, {
+        fileId: sticker.fileId,
+        ...(sticker.fileUniqueId ? { fileUniqueId: sticker.fileUniqueId } : {}),
+        ...(sticker.emoji ? { emoji: sticker.emoji } : {}),
+        ...(sticker.setName ? { setName: sticker.setName } : {}),
+      }).catch(() => {});
+      if (requestsAlternativeSticker && sticker.setName) {
+        await this.#ensureStickerSetCached(sticker.setName).catch(() => {});
+      }
+    }
+
+    if (this.#config && storePath) {
+      try {
+        const store = await readTelegramStickerStore(this.#cwd, this.#config);
+        const summary = summarizeTelegramStickerStore(storePath, store);
+        entryCount = summary.entryCount ?? 0;
+        storeExists = Boolean(await readJsonFile(storePath));
+      } catch {
+        storeReadable = false;
+      }
+    }
+
+    return {
+      channel: channel.platform,
+      actions,
+      storeResources,
+      ...(sticker?.fileId
+        ? {
+          currentResource: {
+            kind: "sticker",
+            available: true,
+            source: stickerContext?.source,
+            attributes: {
+              fileId: sticker.fileId,
+              ...(sticker.fileUniqueId ? { fileUniqueId: sticker.fileUniqueId } : {}),
+              ...(sticker.emoji ? { emoji: sticker.emoji } : {}),
+              ...(sticker.setName ? { setName: sticker.setName } : {}),
+            },
+          },
+          ...(requestsAlternativeSticker
+            ? {}
+            : {
+              recommendedAction: {
+                action: "sticker",
+                targetId: channel.id,
+                payload: {
+                  fileId: sticker.fileId,
+                  ...(sticker.emoji ? { emoji: sticker.emoji } : {}),
+                },
+              },
+            }),
+        }
+        : {
+          currentResource: {
+            kind: "sticker",
+            available: false,
+          },
+        }),
+      ...(requiredAction
+        ? {
+          requiredAction,
+        }
+        : {}),
+      ...(storeResources.length > 0
+        ? {
+          store: {
+            resource: "sticker_source",
+            path: storePath,
+            exists: storeExists,
+            readable: storeReadable,
+            entryCount,
+            searchSupported: true,
+          },
+        }
+        : {}),
+      notes: [
+        ...(stickerContext?.source === "recent_history"
+          ? ["The current sticker source was recovered from recent user history in this conversation."]
+          : []),
+        ...(requestsAlternativeSticker && sticker?.setName
+          ? [`Use channel_store(resource="sticker_source", action="search", entry={ setName: "${sticker.setName}", excludeFileId: "${sticker.fileId}" }) to find another sticker from the same set before calling channel_action.`]
+          : []),
+        ...(requestsAlternativeSticker
+          ? [`Sticker catalog search reads from ${cachePath}.`]
+          : []),
+      ],
+    };
+  }
+
+  async executeAction(
+    request: ChannelActionRequest,
+    context: { channel: { platform: string; kind: "dm" | "channel"; id: string } },
+  ): Promise<ChannelActionResult> {
+    if (!this.supportsChannel(context.channel)) {
+      return {
+        ok: false,
+        channel: request.channel?.trim() || context.channel.platform,
+        action: request.action,
+        targetId: request.targetId?.trim() || context.channel.id,
+        reason: "unsupported_channel",
+      };
+    }
+
+    const payload = request.payload ?? {};
+    if (!isSupportedTelegramChannelAction(request.action)) {
+      return {
+        ok: false,
+        channel: "telegram",
+        action: request.action,
+        targetId: request.targetId?.trim() || context.channel.id,
+        reason: "unsupported_channel_action",
+      };
+    }
+    const telegramResult = await this.executeTelegramAction({
+      action: request.action as TelegramActionRequest["action"],
+      chatId: request.targetId?.trim() || context.channel.id,
+      messageId: toOptionalNumber(request.messageId),
+      replyToMessageId: toOptionalNumber(request.replyToMessageId),
+      messageThreadId: toOptionalNumber(request.threadId),
+      text: typeof payload.text === "string" ? payload.text : undefined,
+      format: payload.format === "plain" || payload.format === "markdown" ? payload.format : undefined,
+      fileId: typeof payload.fileId === "string" ? payload.fileId : undefined,
+      emoji: typeof payload.emoji === "string" ? payload.emoji : undefined,
+      remove: typeof payload.remove === "boolean" ? payload.remove : undefined,
+    });
+
+    return {
+      ok: telegramResult.ok,
+      channel: "telegram",
+      action: telegramResult.action,
+      targetId: telegramResult.chatId,
+      ...(telegramResult.messageId ? { messageId: telegramResult.messageId } : {}),
+      ...(telegramResult.messageIds ? { messageIds: telegramResult.messageIds } : {}),
+      ...(telegramResult.reason ? { reason: telegramResult.reason } : {}),
+    };
+  }
+
+  async executeStore(
+    request: ChannelStoreRequest,
+    context: { channel: { platform: string; kind: "dm" | "channel"; id: string } },
+  ): Promise<ChannelStoreResult> {
+    if (!this.supportsChannel(context.channel) || request.resource !== "sticker_source" || !this.#config) {
+      return {
+        ok: false,
+        channel: request.channel?.trim() || context.channel.platform,
+        resource: request.resource,
+        action: request.action,
+        reason: "unsupported_channel_resource",
+      };
+    }
+
+    const path = resolveTelegramStickerStorePath(this.#cwd, this.#config);
+    if (request.action === "list") {
+      const store = await readTelegramStickerStore(this.#cwd, this.#config);
+      const summary = summarizeTelegramStickerStore(path, store);
+      return {
+        ok: true,
+        channel: "telegram",
+        resource: "sticker_source",
+        action: "list",
+        path: summary.path,
+        entryCount: summary.entryCount,
+      };
+    }
+
+    if (request.action === "search") {
+      const entry = request.entry ?? {};
+      const setName = typeof entry.setName === "string" ? entry.setName.trim() : "";
+      if (setName) {
+        await this.#ensureStickerSetCached(setName);
+      }
+      const results = await searchTelegramStickerCache(this.#cwd, {
+        query: typeof entry.query === "string" ? entry.query : undefined,
+        setName: setName || undefined,
+        limit: typeof entry.limit === "number" ? entry.limit : undefined,
+        excludeFileId: typeof entry.excludeFileId === "string" ? entry.excludeFileId : undefined,
+      });
+      return {
+        ok: true,
+        channel: "telegram",
+        resource: "sticker_source",
+        action: "search",
+        path: resolveTelegramStickerCachePath(this.#cwd),
+        count: results.length,
+        items: results.map((sticker) => ({
+          fileId: sticker.fileId,
+          ...(sticker.emoji ? { emoji: sticker.emoji } : {}),
+          ...(sticker.setName ? { setName: sticker.setName } : {}),
+          ...(sticker.description ? { description: sticker.description } : {}),
+        })),
+      };
+    }
+
+    const entry = request.entry ?? {};
+    const store = await upsertTelegramStickerStore(this.#cwd, this.#config, {
+      packId: typeof entry.packId === "string" ? entry.packId : undefined,
+      emoji: typeof entry.emoji === "string" ? entry.emoji : undefined,
+      fileId: typeof entry.fileId === "string" ? entry.fileId : undefined,
+      telegramSetName: typeof entry.telegramSetName === "string" ? entry.telegramSetName : undefined,
+    });
+    const summary = summarizeTelegramStickerStore(path, store);
+    await this.#loadStickerPacks();
+    return {
+      ok: true,
+      channel: "telegram",
+      resource: "sticker_source",
+      action: "upsert",
+      path: summary.path,
+      entryCount: summary.entryCount,
+    };
+  }
+
+  async executeTelegramAction(request: TelegramActionRequest): Promise<TelegramActionResult> {
+    if (!this.#config || !this.#token) {
+      return {
+        ok: false,
+        action: request.action,
+        chatId: request.chatId?.trim() ?? "",
+        reason: "telegram_runtime_unavailable",
+      };
+    }
+
+    const chatId = request.chatId?.trim();
+    if (!chatId) {
+      return {
+        ok: false,
+        action: request.action,
+        chatId: "",
+        reason: "missing_chat_id",
+      };
+    }
+
+    if (!this.#isTelegramActionEnabled(request.action)) {
+      return {
+        ok: false,
+        action: request.action,
+        chatId,
+        reason: "disabled",
+      };
+    }
+
+    try {
+      switch (request.action) {
+        case "send":
+          return await this.#executeSendTelegramAction(chatId, request as TelegramActionRequest & { action: "send" });
+        case "sticker":
+          return await this.#executeStickerTelegramAction(chatId, request as TelegramActionRequest & { action: "sticker" });
+        case "edit":
+          return await this.#executeEditTelegramAction(chatId, request as TelegramActionRequest & { action: "edit" });
+        case "delete":
+          return await this.#executeDeleteTelegramAction(chatId, request as TelegramActionRequest & { action: "delete" });
+        case "react":
+          return await this.#executeReactTelegramAction(chatId, request as TelegramActionRequest & { action: "react" });
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        action: request.action,
+        chatId,
+        reason: formatTelegramRuntimeError(error),
+      };
+    }
   }
 
   async #pollLoop(signal: AbortSignal): Promise<void> {
@@ -540,16 +877,13 @@ export class TelegramControlRuntime {
         message,
         preview: preview ? { update: (text) => preview.update(text) } : undefined,
       });
-      if (!reply?.trim()) {
+      const response = this.#normalizeChatResponse(reply);
+      if (!response) {
         await preview?.clear();
         return;
       }
 
-      const materialized = await preview?.materialize(reply);
-      if (!materialized) {
-        await notifier.sendText(message.chatId, reply);
-        await preview?.clear();
-      }
+      await this.#deliverChatResponse(message.chatId, response, preview);
     } catch (error) {
       await preview?.clear().catch(() => {});
       const formatted = formatTelegramRuntimeError(error);
@@ -600,6 +934,481 @@ export class TelegramControlRuntime {
     });
   }
 
+  #normalizeChatResponse(reply: TelegramChatResponse | string | null): TelegramChatResponse | null {
+    if (typeof reply === "string") {
+      const text = reply.trim();
+      return text ? { messages: [{ text, format: "markdown" }] } : null;
+    }
+
+    if (!reply) {
+      return null;
+    }
+
+    const messages = reply.messages
+      .map((message) => ({
+        ...message,
+        text: message.text.trim(),
+      }))
+      .filter((message) => message.text);
+
+    const stickerEmoji = reply.sticker?.emoji?.trim();
+    const stickerFileId = reply.sticker?.fileId?.trim();
+
+    if (messages.length === 0 && !stickerEmoji && !stickerFileId) {
+      return null;
+    }
+
+    return {
+      messages,
+      ...(stickerFileId || stickerEmoji
+        ? {
+          sticker: {
+            ...(stickerFileId ? { fileId: stickerFileId } : {}),
+            ...(stickerEmoji ? { emoji: stickerEmoji } : {}),
+          },
+        }
+        : {}),
+    };
+  }
+
+  async #deliverChatResponse(
+    chatId: string,
+    response: TelegramChatResponse,
+    preview: TelegramDraftPreviewStream | undefined,
+  ): Promise<void> {
+    const messages = this.#selectReplyMessagesForDelivery(response.messages);
+    const [firstMessage, ...remainingMessages] = messages;
+
+    if (firstMessage) {
+      const materialized = await preview?.materialize(firstMessage.text);
+      if (!materialized) {
+        await this.#sendChatMessage(chatId, firstMessage);
+        await preview?.clear();
+      }
+
+      for (const message of remainingMessages) {
+        await this.#sendTypingAction(chatId);
+        await this.#delayNextReply();
+        await this.#sendChatMessage(chatId, message);
+      }
+    } else {
+      await preview?.clear();
+    }
+
+    if (response.sticker?.fileId || response.sticker?.emoji) {
+      await this.#sendSticker(chatId, response.sticker);
+    }
+  }
+
+  #selectReplyMessagesForDelivery(messages: TelegramChatResponseMessage[]): TelegramChatResponseMessage[] {
+    if (!this.#config?.reply.multiMessage) {
+      const merged = messages
+        .map((message) => message.text.trim())
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
+      return merged ? [{ text: merged, format: "markdown" }] : [];
+    }
+
+    return messages;
+  }
+
+  #isTelegramActionEnabled(action: TelegramActionRequest["action"]): boolean {
+    if (!this.#config) {
+      return false;
+    }
+
+    switch (action) {
+      case "send":
+        return this.#config.actions.send;
+      case "sticker":
+        return this.#config.actions.sticker;
+      case "edit":
+        return this.#config.actions.edit;
+      case "delete":
+        return this.#config.actions.delete;
+      case "react":
+        return this.#config.actions.react;
+    }
+  }
+
+  async #executeSendTelegramAction(
+    chatId: string,
+    request: TelegramActionRequest & { action: "send" },
+  ): Promise<TelegramActionResult> {
+    const chunks = prepareTelegramTextChunks(request.text ?? "", request.format, "markdown");
+    const messageIds: string[] = [];
+    let threadSupported = true;
+
+    for (const chunk of chunks) {
+      const result = await this.#sendTelegramTextPayload(chatId, chunk, {
+        replyToMessageId: request.replyToMessageId,
+        messageThreadId: threadSupported ? request.messageThreadId : undefined,
+      });
+      if (!result.ok) {
+        return {
+          ok: false,
+          action: "send",
+          chatId,
+          reason: result.reason,
+          ...(messageIds.length > 0 ? { messageIds } : {}),
+        };
+      }
+      if (!result.usedThread) {
+        threadSupported = false;
+      }
+      if (result.messageId) {
+        messageIds.push(result.messageId);
+      }
+    }
+
+    return {
+      ok: true,
+      action: "send",
+      chatId,
+      messageId: messageIds.at(-1),
+      messageIds,
+    };
+  }
+
+  async #executeStickerTelegramAction(
+    chatId: string,
+    request: TelegramActionRequest & { action: "sticker" },
+  ): Promise<TelegramActionResult> {
+    const fileId = await this.#resolveStickerFileId(request);
+    if (!fileId) {
+      return {
+        ok: false,
+        action: "sticker",
+        chatId,
+        reason: "sticker_not_found",
+      };
+    }
+
+    const payload = this.#buildTelegramThreadParams({
+      replyToMessageId: request.replyToMessageId,
+      messageThreadId: request.messageThreadId,
+    });
+
+    const sendSticker = async (params?: Record<string, unknown>) => this.#callTelegram<{ message_id?: number; chat?: { id?: number | string } }>(
+      "sendSticker",
+      {
+        chat_id: chatId,
+        sticker: fileId,
+        ...(params ?? {}),
+      },
+    );
+
+    const result = await this.#callWithThreadFallback(payload, sendSticker);
+    if (!result.response) {
+      return {
+        ok: false,
+        action: "sticker",
+        chatId,
+        reason: result.reason ?? "sticker_send_failed",
+      };
+    }
+
+    return {
+      ok: true,
+      action: "sticker",
+      chatId,
+      messageId: String(result.response.message_id ?? ""),
+    };
+  }
+
+  async #executeEditTelegramAction(
+    chatId: string,
+    request: TelegramActionRequest & { action: "edit" },
+  ): Promise<TelegramActionResult> {
+    if (!request.messageId) {
+      return { ok: false, action: "edit", chatId, reason: "missing_message_id" };
+    }
+
+    const prepared = prepareTelegramSingleText(request.text ?? "", request.format, "markdown");
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      message_id: request.messageId,
+      text: prepared.text,
+      ...(prepared.parseMode ? { parse_mode: prepared.parseMode } : {}),
+    };
+
+    try {
+      await this.#callTelegram("editMessageText", body);
+    } catch (error) {
+      if (!prepared.fallbackText || !isTelegramParseModeError(error)) {
+        return {
+          ok: false,
+          action: "edit",
+          chatId,
+          reason: formatTelegramRuntimeError(error),
+        };
+      }
+      await this.#callTelegram("editMessageText", {
+        chat_id: chatId,
+        message_id: request.messageId,
+        text: prepared.fallbackText,
+      });
+    }
+
+    return {
+      ok: true,
+      action: "edit",
+      chatId,
+      messageId: String(request.messageId),
+    };
+  }
+
+  async #executeDeleteTelegramAction(
+    chatId: string,
+    request: TelegramActionRequest & { action: "delete" },
+  ): Promise<TelegramActionResult> {
+    if (!request.messageId) {
+      return { ok: false, action: "delete", chatId, reason: "missing_message_id" };
+    }
+
+    const deleted = await this.#deleteMessage(chatId, request.messageId);
+    return deleted
+      ? {
+        ok: true,
+        action: "delete",
+        chatId,
+        messageId: String(request.messageId),
+      }
+      : {
+        ok: false,
+        action: "delete",
+        chatId,
+        reason: "delete_failed",
+      };
+  }
+
+  async #executeReactTelegramAction(
+    chatId: string,
+    request: TelegramActionRequest & { action: "react" },
+  ): Promise<TelegramActionResult> {
+    if (!request.messageId) {
+      return { ok: false, action: "react", chatId, reason: "missing_message_id" };
+    }
+    if (!request.remove && !request.emoji?.trim()) {
+      return { ok: false, action: "react", chatId, reason: "missing_emoji" };
+    }
+
+    try {
+      await this.#callTelegram("setMessageReaction", {
+        chat_id: chatId,
+        message_id: request.messageId,
+        reaction: request.remove ? [] : [{
+          type: "emoji",
+          emoji: request.emoji?.trim(),
+        }],
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        action: "react",
+        chatId,
+        reason: formatTelegramRuntimeError(error),
+      };
+    }
+
+    return {
+      ok: true,
+      action: "react",
+      chatId,
+      messageId: String(request.messageId),
+    };
+  }
+
+  async #resolveStickerFileId(request: TelegramActionRequest & { action: "sticker" }): Promise<string | undefined> {
+    if (request.fileId?.trim()) {
+      return request.fileId.trim();
+    }
+
+    const emoji = request.emoji?.trim();
+    if (!emoji) {
+      return undefined;
+    }
+
+    let fileId = this.#stickerCache.get(emoji)?.[0];
+    if (!fileId) {
+      await this.#loadStickerPacks();
+      fileId = this.#stickerCache.get(emoji)?.[0];
+    }
+    return fileId;
+  }
+
+  async #sendTelegramTextPayload(
+    chatId: string,
+    prepared: ReturnType<typeof prepareTelegramSingleText>,
+    options: {
+      replyToMessageId?: number;
+      messageThreadId?: number;
+    },
+  ): Promise<{ ok: boolean; messageId?: string; usedThread: boolean; reason?: string }> {
+    const payload = {
+      chat_id: chatId,
+      text: prepared.text,
+      ...(prepared.parseMode ? { parse_mode: prepared.parseMode } : {}),
+      ...this.#buildTelegramThreadParams(options),
+    };
+
+    try {
+      const result = await this.#callWithThreadFallback(
+        this.#buildTelegramThreadParams(options),
+        (params) => this.#callTelegram<{ message_id?: number }>("sendMessage", {
+          chat_id: chatId,
+          text: prepared.text,
+          ...(prepared.parseMode ? { parse_mode: prepared.parseMode } : {}),
+          ...(params ?? {}),
+        }),
+      );
+      if (!result.response) {
+        return { ok: false, usedThread: false, reason: result.reason };
+      }
+      return {
+        ok: true,
+        messageId: typeof result.response.message_id === "number" ? String(result.response.message_id) : undefined,
+        usedThread: result.usedThread,
+      };
+    } catch (error) {
+      if (!prepared.fallbackText || !isTelegramParseModeError(error)) {
+        return { ok: false, usedThread: false, reason: formatTelegramRuntimeError(error) };
+      }
+      const fallback = await this.#callWithThreadFallback(
+        this.#buildTelegramThreadParams(options),
+        (params) => this.#callTelegram<{ message_id?: number }>("sendMessage", {
+          chat_id: chatId,
+          text: prepared.fallbackText!,
+          ...(params ?? {}),
+        }),
+      );
+      if (!fallback.response) {
+        return { ok: false, usedThread: false, reason: fallback.reason };
+      }
+      return {
+        ok: true,
+        messageId: typeof fallback.response.message_id === "number" ? String(fallback.response.message_id) : undefined,
+        usedThread: fallback.usedThread,
+      };
+    }
+  }
+
+  #buildTelegramThreadParams(options: {
+    replyToMessageId?: number;
+    messageThreadId?: number;
+  }): Record<string, unknown> {
+    return {
+      ...(options.replyToMessageId ? { reply_to_message_id: options.replyToMessageId } : {}),
+      ...(options.messageThreadId ? { message_thread_id: options.messageThreadId } : {}),
+    };
+  }
+
+  async #callWithThreadFallback<TResult>(
+    threadParams: Record<string, unknown>,
+    callback: (params?: Record<string, unknown>) => Promise<TResult>,
+  ): Promise<{ response?: TResult; usedThread: boolean; reason?: string }> {
+    const hasThread = "message_thread_id" in threadParams;
+    try {
+      return {
+        response: await callback(Object.keys(threadParams).length > 0 ? threadParams : undefined),
+        usedThread: hasThread,
+      };
+    } catch (error) {
+      if (!hasThread || !isTelegramMissingThreadError(error)) {
+        return {
+          usedThread: false,
+          reason: formatTelegramRuntimeError(error),
+        };
+      }
+
+      const fallbackParams = { ...threadParams };
+      delete fallbackParams.message_thread_id;
+      return {
+        response: await callback(Object.keys(fallbackParams).length > 0 ? fallbackParams : undefined),
+        usedThread: false,
+      };
+    }
+  }
+
+  async #sendChatMessage(chatId: string, message: TelegramChatResponseMessage): Promise<void> {
+    await this.#distributor?.dispatch({
+      provider: "telegram-control",
+      target: {
+        kind: "dm",
+        address: chatId,
+      },
+      content: {
+        type: "text",
+        text: message.text,
+        format: message.format ?? "markdown",
+      },
+    });
+  }
+
+  async #sendSticker(
+    chatId: string,
+    sticker: NonNullable<TelegramChatResponse["sticker"]>,
+  ): Promise<void> {
+    if (!this.#config?.reply.stickers.enabled) {
+      return;
+    }
+
+    const directFileId = sticker.fileId?.trim();
+    if (directFileId && this.#distributor) {
+      await this.#distributor.dispatch({
+        provider: "telegram-control",
+        target: {
+          kind: "dm",
+          address: chatId,
+        },
+        content: {
+          type: "sticker",
+          fileId: directFileId,
+        },
+      });
+      return;
+    }
+
+    const emoji = sticker.emoji?.trim();
+    if (!emoji) {
+      return;
+    }
+
+    let fileId = this.#stickerCache.get(emoji)?.[0];
+    if (!fileId) {
+      await this.#loadStickerPacks();
+      fileId = this.#stickerCache.get(emoji)?.[0];
+    }
+    if (!fileId || !this.#distributor) {
+      return;
+    }
+
+    await this.#distributor.dispatch({
+      provider: "telegram-control",
+      target: {
+        kind: "dm",
+        address: chatId,
+      },
+      content: {
+        type: "sticker",
+        fileId,
+      },
+    });
+  }
+
+  async #sendTypingAction(chatId: string): Promise<void> {
+    await this.#callTelegram("sendChatAction", {
+      chat_id: chatId,
+      action: "typing",
+    }).catch(() => {});
+  }
+
+  async #delayNextReply(): Promise<void> {
+    const delayMs = this.#config?.reply.splitDelayMs ?? 800;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
   async #syncCommandMenu(): Promise<void> {
     try {
       await this.#callTelegram("setMyCommands", {
@@ -628,6 +1437,95 @@ export class TelegramControlRuntime {
         type: "warning",
         message: `Telegram command menu sync failed: ${formatted}`,
       });
+    }
+  }
+
+  async #loadStickerPacks(): Promise<void> {
+    this.#stickerCache.clear();
+    if (!this.#config?.reply.stickers.enabled) {
+      return;
+    }
+
+    let store;
+    try {
+      store = await readTelegramStickerStore(this.#cwd, this.#config);
+    } catch (error) {
+      const formatted = formatTelegramRuntimeError(error);
+      this.#emit({
+        type: "warning",
+        message: `Telegram sticker store load failed at ${resolveTelegramStickerStorePath(this.#cwd, this.#config)}: ${formatted}`,
+      });
+      return;
+    }
+
+    for (const pack of store.packs) {
+      for (const sticker of pack.stickers ?? []) {
+        const existing = this.#stickerCache.get(sticker.emoji) ?? [];
+        if (!existing.includes(sticker.fileId)) {
+          existing.push(sticker.fileId);
+        }
+        this.#stickerCache.set(sticker.emoji, existing);
+        await cacheTelegramSticker(this.#cwd, {
+          fileId: sticker.fileId,
+          emoji: sticker.emoji,
+          setName: pack.telegramSetName,
+        }).catch(() => {});
+      }
+
+      if (!pack.telegramSetName) {
+        continue;
+      }
+
+      try {
+        await this.#ensureStickerSetCached(pack.telegramSetName);
+      } catch (error) {
+        const formatted = formatTelegramRuntimeError(error);
+        this.#emit({
+          type: "warning",
+          message: `Telegram sticker pack load failed for ${pack.id}: ${formatted}`,
+        });
+      }
+    }
+  }
+
+  async #ensureStickerSetCached(setName: string): Promise<void> {
+    const normalizedSetName = setName.trim();
+    if (!normalizedSetName) {
+      return;
+    }
+
+    const result = await this.#callTelegram<{
+      stickers?: Array<{ emoji?: string; file_id?: string; file_unique_id?: string }>;
+    }>(
+      "getStickerSet",
+      { name: normalizedSetName },
+    );
+
+    const stickers = [];
+    for (const sticker of result.stickers ?? []) {
+      const emoji = sticker.emoji?.trim();
+      const fileId = sticker.file_id?.trim();
+      if (!emoji || !fileId) {
+        continue;
+      }
+
+      const existing = this.#stickerCache.get(emoji) ?? [];
+      if (!existing.includes(fileId)) {
+        existing.push(fileId);
+      }
+      this.#stickerCache.set(emoji, existing);
+      stickers.push({
+        fileId,
+        ...(sticker.file_unique_id?.trim() ? { fileUniqueId: sticker.file_unique_id.trim() } : {}),
+        emoji,
+      });
+    }
+
+    if (stickers.length > 0) {
+      await cacheTelegramStickerSet(this.#cwd, {
+        setName: normalizedSetName,
+        stickers,
+      }).catch(() => {});
     }
   }
 
@@ -872,6 +1770,168 @@ function formatTelegramRuntimeError(error: unknown): string {
   }
 
   return `${error.message}: ${cause.message}`;
+}
+
+function isTelegramParseModeError(error: unknown): boolean {
+  const message = flattenTelegramRuntimeError(error).toLowerCase();
+  return message.includes("can't parse entities") || message.includes("parse entities");
+}
+
+function isTelegramMissingThreadError(error: unknown): boolean {
+  return flattenTelegramRuntimeError(error).toLowerCase().includes("message thread not found");
+}
+
+function flattenTelegramRuntimeError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const causeMessage = error.cause instanceof Error ? error.cause.message : "";
+  return [error.message, causeMessage].filter(Boolean).join(": ");
+}
+
+function findRecentTelegramStickerMetadata(
+  history: Array<{ role: string; metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } }>,
+  activeChatId: string,
+) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.role !== "user") {
+      continue;
+    }
+    const telegram = history[index]?.metadata?.telegram;
+    if (!telegram?.chatId || telegram.chatId !== activeChatId) {
+      continue;
+    }
+    const sticker = telegram.sticker;
+    if (sticker?.fileId) {
+      return sticker;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveTelegramStickerContext(
+  input: { metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } },
+  history: Array<{ role: string; metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } }>,
+  activeChatId: string,
+): {
+  sticker: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string };
+  source: ChannelContextResourceSource;
+} | undefined {
+  if (input.metadata?.telegram?.sticker?.fileId) {
+    return {
+      sticker: input.metadata.telegram.sticker,
+      source: "current_input",
+    };
+  }
+
+  const recentSticker = findRecentTelegramStickerMetadata(history, activeChatId);
+  if (recentSticker?.fileId) {
+    return {
+      sticker: recentSticker,
+      source: "recent_history",
+    };
+  }
+
+  return undefined;
+}
+
+function resolveTelegramAlternativeStickerRequest(
+  input: { text?: string },
+  sticker: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } | undefined,
+): boolean {
+  const text = (input.text ?? "").trim().toLowerCase();
+  if (!text || !sticker?.setName) {
+    return false;
+  }
+
+  const mentionsSticker = /\bsticker\b/.test(text) || /表情包/.test(text);
+  const requestsAlternative = /\b(other|another|different)\b/.test(text) || /别的|其他/.test(text);
+  const mentionsSet = /这套|同一套|same set|this set/.test(text);
+
+  return (mentionsSticker && requestsAlternative) || (mentionsSet && requestsAlternative);
+}
+
+function resolveTelegramRequiredAction(
+  input: { text?: string; metadata?: { telegram?: { sticker?: { fileId?: string } } } },
+  actions: string[],
+  stickerContext: {
+    sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string };
+    source?: ChannelContextResourceSource;
+  },
+): {
+  required: boolean;
+  action?: string;
+  reason?: string;
+  textOnlyFallbackAllowed: boolean;
+} | undefined {
+  if (!actions.includes("sticker")) {
+    return undefined;
+  }
+
+  const text = (input.text ?? "").trim().toLowerCase();
+  const hasStickerSource = Boolean(stickerContext.sticker?.fileId);
+  const hasCurrentStickerInput = Boolean(input.metadata?.telegram?.sticker?.fileId);
+
+  if (!text) {
+    if (!hasCurrentStickerInput) {
+      return undefined;
+    }
+    return {
+      required: true,
+      action: "sticker",
+      reason: "current_input_native_resource",
+      textOnlyFallbackAllowed: false,
+    };
+  }
+
+  const mentionsSticker = /\bsticker\b/.test(text) || /表情包/.test(text);
+  const rejectsText = /don't use text|do not use text|not text|不要用文本|不要文本/.test(text);
+  const rejectsEmoji = /not emoji|don't use emoji|do not use emoji|不是emoji|不要emoji/.test(text);
+  const hasSendVerb = /\b(send|reply|use)\b/.test(text) || /发|回|用/.test(text);
+  const refersToCurrentResource = /这个|这套|this|same/.test(text) && hasStickerSource;
+  const requestsAlternative = resolveTelegramAlternativeStickerRequest(input, stickerContext.sticker);
+
+  if (!mentionsSticker && !refersToCurrentResource) {
+    return undefined;
+  }
+
+  if (!hasSendVerb && !rejectsText && !rejectsEmoji) {
+    return undefined;
+  }
+
+  return {
+    required: true,
+    action: "sticker",
+    reason: requestsAlternative
+      ? "same_set_alternative"
+      : refersToCurrentResource && stickerContext.source === "recent_history"
+        ? "recent_history_reference"
+      : hasCurrentStickerInput
+        ? "current_input_native_resource"
+        : "explicit_native_send",
+    textOnlyFallbackAllowed: false,
+  };
+}
+
+function toOptionalNumber(value: string | number | undefined): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed);
+    }
+  }
+  return undefined;
+}
+
+function isSupportedTelegramChannelAction(
+  action: string,
+): action is TelegramActionRequest["action"] {
+  return action === "send" || action === "sticker" || action === "edit" || action === "delete" || action === "react";
 }
 
 export function isTelegramPollingConflict(error: unknown): boolean {

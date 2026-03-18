@@ -9,6 +9,8 @@ export * from "./bash.js";
 export * from "./edit.js";
 export * from "./permission.js";
 export * from "./read.js";
+export { createChannelActionTool } from "./telegram-action.js";
+export { createChannelStoreTool } from "./telegram-sticker-store.js";
 export * from "./utils.js";
 export * from "./write.js";
 
