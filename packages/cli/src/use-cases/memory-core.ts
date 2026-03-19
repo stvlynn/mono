@@ -12,6 +12,10 @@ export interface MemoryStatusResult {
   v2StorePath: string;
   v2PrimaryEntityId: string;
   v2OpenVikingSync: string;
+  v2CurrentGoals: number;
+  v2CurrentTensions: number;
+  v2PendingQueue: number;
+  v2Conflicts: number;
   openViking: string;
   seekDb: string;
   records: number;
@@ -24,11 +28,19 @@ export interface MemoryRecallResult {
   records: MemoryRecord[];
 }
 
+export interface StructuredMemoryInspectResult {
+  selfRuntime: Awaited<ReturnType<import("@mono/agent-core").Agent["inspectStructuredMemory"]>>["selfRuntime"];
+  conflicts: Awaited<ReturnType<import("@mono/agent-core").Agent["inspectStructuredMemory"]>>["conflicts"];
+  pendingQueue: Awaited<ReturnType<import("@mono/agent-core").Agent["inspectStructuredMemory"]>>["pendingQueue"];
+  memoryPackage: Awaited<ReturnType<import("@mono/agent-core").Agent["inspectStructuredMemory"]>>["memoryPackage"];
+}
+
 export async function runMemoryStatus(): Promise<MemoryStatusResult> {
   const agent = await createInitializedAgent();
   const count = await agent.countMemories();
   const records = await agent.listMemories(1);
   const config = agent.getResolvedConfig();
+  const structured = await agent.inspectStructuredMemory(config.memory.v2.primaryEntityId);
   return {
     enabled: config.memory.enabled,
     autoInject: config.memory.autoInject,
@@ -39,6 +51,10 @@ export async function runMemoryStatus(): Promise<MemoryStatusResult> {
     v2StorePath: agent.getStructuredMemoryStorePath(),
     v2PrimaryEntityId: config.memory.v2.primaryEntityId,
     v2OpenVikingSync: config.memory.v2.openVikingSync,
+    v2CurrentGoals: structured.selfRuntime.currentGoals.length,
+    v2CurrentTensions: structured.selfRuntime.currentTensions.length,
+    v2PendingQueue: structured.pendingQueue.length,
+    v2Conflicts: structured.conflicts.length,
     openViking: config.memory.openViking.enabled ? config.memory.openViking.url ?? "<missing url>" : "disabled",
     seekDb: config.memory.seekDb.enabled
       ? `${config.memory.seekDb.mode} (${config.memory.seekDb.database ?? config.memory.seekDb.embeddedPath ?? "<missing target>"})`
@@ -71,4 +87,9 @@ export async function runMemoryRecall(query?: string): Promise<MemoryRecallResul
     ? (await Promise.all(plan.selectedIds.map((id) => agent.getMemoryRecord(id)))).filter((record): record is MemoryRecord => record !== null)
     : [];
   return { plan, records };
+}
+
+export async function runStructuredMemoryInspect(entityId?: string): Promise<StructuredMemoryInspectResult> {
+  const agent = await createInitializedAgent();
+  return agent.inspectStructuredMemory(entityId);
 }

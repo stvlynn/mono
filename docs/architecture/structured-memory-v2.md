@@ -42,9 +42,10 @@ Stored under `self/`:
 - `traits.json`
 - `roles.json`
 - `guides.json`
+- `runtime.json`
 - `narrative.jsonl`
 
-These describe stable identity, constraints, values, roles, and self-guidance.
+These describe stable identity, constraints, values, roles, self-guidance, and a lightweight runtime layer for current goals/tensions/task hints.
 
 ### Other-entity records
 
@@ -55,6 +56,7 @@ Stored under `others/<entityId>/`:
 - `inferred_traits.json`
 - `relationship_state.json`
 - `evidence.jsonl`
+- `conflicts.jsonl`
 
 These records are intentionally split:
 
@@ -76,22 +78,33 @@ This stores durable workspace facts and collaboration norms that are useful acro
 Stored under `episodic/`:
 
 - `events.jsonl`
+- `salience_queue.jsonl`
 
-Each event captures a turn-level summary, salience, and extracted candidate keys.
+Each event captures a turn-level summary, salience, and extracted candidate keys. The salience queue tracks pending observations before consolidation promotes or reconciles them.
 
 ## Turn Write Pipeline
 
-`persistStructuredMemoryTurn()` is the main write entrypoint.
+`persistStructuredMemoryTurn()` is the fast-path write entrypoint.
 
 For each persisted turn it:
 
 1. appends an episodic event
 2. extracts explicit preference evidence from the user message
 3. writes evidence records to the per-entity ledger
-4. consolidates preference records
-5. derives lightweight inference records when enabled
-6. updates relationship state
-7. updates communication notes on the entity profile
+4. appends salience-queue records for extracted observations
+5. updates self runtime state with current goals, tensions, and task hints
+
+`runStructuredMemoryConsolidation()` is the promotion step.
+
+It then:
+
+1. promotes queued observations into preference records
+2. records unresolved conflicts instead of overwriting contradictory signals
+3. derives lightweight inference records when enabled
+4. updates relationship state
+5. refreshes communication notes and self runtime state
+6. appends narrative updates for stable promotions or conflicts
+7. marks processed queue records
 
 This pipeline is intentionally heuristic and local-first. It does not run a separate background promotion job yet.
 
@@ -102,20 +115,23 @@ This pipeline is intentionally heuristic and local-first. It does not run a sepa
 The package combines:
 
 - self identity summary
+- self runtime summary
 - project memory summary
 - entity profile summary
 - relevant preferences
 - relevant inferences
 - relationship state
+- unresolved conflicts
 - recent episodic events
 - evidence samples referenced by selected entries
 - optional external retrieval items
 
-The planner currently ranks:
+The planner currently ranks and groups:
 
 - preferences by query token overlap plus confidence
 - inferences by query overlap, confidence, and status bonus
 - episodic events by query overlap plus salience
+- summaries into `selfGrounded`, `otherGrounded`, and `taskGroundedHints`
 
 ## Rendering and Prompt Injection
 

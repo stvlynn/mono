@@ -324,6 +324,14 @@ export class SessionManager {
     return sessions[0];
   }
 
+  static async listThreads(cwd: string, sessionsDir = getSessionsDir(cwd)): Promise<SessionSummary[]> {
+    return SessionManager.listSessions(cwd, sessionsDir);
+  }
+
+  static async latestThreadForCwd(cwd: string, sessionsDir = getSessionsDir(cwd)): Promise<SessionSummary | undefined> {
+    return SessionManager.latestForCwd(cwd, sessionsDir);
+  }
+
   static rootDirFromSessionFile(filePath: string): string {
     return dirname(dirname(filePath));
   }

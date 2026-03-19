@@ -5,12 +5,27 @@ export function renderStructuredMemoryPackage(
   memoryPackage: StructuredMemoryPackage,
   renderer: PromptRenderer = defaultPromptRenderer
 ): string {
-  if (memoryPackage.entries.length === 0 && memoryPackage.evidence.length === 0 && memoryPackage.externalItems.length === 0) {
+  if (
+    memoryPackage.entries.length === 0
+    && memoryPackage.evidence.length === 0
+    && memoryPackage.externalItems.length === 0
+    && memoryPackage.conflicts.length === 0
+  ) {
     return "";
   }
 
   return renderer.render("memory/structured_context_block", {
     active_entity_id: memoryPackage.activeEntityId,
+    self_grounded: memoryPackage.selfGrounded,
+    other_grounded: memoryPackage.otherGrounded,
+    task_grounded_hints: memoryPackage.taskGroundedHints,
+    conflicts: memoryPackage.conflicts.map((item) => ({
+      field: item.field,
+      old_value: item.oldValue,
+      new_value: item.newValue,
+      reason: item.reason,
+      status: item.status
+    })),
     entries: memoryPackage.entries,
     evidence: memoryPackage.evidence.map((item) => ({
       id: item.id,

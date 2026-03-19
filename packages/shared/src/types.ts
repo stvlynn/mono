@@ -139,6 +139,11 @@ export interface MonoProjectConfig {
 
 export type MonoTelegramDmPolicy = "pairing" | "allowlist" | "open" | "disabled";
 export type MonoSensitiveActionMode = "allow_all" | "blacklist" | "strict";
+export type MonoSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+export type MonoApprovalPolicy = "on-request" | "never" | "auto-approve";
+
+export type SandboxMode = MonoSandboxMode;
+export type ApprovalPolicy = MonoApprovalPolicy;
 
 export interface MonoTelegramApprovalConfig {
   allowChats: string[];
@@ -190,6 +195,8 @@ export interface MonoChannelsConfig {
 
 export interface MonoSettingsConfig {
   approvalMode: "default" | "always-ask" | "auto-approve-safe";
+  approvalPolicy: MonoApprovalPolicy;
+  sandboxMode: MonoSandboxMode;
   theme: string;
   sensitiveActionMode: MonoSensitiveActionMode;
 }
@@ -272,6 +279,9 @@ export type MemoryEvidenceType =
   | "project_fact";
 export type InferenceDecayPolicy = "slow" | "medium" | "fast";
 export type InferenceStatus = "hypothesis" | "reviewed" | "stable";
+export type PreferenceStatus = "observation" | "pattern" | "stable";
+export type ConflictStatus = "unresolved" | "monitoring" | "resolved";
+export type SalienceQueueStatus = "pending" | "processed";
 
 export interface MemoryEvidenceRecord {
   id: string;
@@ -341,10 +351,20 @@ export interface SelfGuidesRecord {
   conflictRules: SelfGuideConflictRule[];
 }
 
+export interface SelfRuntimeRecord {
+  updatedAt: number;
+  currentGoals: string[];
+  activeProjects: string[];
+  currentTensions: string[];
+  taskHints: string[];
+  lastReflectionAt?: number;
+}
+
 export interface NarrativeUpdateRecord {
   id: string;
   createdAt: number;
   eventId?: string;
+  event?: string;
   interpretation: string;
   carryForwardImplication: string;
   confidenceDelta?: number;
@@ -363,6 +383,11 @@ export interface OtherPreferenceRecord {
   polarity: "prefer" | "avoid";
   confidence: number;
   evidenceIds: string[];
+  status: PreferenceStatus;
+  occurrenceCount: number;
+  contexts: string[];
+  firstSeenAt: number;
+  lastConfirmedAt: number;
   updatedAt: number;
 }
 
@@ -380,7 +405,21 @@ export interface OtherInferenceRecord {
   basedOn: string[];
   decayPolicy: InferenceDecayPolicy;
   status: InferenceStatus;
+  firstObservedAt: number;
+  lastReviewedAt: number;
   updatedAt: number;
+}
+
+export interface OtherConflictRecord {
+  id: string;
+  entityId: string;
+  createdAt: number;
+  field: string;
+  oldValue: string;
+  newValue: string;
+  reason: string;
+  status: ConflictStatus;
+  evidenceIds: string[];
 }
 
 export interface OtherRelationshipStateRecord {
@@ -411,6 +450,29 @@ export interface EpisodicEventRecord {
   extractedPreferenceKeys: string[];
 }
 
+export interface PreferenceObservationRecord {
+  id: string;
+  key: string;
+  summary: string;
+  polarity: "prefer" | "avoid";
+  confidence: number;
+  evidenceIds: string[];
+  contextKey: string;
+  observedAt: number;
+}
+
+export interface SalienceQueueRecord {
+  id: string;
+  entityId: string;
+  createdAt: number;
+  eventId: string;
+  salience: number;
+  reason: string;
+  status: SalienceQueueStatus;
+  processedAt?: number;
+  observation?: PreferenceObservationRecord;
+}
+
 export interface StructuredMemoryPackageEntry {
   scope: StructuredMemoryScope;
   title: string;
@@ -423,6 +485,10 @@ export interface StructuredMemoryPackageEntry {
 export interface StructuredMemoryPackage {
   activeEntityId: string;
   generatedAt: number;
+  selfGrounded: StructuredMemoryPackageEntry[];
+  otherGrounded: StructuredMemoryPackageEntry[];
+  taskGroundedHints: StructuredMemoryPackageEntry[];
+  conflicts: OtherConflictRecord[];
   entries: StructuredMemoryPackageEntry[];
   evidence: MemoryEvidenceRecord[];
   externalItems: Array<{
@@ -592,6 +658,7 @@ export interface MonoConfigSummary {
 
 export type ContextSectionKind =
   | "operator_identity"
+  | "agent_guide"
   | "project_identity"
   | "runtime"
   | "task"
@@ -636,13 +703,22 @@ export interface ContextAssemblyReport {
   memory: ContextMemoryReport;
 }
 
+export interface ArtifactHandle {
+  id: string;
+  path: string;
+  mimeType?: string;
+  sizeBytes: number;
+}
+
 export interface ToolExecutionUpdate<TDetails = unknown> {
   content: string | ToolResultPart[];
+  artifact?: ArtifactHandle;
   details?: TDetails;
 }
 
 export interface ToolExecutionResult<TDetails = unknown> {
   content: string | ToolResultPart[];
+  artifact?: ArtifactHandle;
   details?: TDetails;
 }
 
@@ -866,6 +942,8 @@ export interface SessionSummary {
   cwd: string;
 }
 
+export type ThreadSummary = SessionSummary;
+
 export interface SessionNodeSummary {
   id: string;
   parentId?: string;
@@ -873,6 +951,8 @@ export interface SessionNodeSummary {
   timestamp: number;
   label: string;
 }
+
+export type ThreadNodeSummary = SessionNodeSummary;
 
 export interface MemoryDetailedTraceUser {
   type: "user";

@@ -47,6 +47,7 @@ Stored under the current workspace:
 - `.mono/memory-v2/` for structured self / other / project / episodic memory
 - `.mono/skills/` for workspace-local skill overrides and additions
 - `.mono/CONTEXT.md`, `.mono/IDENTITY.md`, and `.mono/MEMORY.md` for workspace bootstrap context
+- `AGENTS.md` for workspace-level agent guidance that is injected ahead of generic bootstrap docs when present
 
 ## Main Components
 

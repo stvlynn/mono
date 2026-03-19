@@ -1,10 +1,12 @@
 import type {
+  ApprovalPolicy,
   ApprovalRequest,
   AgentTool,
   MonoSensitiveActionMode,
   PermissionDecision,
   PermissionPolicy,
   PermissionRequest,
+  SandboxMode,
   ToolExecutionChannel,
 } from "@mono/shared";
 
@@ -12,6 +14,8 @@ export interface DefaultPermissionPolicyOptions {
   allowlistedChannels?: ToolExecutionChannel[];
   commandDenylist?: string[];
   sensitiveActionMode?: MonoSensitiveActionMode;
+  approvalPolicy?: ApprovalPolicy;
+  sandboxMode?: SandboxMode;
 }
 
 export interface WrappedToolOptions {
@@ -27,6 +31,8 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
   private readonly allowlistedChannels: ToolExecutionChannel[];
   private readonly commandDenylist: string[];
   private readonly sensitiveActionMode: MonoSensitiveActionMode;
+  private readonly approvalPolicy: ApprovalPolicy;
+  private readonly sandboxMode: SandboxMode;
 
   constructor(options: DefaultPermissionPolicyOptions = {}) {
     this.allowlistedChannels = options.allowlistedChannels ?? [];
@@ -34,11 +40,17 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
       ?.map((value) => normalizeCommand(value))
       .filter(Boolean) ?? [];
     this.sensitiveActionMode = options.sensitiveActionMode ?? "blacklist";
+    this.approvalPolicy = options.approvalPolicy ?? "on-request";
+    this.sandboxMode = requireSupportedSandboxMode(options.sandboxMode ?? "danger-full-access");
   }
 
   evaluate(request: PermissionRequest): PermissionDecision {
     if (request.toolName === "read") {
       return allowDecision();
+    }
+
+    if (this.sandboxMode === "read-only" && isBlockedInReadOnlySandbox(request.toolName)) {
+      return denyDecision(`Sandbox mode ${this.sandboxMode} forbids ${request.toolName}`);
     }
 
     if (isChannelActionPermissionRequest(request)) {
@@ -57,7 +69,7 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
       return allowDecision();
     }
 
-    return askDecision(`${request.toolName} requires confirmation by default`);
+    return this.applyApprovalPolicy(askDecision(`${request.toolName} requires confirmation by default`));
   }
 
   private matchesConfiguredCommandDenylist(command: string): boolean {
@@ -85,10 +97,10 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
       return denyDecision("Command matches configured denylist");
     }
     if (!this.isAllowlistedChannel(request.channel)) {
-      return askDecision("bash commands require confirmation by default");
+      return this.applyApprovalPolicy(askDecision("bash commands require confirmation by default"));
     }
 
-    return this.evaluateSensitiveBashCommand(command) ?? allowDecision();
+    return this.applyApprovalPolicy(this.evaluateSensitiveBashCommand(command) ?? allowDecision());
   }
 
   private evaluateSensitiveBashCommand(command: string): PermissionDecision | null {
@@ -120,15 +132,15 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
     const currentTargetId = request.channel?.id ?? "";
 
     if (!this.isAllowlistedChannel(request.channel)) {
-      return askDecision("channel_action requires confirmation by default");
+      return this.applyApprovalPolicy(askDecision("channel_action requires confirmation by default"));
     }
 
     if (targetId && currentTargetId && targetId !== currentTargetId) {
-      return askDecision("channel_action targeting another conversation requires confirmation");
+      return this.applyApprovalPolicy(askDecision("channel_action targeting another conversation requires confirmation"));
     }
 
     if (action === "edit" || action === "delete") {
-      return askDecision(`channel_action ${action} requires confirmation`);
+      return this.applyApprovalPolicy(askDecision(`channel_action ${action} requires confirmation`));
     }
 
     return allowDecision();
@@ -143,7 +155,23 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
       return allowDecision();
     }
 
-    return askDecision(`channel_store ${action || "upsert"} requires confirmation`);
+    return this.applyApprovalPolicy(askDecision(`channel_store ${action || "upsert"} requires confirmation`));
+  }
+
+  private applyApprovalPolicy(decision: PermissionDecision): PermissionDecision {
+    if (decision.type !== "ask") {
+      return decision;
+    }
+
+    if (this.approvalPolicy === "never") {
+      return denyDecision("Approval policy is set to never");
+    }
+
+    if (this.approvalPolicy === "auto-approve") {
+      return allowDecision();
+    }
+
+    return decision;
   }
 }
 
@@ -235,4 +263,16 @@ function askDecision(reason: string): PermissionDecision {
 
 function normalizeCommand(command: string): string {
   return command.trim().replace(/\s+/gu, " ").toLowerCase();
+}
+
+function isBlockedInReadOnlySandbox(toolName: string): boolean {
+  return toolName === "bash" || toolName === "write" || toolName === "edit";
+}
+
+function requireSupportedSandboxMode(mode: SandboxMode): Extract<SandboxMode, "read-only" | "danger-full-access"> {
+  if (mode === "workspace-write") {
+    throw new Error("Sandbox mode workspace-write is not implemented yet.");
+  }
+
+  return mode;
 }

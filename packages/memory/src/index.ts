@@ -5,6 +5,7 @@ export * from "./folder-store.js";
 export * from "./renderer.js";
 export * from "./store.js";
 export * from "./structured-pipeline.js";
+export * from "./structured-consolidation.js";
 export * from "./structured-renderer.js";
 export * from "./structured-retrieval.js";
 export * from "./structured-store.js";

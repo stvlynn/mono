@@ -3,12 +3,14 @@ import { hostname, userInfo } from "node:os";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import { defaultPromptRenderer, type PromptRenderer } from "@mono/prompts";
 import type {
+  ApprovalPolicy,
   BootstrapFileReport,
   BootstrapFileStatus,
   ContextAssemblyReport,
   ContextSectionKind,
   MemoryRecallPlan,
   ResolvedMonoConfig,
+  SandboxMode,
   ThinkingLevel,
   UnifiedModel,
   VerificationMode
@@ -23,6 +25,8 @@ export interface AssemblePromptContextInput {
   model: UnifiedModel;
   thinkingLevel: ThinkingLevel;
   verificationMode?: VerificationMode;
+  sandboxMode?: SandboxMode;
+  approvalPolicy?: ApprovalPolicy;
   autoApprove: boolean;
   config: ResolvedMonoConfig;
   taskContext?: string;
@@ -39,8 +43,19 @@ export interface AssemblePromptContextResult {
   sections: SystemPromptSection[];
 }
 
+interface BootstrapContextResult {
+  body: string;
+  bootstrapFiles: BootstrapFileReport[];
+}
+
+interface BootstrapFileLoadResult {
+  body: string;
+  report?: BootstrapFileReport;
+}
+
 const PROJECT_IDENTITY_PATH = ".mono/IDENTITY.md";
 const PROJECT_MEMORY_PATH = ".mono/MEMORY.md";
+const AGENT_GUIDE_PATH = "AGENTS.md";
 
 export async function assemblePromptContext(input: AssemblePromptContextInput): Promise<AssemblePromptContextResult> {
   const renderer = input.renderer ?? defaultPromptRenderer;
@@ -48,9 +63,30 @@ export async function assemblePromptContext(input: AssemblePromptContextInput): 
   const sectionReports: ContextAssemblyReport["sections"] = [];
   const bootstrapFiles: BootstrapFileReport[] = [];
   const usedBootstrapPaths = new Set<string>();
+  const preloadedBootstrapPaths = new Set<string>();
+  let remainingBootstrapChars = input.config.context.bootstrap.totalMaxChars;
+  const injectAgentGuide = shouldInjectBootstrapPath(input.config.context.bootstrap.files, AGENT_GUIDE_PATH);
 
   if (input.config.context.enabled && input.config.context.identity.injectOperator) {
     pushSection(sections, sectionReports, "operator_identity", "Operator Identity", buildOperatorIdentityBody(input));
+  }
+
+  if (input.config.context.enabled && input.config.context.bootstrap.enabled && injectAgentGuide) {
+    const agentGuide = await readBootstrapFileWithinBudget({
+      cwd: input.cwd,
+      filePath: AGENT_GUIDE_PATH,
+      maxCharsPerFile: input.config.context.bootstrap.maxCharsPerFile,
+      remainingChars: remainingBootstrapChars,
+    });
+    if (agentGuide.report) {
+      bootstrapFiles.push(agentGuide.report);
+      usedBootstrapPaths.add(AGENT_GUIDE_PATH);
+      preloadedBootstrapPaths.add(AGENT_GUIDE_PATH);
+      remainingBootstrapChars -= agentGuide.report.injectedChars;
+    }
+    if (agentGuide.body) {
+      pushSection(sections, sectionReports, "agent_guide", "Agent Guide", agentGuide.body);
+    }
   }
 
   if (input.config.context.enabled && input.config.context.identity.injectProjectIdentity) {
@@ -94,10 +130,11 @@ export async function assemblePromptContext(input: AssemblePromptContextInput): 
       cwd: input.cwd,
       files: input.config.context.bootstrap.files,
       maxCharsPerFile: input.config.context.bootstrap.maxCharsPerFile,
-      totalMaxChars: input.config.context.bootstrap.totalMaxChars,
+      remainingChars: remainingBootstrapChars,
       truncationWarning: input.config.context.bootstrap.truncationWarning,
       includeMemoryFile: input.config.context.memory.injectBootstrapMemoryFile,
-      usedPaths: usedBootstrapPaths
+      usedPaths: usedBootstrapPaths,
+      preloadedPaths: preloadedBootstrapPaths,
     });
     bootstrapFiles.push(...projectContext.bootstrapFiles);
     if (projectContext.body) {
@@ -201,7 +238,8 @@ function buildRuntimeBody(input: AssemblePromptContextInput): string {
     `Model: ${input.model.provider}/${input.model.modelId}`,
     `Thinking level: ${input.thinkingLevel}`,
     `Verification mode: ${input.verificationMode ?? "light"}`,
-    `Approval mode: ${input.autoApprove ? "auto-approve" : "interactive"}`,
+    `Sandbox mode: ${input.sandboxMode ?? input.config.settings.sandboxMode}`,
+    `Approval policy: ${input.autoApprove ? "auto-approve" : (input.approvalPolicy ?? input.config.settings.approvalPolicy)}`,
     "If the exact current time matters, verify it with a tool before acting."
   ];
   return lines.join("\n");
@@ -234,18 +272,23 @@ function buildDocsBody(entryPaths: string[]): string {
   ].join("\n");
 }
 
+function shouldInjectBootstrapPath(configuredPaths: string[], targetPath: string): boolean {
+  return configuredPaths.some((value) => value.trim() === targetPath);
+}
+
 async function buildProjectContext(input: {
   cwd: string;
   files: string[];
   maxCharsPerFile: number;
-  totalMaxChars: number;
+  remainingChars: number;
   truncationWarning: ResolvedMonoConfig["context"]["bootstrap"]["truncationWarning"];
   includeMemoryFile: boolean;
   usedPaths: Set<string>;
-}): Promise<{ body: string; bootstrapFiles: BootstrapFileReport[] }> {
+  preloadedPaths: Set<string>;
+}): Promise<BootstrapContextResult> {
   const blocks: string[] = [];
   const reports: BootstrapFileReport[] = [];
-  let remainingChars = input.totalMaxChars;
+  let remainingChars = input.remainingChars;
   let truncatedCount = 0;
 
   for (const configuredPath of input.files) {
@@ -255,7 +298,9 @@ async function buildProjectContext(input: {
     }
 
     if (input.usedPaths.has(normalizedPath)) {
-      reports.push(createBootstrapReport(normalizedPath, 0, 0, "skipped"));
+      if (!input.preloadedPaths.has(normalizedPath)) {
+        reports.push(createBootstrapReport(normalizedPath, 0, 0, "skipped"));
+      }
       continue;
     }
     if (normalizedPath === PROJECT_MEMORY_PATH && !input.includeMemoryFile) {
@@ -366,6 +411,48 @@ async function readOptionalContextFile(input: {
       truncated: false
     };
   }
+}
+
+async function readBootstrapFileWithinBudget(input: {
+  cwd: string;
+  filePath: string;
+  maxCharsPerFile: number;
+  remainingChars: number;
+}): Promise<BootstrapFileLoadResult> {
+  const loaded = await readOptionalContextFile({
+    cwd: input.cwd,
+    filePath: input.filePath,
+    maxChars: Math.min(input.maxCharsPerFile, Math.max(input.remainingChars, 0))
+  });
+  if (!loaded.exists) {
+    return { body: "" };
+  }
+
+  const report = createBudgetedBootstrapReport(input.filePath, loaded.rawChars, loaded.content, input.remainingChars, loaded.truncated);
+  return {
+    body: report.injectedChars > 0 ? loaded.content.slice(0, report.injectedChars).trim() : "",
+    report
+  };
+}
+
+function createBudgetedBootstrapReport(
+  path: string,
+  rawChars: number,
+  content: string,
+  remainingChars: number,
+  wasTruncatedOnRead: boolean
+): BootstrapFileReport {
+  if (remainingChars <= 0) {
+    return createBootstrapReport(path, rawChars, 0, "truncated");
+  }
+
+  const injectedChars = Math.min(content.length, remainingChars);
+  const status: BootstrapFileStatus =
+    injectedChars < rawChars || wasTruncatedOnRead
+      ? "truncated"
+      : "included";
+
+  return createBootstrapReport(path, rawChars, injectedChars, status);
 }
 
 function resolveWorkspacePath(cwd: string, filePath: string): string | undefined {

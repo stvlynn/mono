@@ -29,8 +29,10 @@ Summarize the maintainer-facing contract of the agent runtime.
 - `listProfiles()` / `setProfile()`
 - `listModels()` / `setModel()`
 - `listSessions()` / `switchSession(sessionId, branchHeadId?, options?)`
+- `listThreads()` / `resumeThread(threadId, branchHeadId?, options?)`
 - `listSessionNodes()` / `switchBranch()`
 - `inspectContext(prompt?)`
+- `inspectStructuredMemory(entityId?)`
 - `getLatestContextReport()`
 - memory inspection helpers used by CLI and TUI
 
@@ -74,8 +76,11 @@ Important contract:
 - `runTask()` options now include channel-aware execution hints such as `channel`, `interactionMode`, and `extraTaskContext`
 - `abort()` must stop the active run and prevent stale results from landing
 - prompt memory injection may combine execution memory and structured memory
+- task-end structured memory persistence now runs a fast-path observation write followed by consolidation
 - prompt skill injection may combine builtin, global, and project skills
 - local session replay and task todo state remain authoritative even when OpenViking is enabled
+- `listThreads()` and `resumeThread()` are public thread-flavored aliases over the current session store
+- `inspectStructuredMemory()` exposes self runtime state, unresolved conflicts, pending queue items, and the current structured-memory package for one entity
 - image-bearing inputs are rejected up front when the selected model reports `supportsAttachments === false`
 - `switchSession(..., { preserveCurrentModel: true })` allows a caller to reuse an existing session transcript without letting older session metadata replace the current resolved model
 

@@ -72,6 +72,25 @@ describe("tool permission policy", () => {
     });
   });
 
+  it("can deny interactive confirmations entirely via approval policy", () => {
+    const policy = new DefaultPermissionPolicy({
+      approvalPolicy: "never",
+    });
+
+    expect(policy.evaluate(createRequest())).toEqual({
+      type: "deny",
+      reason: "Approval policy is set to never",
+    });
+  });
+
+  it("can auto-approve non-destructive confirmations via approval policy", () => {
+    const policy = new DefaultPermissionPolicy({
+      approvalPolicy: "auto-approve",
+    });
+
+    expect(policy.evaluate(createRequest())).toEqual({ type: "allow" });
+  });
+
   it("asks for sensitive bash commands on allowlisted channels in blacklist mode", () => {
     const policy = new DefaultPermissionPolicy({
       allowlistedChannels: [telegramDmChannel],
@@ -196,5 +215,38 @@ describe("tool permission policy", () => {
       type: "ask",
       reason: "channel_store upsert requires confirmation",
     });
+  });
+
+  it("blocks write/edit tools in read-only sandbox mode", () => {
+    const policy = new DefaultPermissionPolicy({
+      sandboxMode: "read-only",
+    });
+
+    expect(policy.evaluate(createRequest())).toEqual({
+      type: "deny",
+      reason: "Sandbox mode read-only forbids bash",
+    });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "write",
+      input: { path: "README.md", content: "hello" },
+    }))).toEqual({
+      type: "deny",
+      reason: "Sandbox mode read-only forbids write",
+    });
+
+    expect(policy.evaluate(createRequest({
+      toolName: "edit",
+      input: { path: "README.md", oldText: "a", newText: "b" },
+    }))).toEqual({
+      type: "deny",
+      reason: "Sandbox mode read-only forbids edit",
+    });
+  });
+
+  it("rejects unsupported workspace-write sandbox mode", () => {
+    expect(() => new DefaultPermissionPolicy({
+      sandboxMode: "workspace-write",
+    })).toThrow("Sandbox mode workspace-write is not implemented yet.");
   });
 });

@@ -4,10 +4,9 @@ import type {
   EpisodicEventRecord,
   MemoryEvidenceRecord,
   MonoMemoryV2Config,
-  OtherInferenceRecord,
-  OtherPreferenceRecord,
-  OtherPreferencesRecord,
-  OtherRelationshipStateRecord
+  PreferenceObservationRecord,
+  SalienceQueueRecord,
+  SelfRuntimeRecord,
 } from "@mono/shared";
 import { FolderStructuredMemoryStore } from "./structured-store.js";
 
@@ -24,69 +23,39 @@ export interface StructuredMemoryTurnInput {
 export interface StructuredMemoryTurnResult {
   event: EpisodicEventRecord;
   evidence: MemoryEvidenceRecord[];
-  preferences: OtherPreferencesRecord;
-  inferences: OtherInferenceRecord[];
-  relationshipState: OtherRelationshipStateRecord;
+  observations: PreferenceObservationRecord[];
+  queueRecords: SalienceQueueRecord[];
+  selfRuntime: SelfRuntimeRecord;
 }
 
 export async function persistStructuredMemoryTurn(input: StructuredMemoryTurnInput): Promise<StructuredMemoryTurnResult> {
   await input.store.ensureLayout();
-  const summaries = collectAssistantSummaries(input.assistantMessages);
-  const extracted = extractPreferenceEvidence(input.userMessage, input.entityId, input.sessionId);
+  const now = Date.now();
+  const assistantSummaries = collectAssistantSummaries(input.assistantMessages);
+  const observations = extractPreferenceObservations(input.userMessage, input.sessionId, input.branchHeadId, now);
+
   const event = await input.store.appendEpisodicEvent({
-    createdAt: Date.now(),
+    createdAt: now,
     entityId: input.entityId,
     sessionId: input.sessionId,
     branchHeadId: input.branchHeadId,
     queryText: input.userMessage,
-    summary: buildEventSummary(input.userMessage, summaries),
-    messages: [input.userMessage, ...summaries].slice(0, 4),
-    salience: extracted.length > 0 ? 0.9 : 0.4,
-    extractedPreferenceKeys: extracted.map((item) => item.preference.key)
+    summary: buildEventSummary(input.userMessage, assistantSummaries),
+    messages: [input.userMessage, ...assistantSummaries].slice(0, 4),
+    salience: observations.length > 0 ? 0.9 : 0.4,
+    extractedPreferenceKeys: observations.map((item) => item.key)
   });
 
-  const evidence: MemoryEvidenceRecord[] = [];
-  for (const item of extracted) {
-    evidence.push(
-      await input.store.appendEvidence(input.entityId, {
-        createdAt: Date.now(),
-        type: item.type,
-        content: item.content,
-        summary: item.preference.summary,
-        weight: item.weight,
-        sessionId: input.sessionId,
-        eventId: event.id,
-        tags: [item.preference.key, item.preference.polarity]
-      })
-    );
-  }
-
-  const preferences = await consolidatePreferences(input.store, input.config, input.entityId, extracted, evidence);
-  const inferences = input.config.enableInference
-    ? await consolidateInferences(input.store, input.config, input.entityId, preferences.items)
-    : [];
-  const relationshipState = await updateRelationshipState(input.store, input.entityId, preferences.items);
-  await input.store.writeOtherPreferences(input.entityId, preferences);
-  await input.store.writeOtherInferences(input.entityId, inferences);
-  await input.store.upsertRelationshipState(input.entityId, relationshipState);
-
-  const currentProfile = await input.store.getOtherProfile(input.entityId);
-  const communicationNotes = [
-    ...currentProfile.communicationNotes,
-    ...preferences.items
-      .filter((item) => item.key === "prefers_directness" || item.key === "prefers_brief_answers")
-      .map((item) => item.summary)
-  ];
-  await input.store.upsertOtherProfile(input.entityId, {
-    communicationNotes: [...new Set(communicationNotes)].slice(-6)
-  });
+  const evidence = await appendEvidenceRecords(input.store, input.entityId, observations, input.sessionId, event.id, now);
+  const queueRecords = await appendSalienceQueueRecords(input.store, input.entityId, event, observations, now);
+  const selfRuntime = await updateSelfRuntime(input.store, input.userMessage, observations);
 
   return {
     event,
     evidence,
-    preferences,
-    inferences,
-    relationshipState
+    observations,
+    queueRecords,
+    selfRuntime
   };
 }
 
@@ -105,11 +74,154 @@ function collectAssistantSummaries(messages: ConversationMessage[]): string[] {
 }
 
 function buildEventSummary(userMessage: string, assistantSummaries: string[]): string {
-  const parts = [
+  return [
     `User request: ${summarize(userMessage, 180)}`,
-    assistantSummaries[0] ? `Assistant outcome: ${summarize(assistantSummaries[0], 180)}` : ""
-  ];
-  return parts.filter(Boolean).join("\n");
+    assistantSummaries[0] ? `Assistant outcome: ${summarize(assistantSummaries[0], 180)}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+async function appendEvidenceRecords(
+  store: FolderStructuredMemoryStore,
+  entityId: string,
+  observations: PreferenceObservationRecord[],
+  sessionId: string | undefined,
+  eventId: string,
+  createdAt: number
+): Promise<MemoryEvidenceRecord[]> {
+  const evidence: MemoryEvidenceRecord[] = [];
+  for (const observation of observations) {
+    const record = await store.appendEvidence(entityId, {
+      createdAt,
+      type: "explicit_preference",
+      content: observation.summary,
+      summary: observation.summary,
+      weight: observation.confidence,
+      sessionId,
+      eventId,
+      tags: [observation.key, observation.polarity]
+    });
+    evidence.push(record);
+    observation.evidenceIds = [record.id];
+  }
+  return evidence;
+}
+
+async function appendSalienceQueueRecords(
+  store: FolderStructuredMemoryStore,
+  entityId: string,
+  event: EpisodicEventRecord,
+  observations: PreferenceObservationRecord[],
+  createdAt: number
+): Promise<SalienceQueueRecord[]> {
+  const queueRecords: SalienceQueueRecord[] = [];
+  if (observations.length === 0) {
+    return queueRecords;
+  }
+
+  for (const observation of observations) {
+    queueRecords.push(await store.appendSalienceQueueRecord({
+      entityId,
+      createdAt,
+      eventId: event.id,
+      salience: event.salience,
+      reason: summarize(event.queryText, 120),
+      status: "pending",
+      observation
+    }));
+  }
+
+  return queueRecords;
+}
+
+async function updateSelfRuntime(
+  store: FolderStructuredMemoryStore,
+  userMessage: string,
+  observations: PreferenceObservationRecord[]
+): Promise<SelfRuntimeRecord> {
+  const current = await store.getSelfRuntime();
+  const currentGoals = uniqueTail([...current.currentGoals, summarize(userMessage, 120)], 6);
+  const currentTensions = uniqueTail([
+    ...current.currentTensions,
+    ...observations.filter((item) => item.polarity === "avoid").map((item) => item.summary)
+  ], 6);
+  const taskHints = uniqueTail([
+    ...current.taskHints,
+    ...observations.map((item) => item.summary)
+  ], 6);
+  return store.upsertSelfRuntime({
+    currentGoals,
+    currentTensions,
+    taskHints
+  });
+}
+
+function extractPreferenceObservations(
+  text: string,
+  sessionId: string | undefined,
+  branchHeadId: string | undefined,
+  observedAt: number
+): PreferenceObservationRecord[] {
+  const normalized = text.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const candidates = PREFERENCE_PATTERNS.flatMap((pattern) => {
+    if (!pattern.patterns.some((regex) => regex.test(normalized))) {
+      return [];
+    }
+
+    return [{
+      id: createId(),
+      key: pattern.key,
+      summary: pattern.summary,
+      polarity: pattern.polarity,
+      confidence: pattern.weight,
+      evidenceIds: [],
+      contextKey: buildContextKey(sessionId, branchHeadId),
+      observedAt
+    } satisfies PreferenceObservationRecord];
+  });
+
+  if (candidates.length > 0) {
+    return dedupeObservations(candidates);
+  }
+
+  if (!EXPLICIT_PREFERENCE_MARKERS.some((regex) => regex.test(normalized))) {
+    return [];
+  }
+
+  return [{
+    id: createId(),
+    key: toPreferenceKey(normalized, sessionId),
+    summary: summarize(normalized, 160),
+    polarity: /(不要|别|不喜欢|avoid|don't|do not)/iu.test(normalized) ? "avoid" : "prefer",
+    confidence: 0.8,
+    evidenceIds: [],
+    contextKey: buildContextKey(sessionId, branchHeadId),
+    observedAt
+  }];
+}
+
+function dedupeObservations(items: PreferenceObservationRecord[]): PreferenceObservationRecord[] {
+  const deduped = new Map<string, PreferenceObservationRecord>();
+  for (const item of items) {
+    deduped.set(item.key, item);
+  }
+  return [...deduped.values()];
+}
+
+function buildContextKey(sessionId: string | undefined, branchHeadId: string | undefined): string {
+  return [sessionId ?? "session", branchHeadId ?? "root"].join(":");
+}
+
+function toPreferenceKey(text: string, sessionId: string | undefined): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/gu, "_")
+    .replace(/^_+|_+$/gu, "")
+    .slice(0, 48);
+  return slug || `${sessionId ?? "default"}_${createId().slice(0, 8)}`;
 }
 
 function summarize(text: string, limit: number): string {
@@ -120,212 +232,8 @@ function summarize(text: string, limit: number): string {
   return `${normalized.slice(0, limit - 1)}…`;
 }
 
-function extractPreferenceEvidence(
-  text: string,
-  entityId: string,
-  sessionId?: string
-): Array<{
-  type: MemoryEvidenceRecord["type"];
-  content: string;
-  weight: number;
-  preference: OtherPreferenceRecord;
-}> {
-  const normalized = text.trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const candidates = PREFERENCE_PATTERNS.flatMap((pattern) => {
-    if (!pattern.patterns.some((regex) => regex.test(normalized))) {
-      return [];
-    }
-    return [{
-      type: "explicit_preference" as const,
-      content: normalized,
-      weight: pattern.weight,
-      preference: {
-        key: pattern.key,
-        summary: pattern.summary,
-        polarity: pattern.polarity,
-        confidence: pattern.weight,
-        evidenceIds: [],
-        updatedAt: Date.now()
-      }
-    }];
-  });
-
-  if (candidates.length > 0) {
-    return dedupePreferenceCandidates(candidates);
-  }
-
-  if (!EXPLICIT_PREFERENCE_MARKERS.some((regex) => regex.test(normalized))) {
-    return [];
-  }
-
-  const derivedKey = toPreferenceKey(normalized, sessionId, entityId);
-  return [{
-    type: "explicit_preference",
-    content: normalized,
-    weight: 0.8,
-    preference: {
-      key: derivedKey,
-      summary: summarize(normalized, 160),
-      polarity: /(不要|别|不喜欢|avoid|don't|do not)/iu.test(normalized) ? "avoid" : "prefer",
-      confidence: 0.8,
-      evidenceIds: [],
-      updatedAt: Date.now()
-    }
-  }];
-}
-
-function dedupePreferenceCandidates<T extends { preference: { key: string } }>(items: T[]): T[] {
-  const deduped = new Map<string, T>();
-  for (const item of items) {
-    deduped.set(item.preference.key, item);
-  }
-  return [...deduped.values()];
-}
-
-function toPreferenceKey(text: string, sessionId: string | undefined, entityId: string): string {
-  const slug = text
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/gu, "_")
-    .replace(/^_+|_+$/gu, "")
-    .slice(0, 48);
-  return slug || `${entityId}_${sessionId ?? "default"}_${createId().slice(0, 8)}`;
-}
-
-async function consolidatePreferences(
-  store: FolderStructuredMemoryStore,
-  config: MonoMemoryV2Config,
-  entityId: string,
-  extracted: Array<{ preference: OtherPreferenceRecord }>,
-  evidence: MemoryEvidenceRecord[]
-): Promise<OtherPreferencesRecord> {
-  const current = await store.getOtherPreferences(entityId);
-  const nextItems = new Map(current.items.map((item) => [item.key, item]));
-
-  for (const candidate of extracted) {
-    const matchingEvidence = evidence.filter((item) => item.tags.includes(candidate.preference.key));
-    const existing = nextItems.get(candidate.preference.key);
-    const evidenceIds = [...new Set([...(existing?.evidenceIds ?? []), ...matchingEvidence.map((item) => item.id)])];
-    const confidence = Math.min(
-      0.99,
-      Math.max(candidate.preference.confidence, (existing?.confidence ?? 0)) + Math.min(evidenceIds.length, 4) * 0.03
-    );
-    if (evidenceIds.length < config.promotion.stablePreferenceOccurrences && candidate.preference.confidence < 0.95) {
-      nextItems.set(candidate.preference.key, {
-        ...(existing ?? candidate.preference),
-        confidence,
-        evidenceIds,
-        updatedAt: Date.now()
-      });
-      continue;
-    }
-    nextItems.set(candidate.preference.key, {
-      ...(existing ?? candidate.preference),
-      summary: candidate.preference.summary,
-      polarity: candidate.preference.polarity,
-      confidence,
-      evidenceIds,
-      updatedAt: Date.now()
-    });
-  }
-
-  return {
-    entityId,
-    updatedAt: Date.now(),
-    items: [...nextItems.values()].sort((left, right) => right.updatedAt - left.updatedAt)
-  };
-}
-
-async function consolidateInferences(
-  store: FolderStructuredMemoryStore,
-  config: MonoMemoryV2Config,
-  entityId: string,
-  preferences: OtherPreferenceRecord[]
-): Promise<OtherInferenceRecord[]> {
-  const current = await store.getOtherInferences(entityId);
-  const next = new Map(current.map((item) => [item.trait, item]));
-  for (const inference of deriveInferencesFromPreferences(preferences, config)) {
-    const existing = next.get(inference.trait);
-    next.set(inference.trait, {
-      ...(existing ?? inference),
-      ...inference,
-      updatedAt: Date.now(),
-      basedOn: [...new Set([...(existing?.basedOn ?? []), ...inference.basedOn])]
-    });
-  }
-  return [...next.values()].sort((left, right) => right.confidence - left.confidence);
-}
-
-function deriveInferencesFromPreferences(
-  preferences: OtherPreferenceRecord[],
-  config: MonoMemoryV2Config
-): OtherInferenceRecord[] {
-  const items: OtherInferenceRecord[] = [];
-  const directness = preferences.find((item) => item.key === "prefers_directness");
-  if (directness) {
-    items.push({
-      id: `inf-${directness.key}`,
-      trait: "prefers_directness",
-      summary: "Respond better to direct and low-friction answers.",
-      confidence: directness.confidence,
-      basedOn: directness.evidenceIds,
-      decayPolicy: "slow",
-      status: directness.evidenceIds.length >= config.promotion.stablePreferenceOccurrences ? "stable" : "reviewed",
-      updatedAt: Date.now()
-    });
-  }
-
-  const lowTolerance = preferences.filter((item) =>
-    item.key === "avoid_unsolicited_summaries"
-    || item.key === "avoid_unsolicited_reassurance"
-    || item.key === "avoid_unsolicited_assumptions"
-  );
-  if (lowTolerance.length > 0) {
-    items.push({
-      id: "inf-low_tolerance_for_unsolicited_expansion",
-      trait: "low_tolerance_for_unsolicited_expansion",
-      summary: "Unsolicited expansion, reassurance, or assumptions tend to reduce response quality.",
-      confidence: Math.min(0.98, average(lowTolerance.map((item) => item.confidence)) + 0.05),
-      basedOn: [...new Set(lowTolerance.flatMap((item) => item.evidenceIds))],
-      decayPolicy: "medium",
-      status: lowTolerance.length >= config.promotion.minPatternOccurrences ? "reviewed" : "hypothesis",
-      updatedAt: Date.now()
-    });
-  }
-  return items;
-}
-
-async function updateRelationshipState(
-  store: FolderStructuredMemoryStore,
-  entityId: string,
-  preferences: OtherPreferenceRecord[]
-): Promise<OtherRelationshipStateRecord> {
-  const current = await store.getRelationshipState(entityId);
-  const recentTensions = [
-    ...current.recentTensions,
-    ...preferences
-      .filter((item) => item.polarity === "avoid")
-      .map((item) => item.summary)
-  ];
-  const collaborationMode = preferences.some((item) => item.key === "prefers_directness")
-    ? "direct"
-    : current.collaborationMode;
-  const trustDelta = preferences.some((item) => item.polarity === "prefer") ? 0.02 : 0;
-  return {
-    ...current,
-    entityId,
-    updatedAt: Date.now(),
-    collaborationMode,
-    trustLevel: Math.min(0.95, current.trustLevel + trustDelta),
-    recentTensions: [...new Set(recentTensions)].slice(-5)
-  };
-}
-
-function average(values: number[]): number {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+function uniqueTail(items: string[], limit: number): string[] {
+  return [...new Set(items.filter(Boolean))].slice(-limit);
 }
 
 const EXPLICIT_PREFERENCE_MARKERS = [
@@ -344,7 +252,7 @@ const EXPLICIT_PREFERENCE_MARKERS = [
 const PREFERENCE_PATTERNS: Array<{
   key: string;
   summary: string;
-  polarity: OtherPreferenceRecord["polarity"];
+  polarity: PreferenceObservationRecord["polarity"];
   weight: number;
   patterns: RegExp[];
 }> = [

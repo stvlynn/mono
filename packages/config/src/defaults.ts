@@ -144,6 +144,8 @@ export function createDefaultGlobalConfig(): MonoGlobalConfig {
 export function createDefaultSettingsConfig(): MonoSettingsConfig {
   return {
     approvalMode: "default",
+    approvalPolicy: "on-request",
+    sandboxMode: "danger-full-access",
     theme: "system",
     sensitiveActionMode: "blacklist"
   };
@@ -468,6 +470,7 @@ export function createDefaultContextConfig(): MonoContextConfig {
         ".mono/CONTEXT.md",
         ".mono/IDENTITY.md",
         ".mono/MEMORY.md",
+        "AGENTS.md",
         "README.md",
         "docs/getting-started/repo-overview.md",
         "docs/architecture/system-overview.md"

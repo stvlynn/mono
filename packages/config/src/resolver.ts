@@ -175,10 +175,35 @@ function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChan
 
 function resolveSettingsConfig(globalConfig: MonoGlobalConfig): MonoSettingsConfig {
   const defaults = createDefaultSettingsConfig();
-  return {
+  const resolved = {
     ...defaults,
     ...(globalConfig.mono.settings ?? {})
   };
+  return {
+    ...resolved,
+    approvalPolicy: requireConfiguredApprovalPolicy(resolved.approvalPolicy),
+    sandboxMode: requireConfiguredSandboxMode(resolved.sandboxMode),
+  };
+}
+
+function requireConfiguredApprovalPolicy(value: string): MonoSettingsConfig["approvalPolicy"] {
+  if (value === "on-request" || value === "never" || value === "auto-approve") {
+    return value;
+  }
+
+  throw new Error(`Invalid mono.settings.approvalPolicy: ${value}`);
+}
+
+function requireConfiguredSandboxMode(value: string): MonoSettingsConfig["sandboxMode"] {
+  if (value === "read-only" || value === "danger-full-access") {
+    return value;
+  }
+
+  if (value === "workspace-write") {
+    throw new Error("mono.settings.sandboxMode=workspace-write is not implemented yet.");
+  }
+
+  throw new Error(`Invalid mono.settings.sandboxMode: ${value}`);
 }
 
 export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoConfigSummary> {

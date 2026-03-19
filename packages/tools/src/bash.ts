@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { type AgentTool, type ToolExecutionResult } from "@mono/shared";
 import { z } from "zod";
-import { formatBytes, truncateText } from "./utils.js";
+import { persistArtifactFile } from "./artifact-store.js";
+import { truncateText } from "./utils.js";
 
 const schema = z.object({
   command: z.string(),
@@ -78,12 +79,22 @@ export function createBashTool(cwd: string): AgentTool<BashInput, BashToolDetail
         });
       });
 
-      stream.end();
+      await new Promise<void>((resolve, reject) => {
+        stream.on("error", reject);
+        stream.end(resolve);
+      });
+      const artifact = truncated
+        ? await persistArtifactFile(cwd, "bash", tempFile)
+        : undefined;
+      const content = artifact
+        ? `${truncateText(output)}\n\n[artifact ${artifact.path}]`
+        : truncateText(output);
       return {
-        content: truncateText(output),
+        content,
+        artifact,
         details: {
           exitCode,
-          fullOutputPath: truncated ? tempFile : undefined,
+          fullOutputPath: artifact?.path,
           truncated
         }
       };

@@ -6,7 +6,8 @@ import {
   runMemoryRecall,
   runMemorySearch,
   runMemoryShow,
-  runMemoryStatus
+  runMemoryStatus,
+  runStructuredMemoryInspect
 } from "../use-cases/memory-core.js";
 import {
   runExportOpenViking,
@@ -37,11 +38,23 @@ export function registerMemoryCommands(program: Command): void {
       output.write(`V2 store path: ${payload.v2StorePath}\n`);
       output.write(`V2 primary entity: ${payload.v2PrimaryEntityId}\n`);
       output.write(`V2 OpenViking sync: ${payload.v2OpenVikingSync}\n`);
+      output.write(`V2 current goals: ${payload.v2CurrentGoals}\n`);
+      output.write(`V2 current tensions: ${payload.v2CurrentTensions}\n`);
+      output.write(`V2 pending queue: ${payload.v2PendingQueue}\n`);
+      output.write(`V2 conflicts: ${payload.v2Conflicts}\n`);
       output.write(`OpenViking: ${payload.openViking}\n`);
       output.write(`SeekDB: ${payload.seekDb}\n`);
       output.write(`Records: ${payload.records}\n`);
       output.write(`Current session: ${payload.currentSession}\n`);
       output.write(`Last memory: ${payload.lastMemory}\n`);
+    });
+
+  memory
+    .command("structured")
+    .description("Inspect the current structured memory package and supporting state")
+    .argument("[entityId]", "entity id; defaults to the configured primary entity")
+    .action(async (entityId?: string) => {
+      writeJson(await runStructuredMemoryInspect(entityId));
     });
 
   memory

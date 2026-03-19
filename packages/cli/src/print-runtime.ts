@@ -1,7 +1,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { Agent } from "@mono/agent-core";
-import type { TaskInput } from "@mono/shared";
+import type { ApprovalPolicy, SandboxMode, TaskInput } from "@mono/shared";
 
 export async function promptApproval(): Promise<(reason: { toolName: string; reason: string; input: unknown }) => Promise<boolean>> {
   const rl = createInterface({ input, output });
@@ -15,13 +15,23 @@ export async function promptApproval(): Promise<(reason: { toolName: string; rea
 
 export async function runPrint(
   inputText: string | TaskInput,
-  options: { model?: string; profile?: string; baseURL?: string; yes?: boolean; continueSession?: boolean }
+  options: {
+    model?: string;
+    profile?: string;
+    baseURL?: string;
+    yes?: boolean;
+    sandboxMode?: SandboxMode;
+    approvalPolicy?: ApprovalPolicy;
+    continueSession?: boolean;
+  }
 ): Promise<void> {
   const agent = new Agent({
     model: options.model,
     profile: options.profile,
     baseURL: options.baseURL,
     autoApprove: options.yes,
+    sandboxMode: options.sandboxMode,
+    approvalPolicy: options.approvalPolicy,
     continueSession: options.continueSession
   });
   if (!options.yes) {

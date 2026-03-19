@@ -1,10 +1,11 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendJsonLine, createId, readJsonFile, readJsonLines, writeJsonFile } from "@mono/shared";
 import type {
   EpisodicEventRecord,
   MemoryEvidenceRecord,
   NarrativeUpdateRecord,
+  OtherConflictRecord,
   OtherEntityProfileRecord,
   OtherInferenceRecord,
   OtherPreferencesRecord,
@@ -13,8 +14,10 @@ import type {
   SelfGuidesRecord,
   SelfIdentityRecord,
   SelfRoleRecord,
+  SelfRuntimeRecord,
   SelfTraitRecord,
-  SelfValueRecord
+  SelfValueRecord,
+  SalienceQueueRecord
 } from "@mono/shared";
 
 export class FolderStructuredMemoryStore {
@@ -95,6 +98,28 @@ export class FolderStructuredMemoryStore {
     return next;
   }
 
+  async getSelfRuntime(): Promise<SelfRuntimeRecord> {
+    return (
+      await readJsonFile<SelfRuntimeRecord>(this.selfRuntimePath())
+    ) ?? defaultSelfRuntimeRecord();
+  }
+
+  async upsertSelfRuntime(patch: Partial<SelfRuntimeRecord>): Promise<SelfRuntimeRecord> {
+    const current = await this.getSelfRuntime();
+    const next: SelfRuntimeRecord = {
+      ...current,
+      ...patch,
+      updatedAt: Date.now(),
+      currentGoals: patch.currentGoals ?? current.currentGoals,
+      activeProjects: patch.activeProjects ?? current.activeProjects,
+      currentTensions: patch.currentTensions ?? current.currentTensions,
+      taskHints: patch.taskHints ?? current.taskHints,
+      lastReflectionAt: patch.lastReflectionAt ?? current.lastReflectionAt
+    };
+    await writeJsonFile(this.selfRuntimePath(), next);
+    return next;
+  }
+
   async appendNarrativeUpdate(record: Omit<NarrativeUpdateRecord, "id"> & { id?: string }): Promise<NarrativeUpdateRecord> {
     const next: NarrativeUpdateRecord = {
       ...record,
@@ -149,9 +174,16 @@ export class FolderStructuredMemoryStore {
   }
 
   async getOtherPreferences(entityId: string): Promise<OtherPreferencesRecord> {
-    return (
-      await readJsonFile<OtherPreferencesRecord>(this.otherPreferencesPath(entityId))
-    ) ?? defaultOtherPreferencesRecord(entityId);
+    const record = await readJsonFile<OtherPreferencesRecord>(this.otherPreferencesPath(entityId));
+    if (!record) {
+      return defaultOtherPreferencesRecord(entityId);
+    }
+
+    return {
+      entityId,
+      updatedAt: record.updatedAt ?? 0,
+      items: record.items.map((item) => normalizePreferenceRecord(item))
+    };
   }
 
   async writeOtherPreferences(entityId: string, record: OtherPreferencesRecord): Promise<void> {
@@ -159,7 +191,8 @@ export class FolderStructuredMemoryStore {
   }
 
   async getOtherInferences(entityId: string): Promise<OtherInferenceRecord[]> {
-    return (await readJsonFile<OtherInferenceRecord[]>(this.otherInferencesPath(entityId))) ?? [];
+    const records = await readJsonFile<OtherInferenceRecord[]>(this.otherInferencesPath(entityId));
+    return (records ?? []).map((item) => normalizeInferenceRecord(item));
   }
 
   async writeOtherInferences(entityId: string, inferences: OtherInferenceRecord[]): Promise<void> {
@@ -212,6 +245,31 @@ export class FolderStructuredMemoryStore {
       .slice(0, options.limit ?? filtered.length);
   }
 
+  async appendConflict(
+    entityId: string,
+    record: Omit<OtherConflictRecord, "id" | "entityId"> & { id?: string }
+  ): Promise<OtherConflictRecord> {
+    const next: OtherConflictRecord = {
+      ...record,
+      id: record.id ?? createId(),
+      entityId
+    };
+    await appendJsonLine(this.otherConflictsPath(entityId), next);
+    return next;
+  }
+
+  async listConflicts(options: {
+    entityId: string;
+    limit?: number;
+    status?: OtherConflictRecord["status"];
+  }): Promise<OtherConflictRecord[]> {
+    const conflicts = await readJsonLines<OtherConflictRecord>(this.otherConflictsPath(options.entityId));
+    return conflicts
+      .filter((item) => options.status ? item.status === options.status : true)
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, options.limit ?? conflicts.length);
+  }
+
   async appendEpisodicEvent(record: Omit<EpisodicEventRecord, "id"> & { id?: string }): Promise<EpisodicEventRecord> {
     const next: EpisodicEventRecord = {
       ...record,
@@ -232,6 +290,34 @@ export class FolderStructuredMemoryStore {
     return filtered
       .sort((left, right) => right.createdAt - left.createdAt)
       .slice(0, options.limit ?? filtered.length);
+  }
+
+  async appendSalienceQueueRecord(record: Omit<SalienceQueueRecord, "id"> & { id?: string }): Promise<SalienceQueueRecord> {
+    const next: SalienceQueueRecord = {
+      ...record,
+      id: record.id ?? createId()
+    };
+    await appendJsonLine(this.salienceQueuePath(), next);
+    return next;
+  }
+
+  async listSalienceQueue(options: {
+    entityId?: string;
+    status?: SalienceQueueRecord["status"];
+    limit?: number;
+  } = {}): Promise<SalienceQueueRecord[]> {
+    const queue = await readJsonLines<SalienceQueueRecord>(this.salienceQueuePath());
+    return queue
+      .filter((item) => options.entityId ? item.entityId === options.entityId : true)
+      .filter((item) => options.status ? item.status === options.status : true)
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .slice(0, options.limit ?? queue.length);
+  }
+
+  async replaceSalienceQueue(records: SalienceQueueRecord[]): Promise<void> {
+    const lines = records.map((record) => JSON.stringify(record)).join("\n");
+    await mkdir(this.episodicDir(), { recursive: true });
+    await writeFile(this.salienceQueuePath(), lines ? `${lines}\n` : "", "utf8");
   }
 
   private selfDir(): string {
@@ -270,6 +356,10 @@ export class FolderStructuredMemoryStore {
     return join(this.selfDir(), "guides.json");
   }
 
+  private selfRuntimePath(): string {
+    return join(this.selfDir(), "runtime.json");
+  }
+
   private selfNarrativePath(): string {
     return join(this.selfDir(), "narrative.jsonl");
   }
@@ -298,8 +388,16 @@ export class FolderStructuredMemoryStore {
     return join(this.othersDir(), entityId, "evidence.jsonl");
   }
 
+  private otherConflictsPath(entityId: string): string {
+    return join(this.othersDir(), entityId, "conflicts.jsonl");
+  }
+
   private episodicEventsPath(): string {
     return join(this.episodicDir(), "events.jsonl");
+  }
+
+  private salienceQueuePath(): string {
+    return join(this.episodicDir(), "salience_queue.jsonl");
   }
 }
 
@@ -327,6 +425,16 @@ function defaultSelfGuidesRecord(): SelfGuidesRecord {
       duties: []
     },
     conflictRules: []
+  };
+}
+
+function defaultSelfRuntimeRecord(): SelfRuntimeRecord {
+  return {
+    updatedAt: 0,
+    currentGoals: [],
+    activeProjects: [],
+    currentTensions: [],
+    taskHints: []
   };
 }
 
@@ -363,5 +471,31 @@ function defaultRelationshipStateRecord(entityId: string): OtherRelationshipStat
     trustLevel: 0.5,
     collaborationMode: "default",
     recentTensions: []
+  };
+}
+
+function normalizePreferenceRecord(record: OtherPreferencesRecord["items"][number]): OtherPreferencesRecord["items"][number] {
+  const firstSeenAt = record.firstSeenAt ?? record.updatedAt ?? 0;
+  const lastConfirmedAt = record.lastConfirmedAt ?? record.updatedAt ?? firstSeenAt;
+  const occurrenceCount = record.occurrenceCount ?? Math.max(record.evidenceIds.length, 1);
+  return {
+    ...record,
+    status: record.status ?? (occurrenceCount >= 2 ? "stable" : "observation"),
+    occurrenceCount,
+    contexts: record.contexts ?? [],
+    firstSeenAt,
+    lastConfirmedAt,
+    updatedAt: record.updatedAt ?? lastConfirmedAt
+  };
+}
+
+function normalizeInferenceRecord(record: OtherInferenceRecord): OtherInferenceRecord {
+  const firstObservedAt = record.firstObservedAt ?? record.updatedAt ?? 0;
+  const lastReviewedAt = record.lastReviewedAt ?? record.updatedAt ?? firstObservedAt;
+  return {
+    ...record,
+    firstObservedAt,
+    lastReviewedAt,
+    updatedAt: record.updatedAt ?? lastReviewedAt
   };
 }

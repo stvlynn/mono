@@ -12,6 +12,8 @@ export function registerRootCommand(program: Command): void {
     .option("-m, --model <model>", "provider/model or raw model id")
     .option("--profile <profile>", "configured profile name from ~/.mono/config.json")
     .option("--base-url <baseUrl>", "override provider base URL")
+    .option("--sandbox <mode>", "execution sandbox mode: read-only, workspace-write, or danger-full-access")
+    .option("--approval-policy <policy>", "approval policy: on-request, never, or auto-approve")
     .option("-i, --image <path>", "attach a local image", (value: string, previous: string[] = []) => [...previous, value], [])
     .option("-y, --yes", "auto-approve protected tools")
     .option("-c, --continue", "load previous session from the current workspace")
@@ -34,6 +36,8 @@ export function registerRootCommand(program: Command): void {
           profile: options.profile,
           baseURL: options.baseUrl,
           yes: options.yes,
+          sandboxMode: options.sandbox,
+          approvalPolicy: options.approvalPolicy,
           continueSession: options.continue
         });
         return;
@@ -44,6 +48,8 @@ export function registerRootCommand(program: Command): void {
         profile: options.profile,
         baseURL: options.baseUrl,
         autoApprove: options.yes,
+        sandboxMode: options.sandbox,
+        approvalPolicy: options.approvalPolicy,
         continueSession: options.continue
       });
       const { runInteractiveApp } = await import("@mono/tui");

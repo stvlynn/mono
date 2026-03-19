@@ -28,6 +28,8 @@
 - `--model <selection>`: override the configured model
 - `--profile <name>`: choose a configured profile
 - `--base-url <url>`: override provider base URL
+- `--sandbox <mode>`: set execution sandbox mode (`read-only`, `workspace-write`, `danger-full-access`); `workspace-write` is reserved and currently rejected
+- `--approval-policy <policy>`: set approval policy (`on-request`, `never`, `auto-approve`)
 - `--image <path>`: attach a local image; may be repeated
 - `--continue`: reopen the latest session for the current workspace
 
@@ -46,9 +48,11 @@ The agent runtime still receives a generic `TaskInput`; the CLI does not constru
 
 - `context` inspects assembled prompt context, not stored memory records
 - `memory` inspects execution-memory status and adapter state, and now also reports `memory-v2` configuration
+- `memory structured [entityId]` prints the current structured-memory package plus runtime/conflict/queue state for one entity
 - `pair telegram` approves Telegram pairing codes or directly writes Telegram DM allowlist entries
 - `skills` now covers both local catalog browsing and remote skill search/install
 - `telegram` manages Telegram control runtime configuration (`status`, `token`, `enable`, `disable`)
+- `--sandbox` and `--approval-policy` override the configured execution policy for the current run; `read-only` currently disables `bash`, `write`, and `edit`
 - image input is validated before task execution and rejected when the selected model does not support attachments
 
 ## Detailed Command Docs

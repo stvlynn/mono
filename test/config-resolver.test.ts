@@ -48,6 +48,8 @@ describe("config resolver", () => {
 
     const defaultResolved = await resolveMonoConfig({ cwd });
     expect(defaultResolved.settings.sensitiveActionMode).toBe("blacklist");
+    expect(defaultResolved.settings.approvalPolicy).toBe("on-request");
+    expect(defaultResolved.settings.sandboxMode).toBe("danger-full-access");
 
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
@@ -67,7 +69,9 @@ describe("config resolver", () => {
           }
         },
         settings: {
-          sensitiveActionMode: "strict"
+          sensitiveActionMode: "strict",
+          approvalPolicy: "never",
+          sandboxMode: "read-only"
         }
       },
       projects: {}
@@ -75,6 +79,69 @@ describe("config resolver", () => {
 
     const strictResolved = await resolveMonoConfig({ cwd });
     expect(strictResolved.settings.sensitiveActionMode).toBe("strict");
+    expect(strictResolved.settings.approvalPolicy).toBe("never");
+    expect(strictResolved.settings.sandboxMode).toBe("read-only");
+  });
+
+  it("rejects invalid or unsupported safety settings from config", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-invalid-settings-cwd-"));
+    const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-invalid-settings-config-"));
+    tempPaths.push(cwd, configDir);
+    process.env.MONO_CONFIG_DIR = configDir;
+
+    const baseConfig = {
+      version: 1,
+      mono: {
+        defaultProfile: "default",
+        profiles: {
+          default: {
+            provider: "openai",
+            modelId: "gpt-4.1-mini",
+            baseURL: "https://api.openai.com/v1",
+            family: "openai-compatible",
+            transport: "openai-compatible",
+            providerFactory: "openai",
+            apiKeyEnv: "OPENAI_API_KEY",
+            supportsTools: true,
+            supportsReasoning: true
+          }
+        }
+      },
+      projects: {}
+    } satisfies MonoGlobalConfig;
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      ...baseConfig,
+      mono: {
+        ...baseConfig.mono,
+        settings: {
+          approvalPolicy: "autoapprove" as never,
+        }
+      }
+    });
+    await expect(resolveMonoConfig({ cwd })).rejects.toThrow("Invalid mono.settings.approvalPolicy: autoapprove");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      ...baseConfig,
+      mono: {
+        ...baseConfig.mono,
+        settings: {
+          sandboxMode: "readonly" as never,
+        }
+      }
+    });
+    await expect(resolveMonoConfig({ cwd })).rejects.toThrow("Invalid mono.settings.sandboxMode: readonly");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      ...baseConfig,
+      mono: {
+        ...baseConfig.mono,
+        settings: {
+          sandboxMode: "workspace-write",
+        }
+      }
+    });
+    await expect(resolveMonoConfig({ cwd })).rejects.toThrow("mono.settings.sandboxMode=workspace-write is not implemented yet.");
   });
 
   it("resolves default context settings and applies project overrides", async () => {
@@ -127,6 +194,7 @@ describe("config resolver", () => {
     expect(resolved.context.userTimezone).toBe("UTC");
     expect(resolved.context.bootstrap.totalMaxChars).toBe(12_345);
     expect(resolved.context.docs.entryPaths).toEqual(["docs/README.md", "docs/api"]);
+    expect(resolved.context.bootstrap.files).toContain("AGENTS.md");
     expect(resolved.context.bootstrap.files).toContain(".mono/CONTEXT.md");
   });
 

@@ -2,6 +2,7 @@ import type {
   EpisodicEventRecord,
   MemoryEvidenceRecord,
   MonoMemoryV2Config,
+  OtherConflictRecord,
   OtherInferenceRecord,
   OtherPreferenceRecord,
   StructuredMemoryPackage,
@@ -24,21 +25,25 @@ export class StructuredMemoryRetrievalPlanner {
 
   async buildPackage(options: StructuredMemoryRetrievalOptions): Promise<StructuredMemoryPackage> {
     const query = options.query.trim();
-    const [selfIdentity, projectProfile, otherProfile, otherPreferences, otherInferences, relationshipState, episodic] =
+    const [selfIdentity, selfRuntime, projectProfile, otherProfile, otherPreferences, otherInferences, relationshipState, conflicts, episodic] =
       await Promise.all([
         this.store.getSelfIdentity(),
+        this.store.getSelfRuntime(),
         this.store.getProjectProfile(),
         this.store.getOtherProfile(options.activeEntityId),
         this.store.getOtherPreferences(options.activeEntityId),
         this.store.getOtherInferences(options.activeEntityId),
         this.store.getRelationshipState(options.activeEntityId),
+        this.store.listConflicts({ entityId: options.activeEntityId, limit: 3, status: "unresolved" }),
         this.store.listRecentEpisodic({ entityId: options.activeEntityId, limit: 8 })
       ]);
 
-    const entries: StructuredMemoryPackageEntry[] = [];
+    const selfGrounded: StructuredMemoryPackageEntry[] = [];
+    const otherGrounded: StructuredMemoryPackageEntry[] = [];
+    const taskGroundedHints: StructuredMemoryPackageEntry[] = [];
 
     if (selfIdentity.summary || selfIdentity.mission || selfIdentity.nonNegotiablePrinciples.length > 0) {
-      entries.push({
+      selfGrounded.push({
         scope: "self",
         title: "Self Identity",
         summary: compactLines([
@@ -54,7 +59,7 @@ export class StructuredMemoryRetrievalPlanner {
     }
 
     if (projectProfile.workspaceSummary || projectProfile.durableFacts.length > 0 || projectProfile.collaborationNorms.length > 0) {
-      entries.push({
+      selfGrounded.push({
         scope: "project",
         title: "Project Memory",
         summary: compactLines([
@@ -65,8 +70,20 @@ export class StructuredMemoryRetrievalPlanner {
       });
     }
 
+    if (selfRuntime.currentGoals.length > 0 || selfRuntime.currentTensions.length > 0 || selfRuntime.taskHints.length > 0) {
+      taskGroundedHints.push({
+        scope: "self",
+        title: "Self Runtime",
+        summary: compactLines([
+          selfRuntime.currentGoals.length > 0 ? `Current goals: ${selfRuntime.currentGoals.join("; ")}` : "",
+          selfRuntime.currentTensions.length > 0 ? `Current tensions: ${selfRuntime.currentTensions.join("; ")}` : "",
+          selfRuntime.taskHints.length > 0 ? `Task hints: ${selfRuntime.taskHints.join("; ")}` : ""
+        ])
+      });
+    }
+
     if (Object.keys(otherProfile.knownFacts).length > 0 || otherProfile.communicationNotes.length > 0) {
-      entries.push({
+      otherGrounded.push({
         scope: "other",
         title: `Entity Profile: ${options.activeEntityId}`,
         summary: compactLines([
@@ -80,10 +97,10 @@ export class StructuredMemoryRetrievalPlanner {
 
     const relevantPreferences = rankPreferences(otherPreferences.items, query).slice(0, 3);
     for (const item of relevantPreferences) {
-      entries.push({
+      otherGrounded.push({
         scope: "other",
         title: `Preference: ${item.key}`,
-        summary: item.summary,
+        summary: `${item.summary} [${item.status}]`,
         confidence: item.confidence,
         evidenceIds: item.evidenceIds
       });
@@ -92,7 +109,7 @@ export class StructuredMemoryRetrievalPlanner {
     if (this.config.enableInference) {
       const relevantInferences = rankInferences(otherInferences, query).slice(0, 2);
       for (const item of relevantInferences) {
-        entries.push({
+        otherGrounded.push({
           scope: "other",
           title: `Inference: ${item.trait}`,
           summary: `${item.summary} [${item.status}]`,
@@ -103,7 +120,7 @@ export class StructuredMemoryRetrievalPlanner {
     }
 
     if (relationshipState.collaborationMode !== "default" || relationshipState.recentTensions.length > 0) {
-      entries.push({
+      otherGrounded.push({
         scope: "other",
         title: `Relationship: ${options.activeEntityId}`,
         summary: compactLines([
@@ -118,7 +135,7 @@ export class StructuredMemoryRetrievalPlanner {
 
     const relevantEpisodic = rankEpisodicEvents(episodic, query).slice(0, 2);
     for (const item of relevantEpisodic) {
-      entries.push({
+      taskGroundedHints.push({
         scope: "episodic",
         title: `Recent event: ${new Date(item.createdAt).toISOString()}`,
         summary: item.summary,
@@ -126,7 +143,14 @@ export class StructuredMemoryRetrievalPlanner {
       });
     }
 
-    const evidenceIds = [...new Set(entries.flatMap((item) => item.evidenceIds ?? []))];
+    const evidenceIds = [
+      ...new Set([
+        ...selfGrounded.flatMap((item) => item.evidenceIds ?? []),
+        ...otherGrounded.flatMap((item) => item.evidenceIds ?? []),
+        ...taskGroundedHints.flatMap((item) => item.evidenceIds ?? []),
+        ...conflicts.flatMap((item) => item.evidenceIds)
+      ])
+    ];
     const evidence = evidenceIds.length > 0
       ? await this.store.listEvidence({
           entityId: options.activeEntityId,
@@ -135,9 +159,14 @@ export class StructuredMemoryRetrievalPlanner {
         })
       : [];
 
+    const entries = [...selfGrounded, ...otherGrounded, ...taskGroundedHints];
     return {
       activeEntityId: options.activeEntityId,
       generatedAt: Date.now(),
+      selfGrounded,
+      otherGrounded,
+      taskGroundedHints,
+      conflicts,
       entries,
       evidence,
       externalItems: (options.externalItems ?? []).map((item) => ({
@@ -164,7 +193,8 @@ function rankPreferences(items: OtherPreferenceRecord[], query: string): OtherPr
 }
 
 function preferenceScore(item: OtherPreferenceRecord, tokens: string[]): number {
-  return baseMatchScore(`${item.key} ${item.summary}`, tokens) + item.confidence;
+  const statusBonus = item.status === "stable" ? 0.2 : item.status === "pattern" ? 0.1 : 0;
+  return baseMatchScore(`${item.key} ${item.summary}`, tokens) + item.confidence + statusBonus;
 }
 
 function rankInferences(items: OtherInferenceRecord[], query: string): OtherInferenceRecord[] {

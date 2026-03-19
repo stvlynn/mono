@@ -121,6 +121,11 @@ describe("session manager", () => {
 
     const latest = await SessionManager.latestForCwd(cwd, sessionsDir);
     expect(latest?.sessionId).toBe("second");
+
+    const threads = await SessionManager.listThreads(cwd, sessionsDir);
+    const latestThread = await SessionManager.latestThreadForCwd(cwd, sessionsDir);
+    expect(threads[0]?.sessionId).toBe("second");
+    expect(latestThread?.sessionId).toBe("second");
   });
 
   it("records memory references and persisted memory ids without affecting message replay", async () => {

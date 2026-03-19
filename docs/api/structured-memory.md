@@ -20,9 +20,12 @@ Key responsibilities:
 
 - initialize the self / others / project / episodic layout
 - read and write self records
+- read and write self runtime state
 - read and write per-entity profile, preference, inference, and relationship records
+- append and list conflict records
 - append evidence rows
 - append episodic events
+- maintain the salience queue used by consolidation
 
 Important expectation:
 
@@ -30,22 +33,33 @@ Important expectation:
 
 ## Turn Pipeline
 
-`persistStructuredMemoryTurn()` is the write pipeline used by the agent after a turn.
+`persistStructuredMemoryTurn()` is the fast-path structured write used by the agent after a turn.
 
 It currently performs:
 
 - episodic event capture
 - explicit preference extraction
 - evidence write
-- preference consolidation
+- salience-queue append
+- self-runtime update
+
+`runStructuredMemoryConsolidation()` is the second-stage promotion step.
+
+It currently performs:
+
+- preference promotion from queued observations
+- conflict recording for contradictory signals
 - lightweight inference derivation
 - relationship-state update
+- self-runtime refresh
+- narrative update append
+- queue processing
 
 It does not currently provide:
 
 - a separate review queue
 - offline promotion jobs
-- standalone conflict resolution storage
+- human-in-the-loop conflict resolution
 
 ## Retrieval Layer
 
@@ -76,12 +90,15 @@ Important cross-package types live in `@mono/shared`:
 
 - `MonoMemoryV2Config`
 - `MemoryEvidenceRecord`
+- `SelfRuntimeRecord`
 - `SelfIdentityRecord`
 - `OtherEntityProfileRecord`
 - `OtherPreferencesRecord`
 - `OtherInferenceRecord`
+- `OtherConflictRecord`
 - `OtherRelationshipStateRecord`
 - `EpisodicEventRecord`
+- `SalienceQueueRecord`
 - `StructuredMemoryPackage`
 
 ## Related Documents

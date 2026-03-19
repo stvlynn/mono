@@ -51,9 +51,16 @@ Default policy:
 - `channel_action`: ask by default, with same-target channel `send` / `sticker` / `react` allowed on allowlisted channels
 - `channel_store`: `list` and `search` allow; `upsert` requires confirmation
 - `mono.settings.sensitiveActionMode` defaults to `blacklist`
+- `mono.settings.approvalPolicy` defaults to `on-request`
+- `mono.settings.sandboxMode` defaults to `danger-full-access`
+- invalid `approvalPolicy` / `sandboxMode` config values now fail during config resolution
 - in `blacklist` mode, allowlisted channels must still confirm sensitive bash commands
 - in `strict` mode, allowlisted channels must confirm every bash command
 - in `allow_all` mode, allowlisted channels bypass sensitive-command interception but still respect hard deny rules
+- `approvalPolicy=never` turns approval-requiring actions into immediate denials
+- `approvalPolicy=auto-approve` bypasses approval prompts for actions that would otherwise ask, while still respecting hard deny rules
+- `sandboxMode=read-only` currently hard-denies `bash`, `write`, and `edit` because mono does not yet provide a true shell sandbox
+- `sandboxMode=workspace-write` is reserved but not implemented yet; selecting it fails fast
 
 Channel-aware behavior:
 
@@ -66,3 +73,15 @@ Channel-aware behavior:
 - Telegram-specific bash command denylist entries can deny commands before approval is considered
 
 The TUI or CLI approval callback resolves permission requests.
+
+## Tool Output Artifacts
+
+Large tool output can now be offloaded into workspace artifacts.
+
+Current behavior:
+
+- oversized `bash` output is truncated in the visible tool result
+- the full output is copied into `.mono/artifacts/`
+- the tool result exposes an artifact handle and appends a short `[artifact ...]` reference to the visible content
+
+This is the first step toward artifact-backed long-running tool traces rather than full prompt inlining.

@@ -45,9 +45,11 @@ It stores the current `TaskTodoRecord` for a task and is overwritten in place wh
 Structured memory is the new local-first long-term memory layer used for:
 
 - self identity and behavior constraints
+- self runtime goals, tensions, and task hints
 - per-entity profiles, preferences, and inference records
+- per-entity conflicts and evidence ledgers
 - project-level durable facts
-- episodic event capture for later promotion
+- episodic event capture plus queued observations for later promotion
 
 Structured memory is stored locally and is the canonical source for these higher-level records.
 
@@ -76,17 +78,31 @@ Structured memory is further split into:
 - `project/`
 - `episodic/`
 
+Current notable files include:
+
+- `self/runtime.json`
+- `others/<entityId>/conflicts.jsonl`
+- `episodic/salience_queue.jsonl`
+
 ## Write Path
 
 During a normal task turn, the runtime may:
 
 1. append user and assistant messages to the session store
 2. compact and persist a `MemoryRecord` into execution memory
-3. capture an episodic structured-memory event
-4. extract evidence-backed preference candidates from the user turn
-5. consolidate preferences and lightweight inferences into per-entity structured memory
-6. update relationship state and profile notes
-7. optionally mirror execution and structured memory into OpenViking
+3. run the structured-memory fast path:
+   - capture an episodic event
+   - extract explicit preference observations
+   - append evidence records
+   - append salience-queue records
+   - update self runtime state
+4. run structured-memory consolidation:
+   - promote queued observations into preferences
+   - derive lightweight inferences when enabled
+   - record unresolved conflicts
+   - update relationship state and profile notes
+   - append narrative updates for new stable promotions or conflicts
+5. optionally mirror execution and structured memory into OpenViking
 
 Execution memory and structured memory are intentionally separate:
 
@@ -111,6 +127,7 @@ What this system does today:
 - keeps task todo state local
 - stores structured memory locally
 - augments prompt context with structured summaries and evidence
+- separates structured-memory writes into fast-path observation capture and explicit consolidation
 - uses OpenViking for retrieval augmentation and async shadow sync
 
 What it does not do today:

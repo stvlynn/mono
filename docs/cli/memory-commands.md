@@ -3,6 +3,7 @@
 ## Current Commands
 
 - `mono memory status`
+- `mono memory structured [entityId]`
 - `mono memory list`
 - `mono memory search <query>`
 - `mono memory show <id>`
@@ -35,12 +36,25 @@ The command includes:
 - `memory.v2.storePath`
 - `memory.v2.primaryEntityId`
 - `memory.v2.openVikingSync`
+- current self-runtime goal / tension counts
+- pending salience-queue count
+- unresolved conflict count
 - OpenViking and SeekDB integration status
 
-Important limitation:
+It is still a summary surface, not an editor.
 
-- this command reports `memory-v2` configuration only
-- it does not yet enumerate or edit structured-memory records
+## `mono memory structured [entityId]`
+
+Prints the current structured-memory inspection payload for one entity.
+
+The payload includes:
+
+- `selfRuntime`
+- unresolved `conflicts`
+- pending salience-queue items
+- the current structured-memory package that would be used for prompt assembly
+
+If no `entityId` is provided, the configured `memory.v2.primaryEntityId` is used.
 
 ## Execution-Memory Commands
 

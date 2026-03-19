@@ -18,6 +18,7 @@ Structured-memory APIs:
 
 - `FolderStructuredMemoryStore`
 - `persistStructuredMemoryTurn`
+- `runStructuredMemoryConsolidation`
 - `StructuredMemoryRetrievalPlanner`
 - `renderStructuredMemoryPackage`
 - `resolvePrimaryEntityId`
@@ -41,8 +42,10 @@ Execution-memory callers should expect:
 Structured-memory callers should expect:
 
 - file-backed records grouped by self / others / project / episodic scope
-- evidence-backed preference and inference updates
+- a fast-path turn writer that records events, evidence, queue items, and self runtime state
+- a consolidation step that promotes preferences, derives inferences, records conflicts, and appends narrative updates
 - query-driven package assembly for prompt injection
+- layered package output including self-grounded, other-grounded, task-grounded, conflict, and evidence sections
 
 ## Related Documents
 

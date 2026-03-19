@@ -1,4 +1,5 @@
 import {
+  type ApprovalPolicy,
   type ApprovalRequest,
   type ChannelCapabilityContext,
   type ChannelCapabilityProvider,
@@ -10,11 +11,17 @@ import {
   type MemoryRecord,
   type MemorySearchMatch,
   type MonoConfigSummary,
+  type OtherConflictRecord,
   type ResolvedMonoConfig,
   type SessionNodeSummary,
   type SessionSummary,
+  type SalienceQueueRecord,
+  type ThreadSummary,
+  type StructuredMemoryPackage,
+  type SelfRuntimeRecord,
   readJsonFile,
   mergeTelegramAllowFrom,
+  type SandboxMode,
   supportsImageAttachments,
   type TaskInput,
   type TaskResult,
@@ -48,6 +55,7 @@ import {
   renderMemoryContext,
   renderStructuredMemoryPackage,
   resolvePrimaryEntityId,
+  runStructuredMemoryConsolidation,
   selectMemoryIdsByKeyword,
   selectMemoryIdsBySession,
   type MemoryRetrievalProvider,
@@ -112,12 +120,16 @@ interface TaskRunContext {
   recallAccumulator: RecallAccumulator;
   taskTodoRecord: TaskTodoRecord | null;
   taskTodosDirty: boolean;
+  sandboxMode: SandboxMode;
+  approvalPolicy: ApprovalPolicy;
 }
 
 export interface RunTaskOptions {
   channel?: ToolExecutionChannel;
   interactionMode?: "default" | "channel_chat";
   extraTaskContext?: string;
+  sandboxMode?: SandboxMode;
+  approvalPolicy?: ApprovalPolicy;
 }
 
 export interface AgentOptions {
@@ -130,6 +142,8 @@ export interface AgentOptions {
   maxTurns?: number;
   verificationMode?: VerificationMode;
   autoApprove?: boolean;
+  sandboxMode?: SandboxMode;
+  approvalPolicy?: ApprovalPolicy;
   continueSession?: boolean;
   requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
   channelCapabilityProvider?: ChannelCapabilityProvider;
@@ -217,6 +231,34 @@ function assertSeekDbConfig(config: ResolvedMonoConfig["memory"]["seekDb"]): voi
   }
 }
 
+function normalizeSandboxMode(value: SandboxMode | undefined): SandboxMode | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "read-only" || value === "danger-full-access") {
+    return value;
+  }
+
+  if (value === "workspace-write") {
+    throw new Error("Sandbox mode workspace-write is not implemented yet.");
+  }
+
+  throw new Error(`Unknown sandbox mode: ${value}`);
+}
+
+function normalizeApprovalPolicy(value: ApprovalPolicy | undefined): ApprovalPolicy | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "on-request" || value === "never" || value === "auto-approve") {
+    return value;
+  }
+
+  throw new Error(`Unknown approval policy: ${value}`);
+}
+
 export class Agent {
   private readonly cwd: string;
   private readonly registry: ModelRegistry;
@@ -224,6 +266,8 @@ export class Agent {
   private readonly maxSteps: number;
   private readonly maxTurns: number;
   private readonly autoApprove: boolean;
+  private readonly approvalPolicyOverride?: ApprovalPolicy;
+  private readonly sandboxModeOverride?: SandboxMode;
   private readonly verificationMode?: VerificationMode;
   private requestApprovalHandler?: (request: ApprovalRequest) => Promise<boolean>;
   private channelCapabilityProvider?: ChannelCapabilityProvider;
@@ -247,6 +291,8 @@ export class Agent {
     this.maxTurns = options.maxTurns ?? 3;
     this.verificationMode = options.verificationMode;
     this.autoApprove = options.autoApprove ?? false;
+    this.approvalPolicyOverride = normalizeApprovalPolicy(options.approvalPolicy);
+    this.sandboxModeOverride = normalizeSandboxMode(options.sandboxMode);
     this.requestApprovalHandler = options.requestApproval;
     this.channelCapabilityProvider = options.channelCapabilityProvider;
     this.modelSelection = options.model;
@@ -524,6 +570,10 @@ export class Agent {
     return SessionManager.listSessions(this.cwd);
   }
 
+  async listThreads(): Promise<ThreadSummary[]> {
+    return this.listSessions();
+  }
+
   async listMemories(limit = 10): Promise<MemoryRecord[]> {
     await this.initialize();
     const ids = await this.state.memoryStore.getLatest({ limit });
@@ -543,6 +593,33 @@ export class Agent {
   async getMemoryRecord(id: string): Promise<MemoryRecord | null> {
     await this.initialize();
     return this.state.memoryStore.getById(id);
+  }
+
+  async inspectStructuredMemory(entityId?: string): Promise<{
+    selfRuntime: SelfRuntimeRecord;
+    conflicts: OtherConflictRecord[];
+    pendingQueue: SalienceQueueRecord[];
+    memoryPackage: StructuredMemoryPackage;
+  }> {
+    await this.initialize();
+    const resolvedEntityId = entityId ?? resolvePrimaryEntityId(this.state.config.memory.v2);
+    const planner = new StructuredMemoryRetrievalPlanner(this.state.structuredMemoryStore, this.state.config.memory.v2);
+    const [selfRuntime, conflicts, pendingQueue, memoryPackage] = await Promise.all([
+      this.state.structuredMemoryStore.getSelfRuntime(),
+      this.state.structuredMemoryStore.listConflicts({ entityId: resolvedEntityId, limit: 10 }),
+      this.state.structuredMemoryStore.listSalienceQueue({ entityId: resolvedEntityId, status: "pending", limit: 10 }),
+      planner.buildPackage({
+        query: "",
+        activeEntityId: resolvedEntityId
+      })
+    ]);
+
+    return {
+      selfRuntime,
+      conflicts,
+      pendingQueue,
+      memoryPackage
+    };
   }
 
   async recallMemory(query?: string): Promise<MemoryRecallPlan> {
@@ -594,6 +671,14 @@ export class Agent {
       ? (await this.state.taskTodoStore.get(this.state.currentTask.currentTodoMemoryId)) ?? undefined
       : undefined;
     return messages;
+  }
+
+  async resumeThread(
+    threadId: string,
+    branchHeadId?: string,
+    options: { preserveCurrentModel?: boolean } = {},
+  ): Promise<ConversationMessage[]> {
+    return this.switchSession(threadId, branchHeadId, options);
   }
 
   async listSessionNodes(): Promise<SessionNodeSummary[]> {
@@ -666,6 +751,10 @@ export class Agent {
     return this.state.session.sessionId;
   }
 
+  getThreadId(): string {
+    return this.getSessionId();
+  }
+
   getBranchHeadId(): string | undefined {
     return this.state.session.getHeadId();
   }
@@ -699,7 +788,9 @@ export class Agent {
       model: this.state.model,
       thinkingLevel: this.state.thinkingLevel,
       verificationMode: this.state.currentTask?.verification.mode ?? this.verificationMode ?? "light",
-      autoApprove: this.autoApprove,
+      sandboxMode: this.resolveSandboxMode(),
+      approvalPolicy: this.resolveApprovalPolicy(),
+      autoApprove: this.isApprovalAutoApproved(this.resolveApprovalPolicy()),
       config: this.state.config,
       taskContext,
       memoryContext,
@@ -719,17 +810,42 @@ export class Agent {
     }
   }
 
-  private async requestApproval(request: ApprovalRequest): Promise<boolean> {
+  private async requestApproval(request: ApprovalRequest, approvalPolicy: ApprovalPolicy): Promise<boolean> {
     if (this.activeRun?.controller.signal.aborted) {
       return false;
     }
-    if (this.autoApprove) {
+    if (this.isApprovalAutoApproved(approvalPolicy)) {
       return true;
     }
     if (!this.requestApprovalHandler) {
       return false;
     }
     return this.requestApprovalHandler(request);
+  }
+
+  private resolveSandboxMode(override?: SandboxMode): SandboxMode {
+    const resolved = override ?? this.sandboxModeOverride ?? this.state.config.settings.sandboxMode;
+    const normalized = normalizeSandboxMode(resolved);
+    if (!normalized) {
+      throw new Error("Sandbox mode could not be resolved.");
+    }
+    return normalized;
+  }
+
+  private resolveApprovalPolicy(override?: ApprovalPolicy): ApprovalPolicy {
+    if (this.autoApprove) {
+      return "auto-approve";
+    }
+    const resolved = override ?? this.approvalPolicyOverride ?? this.state.config.settings.approvalPolicy;
+    const normalized = normalizeApprovalPolicy(resolved);
+    if (!normalized) {
+      throw new Error("Approval policy could not be resolved.");
+    }
+    return normalized;
+  }
+
+  private isApprovalAutoApproved(policy: ApprovalPolicy): boolean {
+    return policy === "auto-approve";
   }
 
   private assertIdle(action: string): void {
@@ -1093,7 +1209,9 @@ export class Agent {
       taskMessages: [],
       recallAccumulator: createRecallAccumulator(),
       taskTodoRecord: null,
-      taskTodosDirty: false
+      taskTodosDirty: false,
+      sandboxMode: this.resolveSandboxMode(normalizeSandboxMode(options.sandboxMode)),
+      approvalPolicy: this.resolveApprovalPolicy(normalizeApprovalPolicy(options.approvalPolicy)),
     };
   }
 
@@ -1220,7 +1338,9 @@ export class Agent {
       model: context.model,
       thinkingLevel: this.state.thinkingLevel,
       verificationMode: task.verification.mode,
-      autoApprove: this.autoApprove,
+      sandboxMode: context.sandboxMode,
+      approvalPolicy: context.approvalPolicy,
+      autoApprove: this.isApprovalAutoApproved(context.approvalPolicy),
       config: this.state.config,
       taskContext,
       memoryContext,
@@ -1415,11 +1535,11 @@ export class Agent {
   }
 
   private async createToolsForRun(context: TaskRunContext, task: TaskState) {
-    const policy = await this.createPermissionPolicy(context.channel);
+    const policy = await this.createPermissionPolicy(context.channel, context.approvalPolicy, context.sandboxMode);
     const wrappedToolOptions = {
       sessionId: context.session.sessionId,
       channel: context.channel,
-      requestApproval: (request: ApprovalRequest) => this.requestApproval(request),
+      requestApproval: (request: ApprovalRequest) => this.requestApproval(request, context.approvalPolicy),
       emit: (event: { type: "approval-request"; request: ApprovalRequest } | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }) =>
         this.emitIfCurrent(context.runId, event),
       policy,
@@ -1430,7 +1550,7 @@ export class Agent {
       : createProtectedCodingTools(this.cwd, {
         sessionId: context.session.sessionId,
         channel: context.channel,
-        requestApproval: (request) => this.requestApproval(request),
+        requestApproval: (request) => this.requestApproval(request, context.approvalPolicy),
         emit: (event) => this.emitIfCurrent(context.runId, event),
         policy,
       });
@@ -1495,10 +1615,18 @@ export class Agent {
     ];
   }
 
-  private async createPermissionPolicy(channel: ToolExecutionChannel | undefined): Promise<DefaultPermissionPolicy> {
+  private async createPermissionPolicy(
+    channel: ToolExecutionChannel | undefined,
+    approvalPolicy: ApprovalPolicy,
+    sandboxMode: SandboxMode
+  ): Promise<DefaultPermissionPolicy> {
     const sensitiveActionMode = this.state.config.settings.sensitiveActionMode;
     if (channel?.platform !== "telegram") {
-      return new DefaultPermissionPolicy({ sensitiveActionMode });
+      return new DefaultPermissionPolicy({
+        sensitiveActionMode,
+        approvalPolicy,
+        sandboxMode,
+      });
     }
 
     const approval = this.state.config.channels.telegram.approval;
@@ -1518,6 +1646,8 @@ export class Agent {
       ]),
       commandDenylist: approval.commandDenylist,
       sensitiveActionMode,
+      approvalPolicy,
+      sandboxMode,
     });
   }
 
@@ -1619,25 +1749,31 @@ export class Agent {
       return;
     }
 
-    const structuredResult = await persistStructuredMemoryTurn({
+    const primaryEntityId = resolvePrimaryEntityId(this.state.config.memory.v2);
+    const structuredTurn = await persistStructuredMemoryTurn({
       config: this.state.config.memory.v2,
       store: this.state.structuredMemoryStore,
-      entityId: resolvePrimaryEntityId(this.state.config.memory.v2),
+      entityId: primaryEntityId,
       userMessage: userContentToPlainText(context.userMessage.content),
       assistantMessages: context.taskMessages,
       sessionId: context.session.sessionId,
       branchHeadId: context.session.getHeadId()
     });
+    const structuredResult = await runStructuredMemoryConsolidation({
+      config: this.state.config.memory.v2,
+      store: this.state.structuredMemoryStore,
+      entityId: primaryEntityId
+    });
     await this.syncStructuredMemoryBackends([
       {
-        id: structuredResult.event.id,
+        id: structuredTurn.event.id,
         scope: "episodic",
         title: "episodic event",
-        summary: structuredResult.event.summary,
-        detailLines: structuredResult.event.messages
+        summary: structuredTurn.event.summary,
+        detailLines: structuredTurn.event.messages
       },
       ...structuredResult.preferences.items.slice(0, 3).map((item) => ({
-        id: `pref-${resolvePrimaryEntityId(this.state.config.memory.v2)}-${item.key}`,
+        id: `pref-${primaryEntityId}-${item.key}`,
         scope: "other" as const,
         title: item.key,
         summary: item.summary,
@@ -1649,6 +1785,13 @@ export class Agent {
         title: item.trait,
         summary: item.summary,
         detailLines: item.basedOn
+      })),
+      ...structuredResult.conflicts.slice(0, 2).map((item) => ({
+        id: item.id,
+        scope: "other" as const,
+        title: `conflict:${item.field}`,
+        summary: item.reason,
+        detailLines: item.evidenceIds
       }))
     ]);
   }

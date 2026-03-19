@@ -21,7 +21,7 @@ The root [`README.md`](../README.md) stays intentionally lightweight. The detail
 - [`im-platform/`](./im-platform/overview.md): IM dispatch subsystem, provider abstraction, Telegram mapping, and extension rules
 - [`telegram-control/`](./telegram-control/overview.md): Telegram pairing runtime, allowlist state, and CLI/TUI control commands
 - `architecture/memory-system.md`: authoritative memory-layer overview
-- `architecture/structured-memory-v2.md`: structured-memory storage, promotion, retrieval, and prompt injection
+- `architecture/structured-memory-v2.md`: structured-memory storage, fast-path writes, consolidation, retrieval, and prompt injection
 - `architecture/openviking-integration.md`: hybrid OpenViking retrieval and shadow-sync boundary
 - `architecture/seekdb-integration.md`: SeekDB evaluation path for execution memory and session mirroring
 - [`api/`](./api/agent-core.md): maintainer-facing package and interface references
@@ -79,6 +79,7 @@ The current doc set covers:
 - monorepo structure and dependency direction
 - task runtime and memory-backed todo planning
 - execution memory, structured memory, and prompt context assembly
+- structured-memory consolidation, conflicts, salience queue, and inspect surfaces
 - builtin, global, and project skill discovery plus remote skill installation
 - OpenViking and SeekDB integration boundaries
 - Ink TUI architecture, dialog model, and interrupt behavior

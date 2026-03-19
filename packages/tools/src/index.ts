@@ -5,6 +5,7 @@ import { DefaultPermissionPolicy, wrapToolWithPermissions, type WrappedToolOptio
 import { createReadTool } from "./read.js";
 import { createWriteTool } from "./write.js";
 
+export * from "./artifact-store.js";
 export * from "./bash.js";
 export * from "./edit.js";
 export * from "./permission.js";

@@ -1,8 +1,26 @@
 <StructuredMemoryContext active_entity="{{ active_entity_id }}">
-{% if entries and entries.length %}
-Summaries:
-{% for item in entries %}
+{% if self_grounded and self_grounded.length %}
+Self grounded:
+{% for item in self_grounded %}
 - [{{ item.scope }}] {{ item.title }}: {{ item.summary }}{% if item.confidence is defined %} (confidence {{ item.confidence }}){% endif %}
+{% endfor %}
+{% endif %}
+{% if task_grounded_hints and task_grounded_hints.length %}
+Task grounded:
+{% for item in task_grounded_hints %}
+- [{{ item.scope }}] {{ item.title }}: {{ item.summary }}{% if item.confidence is defined %} (confidence {{ item.confidence }}){% endif %}
+{% endfor %}
+{% endif %}
+{% if other_grounded and other_grounded.length %}
+Other grounded:
+{% for item in other_grounded %}
+- [{{ item.scope }}] {{ item.title }}: {{ item.summary }}{% if item.confidence is defined %} (confidence {{ item.confidence }}){% endif %}
+{% endfor %}
+{% endif %}
+{% if conflicts and conflicts.length %}
+Conflicts:
+{% for item in conflicts %}
+- {{ item.field }}: {{ item.old_value }} -> {{ item.new_value }} ({{ item.status }}) | {{ item.reason }}
 {% endfor %}
 {% endif %}
 {% if evidence and evidence.length %}
