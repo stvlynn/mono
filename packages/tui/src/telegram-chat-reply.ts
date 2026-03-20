@@ -51,9 +51,12 @@ export function formatTelegramChatResponse(result: TaskResult): TelegramChatResp
         messages: [{ text: synthesizedFallback, format: "markdown" }],
       };
     }
-    return {
-      messages: [{ text: buildTelegramChatFallback(result), format: "markdown" }],
-    };
+    const fallback = buildTelegramChatFallback(result);
+    return fallback
+      ? {
+        messages: [{ text: fallback, format: "markdown" }],
+      }
+      : { messages: [] };
   }
 
   const latestReplyMetadataSource = extractLatestAssistantReplyText(result);
@@ -68,7 +71,10 @@ export function formatTelegramChatResponse(result: TaskResult): TelegramChatResp
       ? messages
       : (metadata.stickerFileId || metadata.stickerEmoji)
         ? []
-        : [{ text: buildTelegramChatFallback(result), format: "markdown" }],
+        : (() => {
+          const fallback = buildTelegramChatFallback(result);
+          return fallback ? [{ text: fallback, format: "markdown" as const }] : [];
+        })(),
     ...(metadata.stickerFileId
       ? { sticker: { fileId: metadata.stickerFileId } }
       : metadata.stickerEmoji
@@ -288,7 +294,7 @@ function buildTelegramChatFallback(result: TaskResult): string {
     return "I couldn't verify that yet.";
   }
 
-  return "I finished the attempt, but I don't have a reliable result to send yet.";
+  return "";
 }
 
 function buildTelegramNativeActionFallback(result: TaskResult): string {

@@ -70,7 +70,7 @@ describe("telegram chat reply formatting", () => {
     expect(formatTelegramChatReply(result)).toBe("The repository has a CLI, TUI, and Telegram control runtime.");
   });
 
-  it("falls back to the latest tool-use assistant text when no final stop reply exists", () => {
+  it("does not send a generic done fallback when no reliable reply exists", () => {
     const result = createTaskResult({
       status: "done",
       messages: [
@@ -96,9 +96,9 @@ describe("telegram chat reply formatting", () => {
       ],
     });
 
-    expect(formatTelegramChatReply(result)).toBe("I finished the attempt, but I don't have a reliable result to send yet.");
+    expect(formatTelegramChatReply(result)).toBe("");
     expect(formatTelegramChatResponse(result)).toEqual({
-      messages: [{ text: "I finished the attempt, but I don't have a reliable result to send yet.", format: "markdown" }],
+      messages: [],
     });
   });
 
