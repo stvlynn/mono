@@ -8,12 +8,14 @@ import {
   approveTelegramPairingCode,
   allowTelegramUserId,
   buildTelegramStatusResult,
+  cacheTelegramSticker,
   executePairCommand,
   executeTelegramCommand,
   listTelegramPairingRequests,
   processTelegramIncomingMessage,
   readTelegramStickerStore,
   readTelegramAllowFromStore,
+  searchTelegramStickerCache,
   upsertTelegramPairingRequest,
 } from "@mono/telegram-control";
 import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
@@ -300,6 +302,33 @@ describeIfRealTestModel("telegram control", () => {
         },
       ],
     });
+  });
+
+  it("deduplicates cached Telegram stickers by fileId when searching", async () => {
+    const { cwd } = await createTempWorkspace("mono-telegram-sticker-cache-dedupe");
+
+    await cacheTelegramSticker(cwd, {
+      fileId: "CAAC123",
+      emoji: "🙂",
+    });
+    await cacheTelegramSticker(cwd, {
+      fileId: "CAAC123",
+      fileUniqueId: "unique-123",
+      emoji: "🙂",
+      setName: "CatsPack",
+    });
+
+    const results = await searchTelegramStickerCache(cwd, {
+      setName: "CatsPack",
+    });
+
+    expect(results).toEqual([{
+      fileId: "CAAC123",
+      fileUniqueId: "unique-123",
+      emoji: "🙂",
+      setName: "CatsPack",
+      cachedAt: expect.any(String),
+    }]);
   });
 
   it("persists pairing requests and approvals in the Telegram store", async () => {

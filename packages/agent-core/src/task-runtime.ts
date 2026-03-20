@@ -76,7 +76,11 @@ export function advanceTaskPhase(task: TaskState, phase: TaskPhase): TaskState {
   return next;
 }
 
-export function buildTaskTurnPlan(task: TaskState, todoRecord?: TaskTodoRecord | null): TurnRuntimePlan {
+export function buildTaskTurnPlan(
+  task: TaskState,
+  todoRecord?: TaskTodoRecord | null,
+  interactionMode: "default" | "channel_chat" | "curiosity" = "default",
+): TurnRuntimePlan {
   if (task.phase === "verify") {
     return {
       phase: "verify",
@@ -92,6 +96,27 @@ export function buildTaskTurnPlan(task: TaskState, todoRecord?: TaskTodoRecord |
     };
   }
 
+  if (interactionMode === "curiosity") {
+    return {
+      phase: "execute",
+      prompt: [
+        "You are in curiosity exploration mode.",
+        `Goal: ${task.goal}`,
+        "Investigate one small repo question suggested by recent runtime context.",
+        "Use read or bash only for concrete evidence.",
+        "Choose one most-likely file or one read-only shell command first.",
+        "Use at most two tool calls.",
+        "If the first inspection is inconclusive, emit a tagged fallback instead of continuing to scan.",
+        "Do not create todo plans or edit files.",
+        "Wrap the final user-visible reply in [final-reply]...[/final-reply].",
+        "Return exactly one curiosity question, one hypothesis, and one evidence line using:",
+        "[curiosity-question: ...]",
+        "[curiosity-hypothesis: ...]",
+        "[curiosity-evidence: ...]",
+      ].join("\n"),
+    };
+  }
+
   if (isDirectResponseTask(task)) {
     return {
       phase: "execute",
@@ -100,6 +125,7 @@ export function buildTaskTurnPlan(task: TaskState, todoRecord?: TaskTodoRecord |
         `Goal: ${task.goal}`,
         "Answer directly.",
         "Use read or bash tools only when they provide concrete evidence you need for the reply.",
+        "If you use tools, only the final user-visible answer should be wrapped in [final-reply]...[/final-reply].",
         "Do not create or refine todo plans unless the user explicitly asked for implementation work."
       ].join("\n")
     };
@@ -184,7 +210,6 @@ export function updateTaskAfterTurn(context: CompletedTurnContext): {
 
 export function buildTaskSummary(task: TaskState, messages: ConversationMessage[], status?: TaskResult["status"]): string {
   const latestAssistant = extractConversationOutcomeText(messages, {
-    includeToolUseAssistantText: true,
     includeToolResultFallback: true,
   });
   const verificationLine =

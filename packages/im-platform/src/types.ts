@@ -66,7 +66,8 @@ export interface DocumentDispatchContent {
 
 export interface StickerDispatchContent {
   type: "sticker";
-  fileId: string;
+  source: DispatchMediaSource;
+  emoji?: string;
 }
 
 export interface MediaGroupDispatchItem {

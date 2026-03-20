@@ -50,6 +50,14 @@ async function readJsonBody(call: FetchCall): Promise<Record<string, unknown>> {
   return JSON.parse(body) as Record<string, unknown>;
 }
 
+function readFormDataBody(call: FetchCall): FormData {
+  const body = call.init?.body;
+  if (!(body instanceof FormData)) {
+    throw new Error("Expected FormData body");
+  }
+  return body;
+}
+
 function createTelegramInboundFetchStub() {
   const calls: FetchCall[] = [];
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -167,7 +175,7 @@ describe("@mono/im-platform", () => {
       },
       content: {
         type: "sticker",
-        fileId: "sticker-file-1",
+        source: "sticker-file-1",
       },
     });
 
@@ -177,6 +185,40 @@ describe("@mono/im-platform", () => {
     const body = await readJsonBody(calls[0]!);
     expect(body.chat_id).toBe(55);
     expect(body.sticker).toBe("sticker-file-1");
+  });
+
+  it("dispatches uploaded Telegram stickers through multipart sendSticker", async () => {
+    const { fetchImpl, calls } = createFetchStub([
+      { ok: true, result: { message_id: 109, chat: { id: 55 } } },
+    ]);
+    const distributor = createDistributor({
+      builtInProviders: [createTelegramConfig(fetchImpl)],
+    });
+
+    const result = await distributor.dispatch({
+      provider: "primary-dispatch",
+      target: {
+        kind: "dm",
+        address: 55,
+      },
+      content: {
+        type: "sticker",
+        source: {
+          filename: "sticker.webp",
+          data: Uint8Array.from([1, 2, 3, 4]),
+          mimeType: "image/webp",
+        },
+        emoji: "🙂",
+      },
+    });
+
+    expect(result.remoteMessageIds).toEqual(["109"]);
+    expect(calls[0]?.url.endsWith("/sendSticker")).toBe(true);
+
+    const body = readFormDataBody(calls[0]!);
+    expect(body.get("chat_id")).toBe("55");
+    expect(body.get("emoji")).toBe("🙂");
+    expect(body.get("sticker")).toBeInstanceOf(File);
   });
 
   it("escapes raw HTML embedded inside markdown text", async () => {
@@ -634,6 +676,8 @@ describe("@mono/im-platform", () => {
           fileUniqueId: "sticker-unique",
           emoji: "🙂",
           setName: "CatsPack",
+          isAnimated: false,
+          isVideo: false,
         },
       },
     });
@@ -648,7 +692,7 @@ describe("@mono/im-platform", () => {
     expect(calls[1]?.url).toContain("/file/botbot-token/stickers/sticker_30.webp");
   });
 
-  it("ignores animated Telegram stickers that cannot be converted into image attachments", async () => {
+  it("keeps animated Telegram stickers as native metadata without image attachments", async () => {
     const { fetchImpl, calls } = createTelegramInboundFetchStub();
     const provider = createBuiltInProvider(createTelegramConfig(fetchImpl));
 
@@ -676,7 +720,20 @@ describe("@mono/im-platform", () => {
       },
     });
 
-    expect(incoming).toBeNull();
+    expect(incoming).not.toBeNull();
+    expect(incoming?.text).toBe("<media:sticker>");
+    expect(incoming?.metadata).toEqual({
+      telegram: {
+        chatId: "42",
+        sticker: {
+          fileId: "animated-sticker",
+          fileUniqueId: "sticker-unique",
+          isAnimated: true,
+          isVideo: false,
+        },
+      },
+    });
+    expect(incoming?.attachments).toEqual([]);
     expect(calls).toHaveLength(0);
   });
 

@@ -21,6 +21,13 @@ Telegram `channel_chat` turns reuse the same runtime entrypoint, but they are as
 - optional `extraTaskContext` for chat continuation state
 - the same shared session history as the main TUI run
 
+Heartbeat curiosity probes also reuse the same runtime entrypoint with a dedicated lightweight mode:
+
+- `interactionMode: "curiosity"`
+- read-only sandbox and a tighter autonomy lease
+- `verification=none`
+- only `read` and protected `bash`; no `write_todos`, `write`, or `edit`
+
 ## Task Shell
 
 A task starts with a lightweight `TaskState`:
@@ -97,6 +104,7 @@ Current behavior:
 - heartbeat runs only while the agent process is alive and idle
 - it reads structured runtime state, learning state, recent feedback, and task todo records
 - it can enqueue or resume a task by calling back into `Agent.runTask()`
+- low-risk idle probes can now enqueue a `curiosity_probe` task from recent session/runtime context when no stalled-task or explicit gap candidate is available
 - autonomous tasks are marked in `TaskState.origin`
 - autonomous tasks receive a bounded `lease` so they do not run indefinitely
 - recent user feedback can suppress or down-rank autonomous work through learning-state bias

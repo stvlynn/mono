@@ -96,7 +96,15 @@ interface TelegramApiMessage {
   caption?: string;
   photo?: Array<{ file_id?: string }>;
   document?: { file_id?: string; mime_type?: string; file_name?: string };
-  sticker?: { file_id?: string; is_animated?: boolean; is_video?: boolean };
+  sticker?: {
+    file_id?: string;
+    file_unique_id?: string;
+    emoji?: string;
+    set_name?: string;
+    type?: string;
+    is_animated?: boolean;
+    is_video?: boolean;
+  };
 }
 
 interface TelegramApiUpdate {
@@ -137,6 +145,17 @@ interface PreparedTelegramMediaSend {
     mimeType: string;
   };
   preparedCaption?: ReturnType<typeof prepareTelegramSingleText>;
+  threadParams: Record<string, unknown>;
+}
+
+interface PreparedTelegramStickerSend {
+  remoteReference?: string;
+  upload?: {
+    filename: string;
+    bytes: Uint8Array;
+    mimeType: string;
+  };
+  emoji?: string;
   threadParams: Record<string, unknown>;
 }
 
@@ -1029,18 +1048,20 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
 
     const stickerEmoji = reply.sticker?.emoji?.trim();
     const stickerFileId = reply.sticker?.fileId?.trim();
+    const stickerPath = reply.sticker?.path?.trim();
 
-    if (messages.length === 0 && !stickerEmoji && !stickerFileId) {
+    if (messages.length === 0 && !stickerEmoji && !stickerFileId && !stickerPath) {
       return null;
     }
 
     return {
       messages,
-      ...(stickerFileId || stickerEmoji
+      ...(stickerFileId || stickerEmoji || stickerPath
         ? {
           sticker: {
             ...(stickerFileId ? { fileId: stickerFileId } : {}),
             ...(stickerEmoji ? { emoji: stickerEmoji } : {}),
+            ...(stickerPath ? { path: stickerPath } : {}),
           },
         }
         : {}),
@@ -1166,8 +1187,8 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     chatId: string,
     request: TelegramActionRequest & { action: "sticker" },
   ): Promise<TelegramActionResult> {
-    const fileId = await this.#resolveStickerFileId(request);
-    if (!fileId) {
+    const sticker = await this.#prepareTelegramStickerSend(request);
+    if (!sticker) {
       return {
         ok: false,
         action: "sticker",
@@ -1176,21 +1197,18 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       };
     }
 
-    const payload = this.#buildTelegramThreadParams({
-      replyToMessageId: request.replyToMessageId,
-      messageThreadId: request.messageThreadId,
-    });
-
     const sendSticker = async (params?: Record<string, unknown>) => this.#callTelegram<{ message_id?: number; chat?: { id?: number | string } }>(
       "sendSticker",
-      {
-        chat_id: chatId,
-        sticker: fileId,
-        ...(params ?? {}),
-      },
+      this.#buildTelegramStickerRequestBody({
+        chatId,
+        remoteReference: sticker.remoteReference,
+        upload: sticker.upload,
+        emoji: sticker.emoji,
+        params,
+      }),
     );
 
-    const result = await this.#callWithThreadFallback(payload, sendSticker);
+    const result = await this.#callWithThreadFallback(sticker.threadParams, sendSticker);
     if (!result.response) {
       return {
         ok: false,
@@ -1410,6 +1428,29 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     return fileId;
   }
 
+  async #prepareTelegramStickerSend(
+    request: TelegramActionRequest & { action: "sticker" },
+  ): Promise<PreparedTelegramStickerSend | null> {
+    const remoteReference = request.fileId?.trim() || await this.#resolveStickerFileId(request);
+    const upload = !remoteReference && request.path?.trim()
+      ? await this.#prepareTelegramUpload(request)
+      : undefined;
+
+    if (!remoteReference && !upload) {
+      return null;
+    }
+
+    return {
+      remoteReference,
+      upload,
+      emoji: upload ? request.emoji?.trim() : undefined,
+      threadParams: this.#buildTelegramThreadParams({
+        replyToMessageId: request.replyToMessageId,
+        messageThreadId: request.messageThreadId,
+      }),
+    };
+  }
+
   async #sendTelegramTextPayload(
     chatId: string,
     prepared: ReturnType<typeof prepareTelegramSingleText>,
@@ -1526,6 +1567,17 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       return;
     }
 
+    const uploadPath = sticker.path?.trim();
+    if (uploadPath) {
+      await this.executeTelegramAction({
+        action: "sticker",
+        chatId,
+        path: uploadPath,
+        emoji: sticker.emoji,
+      });
+      return;
+    }
+
     const directFileId = sticker.fileId?.trim();
     if (directFileId && this.#distributor) {
       await this.#distributor.dispatch({
@@ -1536,7 +1588,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         },
         content: {
           type: "sticker",
-          fileId: directFileId,
+          source: directFileId,
         },
       });
       return;
@@ -1564,7 +1616,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       },
       content: {
         type: "sticker",
-        fileId,
+        source: fileId,
       },
     });
   }
@@ -1855,7 +1907,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
   }
 
   async #prepareTelegramUpload(
-    request: TelegramActionRequest & { action: "photo" | "document" },
+    request: TelegramActionRequest & { action: "photo" | "document" | "sticker" },
   ): Promise<{ filename: string; bytes: Uint8Array; mimeType: string }> {
     const resolvedPath = resolveTelegramUploadPath(request.path ?? "", this.#cwd);
     const fileName = request.filename?.trim() || basename(resolvedPath);
@@ -1865,6 +1917,9 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
 
     if (request.action === "photo" && !mimeType.startsWith("image/")) {
       throw new Error(`Telegram photo upload requires an image file: ${resolvedPath}`);
+    }
+    if (request.action === "sticker" && !isSupportedTelegramStickerUpload(resolvedPath, mimeType)) {
+      throw new Error(`Telegram sticker upload requires a .webp, .tgs, or .webm file: ${resolvedPath}`);
     }
 
     return {
@@ -1910,6 +1965,41 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
 
     formData.append(
       options.mediaKey,
+      new Blob([options.upload.bytes], { type: options.upload.mimeType }),
+      options.upload.filename,
+    );
+    return formData;
+  }
+
+  #buildTelegramStickerRequestBody(options: {
+    chatId: string;
+    remoteReference?: string;
+    upload?: { filename: string; bytes: Uint8Array; mimeType: string };
+    emoji?: string;
+    params?: Record<string, unknown>;
+  }): Record<string, unknown> | FormData {
+    if (!options.upload) {
+      return {
+        chat_id: options.chatId,
+        sticker: options.remoteReference,
+        ...(options.params ?? {}),
+      };
+    }
+
+    const formData = new FormData();
+    formData.append("chat_id", options.chatId);
+    if (options.emoji) {
+      formData.append("emoji", options.emoji);
+    }
+    for (const [key, value] of Object.entries(options.params ?? {})) {
+      if (value === undefined) {
+        continue;
+      }
+      formData.append(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
+
+    formData.append(
+      "sticker",
       new Blob([options.upload.bytes], { type: options.upload.mimeType }),
       options.upload.filename,
     );
@@ -2041,15 +2131,7 @@ function toIncomingMessage(message: TelegramApiMessage | undefined): TelegramInc
   };
 }
 
-function resolveUnsupportedTelegramMediaNotice(message: TelegramApiMessage | undefined): string | undefined {
-  if (!message?.sticker) {
-    return undefined;
-  }
-
-  if (message.sticker.is_animated || message.sticker.is_video) {
-    return "Animated and video stickers are not supported yet. Please send a static sticker or image.";
-  }
-
+function resolveUnsupportedTelegramMediaNotice(_message: TelegramApiMessage | undefined): string | undefined {
   return undefined;
 }
 
@@ -2244,6 +2326,10 @@ function resolveTelegramRequiredAction(
     };
   }
 
+  if (!hasStickerSource && !hasCurrentStickerInput) {
+    return undefined;
+  }
+
   const mentionsSticker = /\bsticker\b/.test(text) || /表情包/.test(text);
   const rejectsText = /don't use text|do not use text|not text|不要用文本|不要文本/.test(text);
   const rejectsEmoji = /not emoji|don't use emoji|do not use emoji|不是emoji|不要emoji/.test(text);
@@ -2301,6 +2387,7 @@ function resolveTelegramRequestedMediaReference(
 ): string | undefined {
   return firstString(
     payload.source,
+    action === "sticker" ? payload.sticker : undefined,
     action === "photo" ? payload.photo : undefined,
     action === "photo" ? payload.image : undefined,
     action === "document" ? payload.document : undefined,
@@ -2358,9 +2445,22 @@ function resolveTelegramUploadPath(path: string, cwd: string): string {
   return resolve(cwd, trimmed);
 }
 
-function guessTelegramUploadMimeType(path: string, action: "photo" | "document"): string {
+function guessTelegramUploadMimeType(path: string, action: "photo" | "document" | "sticker"): string {
   if (action === "photo") {
     return guessImageMimeTypeFromPath(path) ?? "application/octet-stream";
+  }
+  if (action === "sticker") {
+    const stickerExtension = extname(path).toLowerCase();
+    switch (stickerExtension) {
+      case ".webp":
+        return "image/webp";
+      case ".tgs":
+        return "application/x-tgsticker";
+      case ".webm":
+        return "video/webm";
+      default:
+        return "application/octet-stream";
+    }
   }
 
   const extension = extname(path).toLowerCase();
@@ -2391,6 +2491,16 @@ function guessTelegramUploadMimeType(path: string, action: "photo" | "document")
     default:
       return "application/octet-stream";
   }
+}
+
+function isSupportedTelegramStickerUpload(path: string, mimeType: string): boolean {
+  const extension = extname(path).toLowerCase();
+  return extension === ".webp"
+    || extension === ".tgs"
+    || extension === ".webm"
+    || mimeType === "image/webp"
+    || mimeType === "application/x-tgsticker"
+    || mimeType === "video/webm";
 }
 
 function isSupportedTelegramChannelAction(

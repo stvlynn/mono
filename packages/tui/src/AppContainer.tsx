@@ -566,6 +566,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     const handoffAgent = new AgentRuntime({
       cwd: process.cwd(),
       profile: agent.getProfileName(),
+      heartbeatEnabled: false,
       requestApproval: handleApprovalRequest,
     });
     await handoffAgent.initialize();
@@ -599,11 +600,12 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     };
     telegramChatLanesRef.current.set(chatId, [...existingLanes, currentLane]);
 
+    let handoffAgent: Agent | undefined;
     let unsubscribe = () => {};
 
     try {
       setStatus(`Handling Telegram message from ${senderLabel}`);
-      const handoffAgent = await createTelegramHandoffAgent();
+      handoffAgent = await createTelegramHandoffAgent();
       unsubscribe = request.preview
         ? handoffAgent.subscribe((event) => {
           if (event.type === "assistant-start") {
@@ -641,6 +643,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
         telegramChatLanesRef.current.delete(chatId);
       }
       unsubscribe();
+      handoffAgent?.dispose();
     }
   }, [agent, createTelegramHandoffAgent, reportUiError, setStatus]);
 

@@ -18,6 +18,7 @@ Summarize the maintainer-facing contract of the agent runtime.
 - manage task todo memory
 - persist execution memory and structured memory
 - support cancellation through `abort()`
+- support cleanup for short-lived runtimes through `dispose()`
 
 ## Important Public Methods
 
@@ -25,6 +26,7 @@ Summarize the maintainer-facing contract of the agent runtime.
 - `runTask(input, options?)`
 - `prompt(input)`
 - `abort()`
+- `dispose()`
 - `isRunning()`
 - `listProfiles()` / `setProfile()`
 - `listModels()` / `setModel()`
@@ -74,6 +76,7 @@ Important contract:
 - `prompt()` is compatibility sugar over task execution
 - both methods now accept `string | TaskInput`
 - `runTask()` options now include channel-aware execution hints such as `channel`, `interactionMode`, and `extraTaskContext`
+- `interactionMode: "curiosity"` is a read-only heartbeat exploration mode that disables `write_todos`, restricts tools to `read`/`bash`, and expects tagged curiosity output
 - `abort()` must stop the active run and prevent stale results from landing
 - prompt memory injection may combine execution memory and structured memory
 - task-end structured memory persistence now runs a fast-path observation write followed by consolidation
@@ -83,6 +86,9 @@ Important contract:
 - `inspectStructuredMemory()` exposes self runtime state, unresolved conflicts, pending queue items, and the current structured-memory package for one entity
 - image-bearing inputs are rejected up front when the selected model reports `supportsAttachments === false`
 - `switchSession(..., { preserveCurrentModel: true })` allows a caller to reuse an existing session transcript without letting older session metadata replace the current resolved model
+- `AgentOptions.heartbeatEnabled=false` disables automatic autonomy-heartbeat scheduling without disabling `runHeartbeatOnce()`
+- `getCurrentTask()` / `getCurrentTodoRecord()` are foreground-facing helpers and do not surface background heartbeat/autonomy tasks
+- low-risk heartbeat work can now enqueue a `curiosity_probe` intent that scans lightly, writes back one `openQuestion` and one `hypothesis`, and then applies a short global curiosity cooldown
 
 ## Shared-session Telegram handoff
 
@@ -91,6 +97,7 @@ Current Telegram chat handoff does **not** create a separate session.
 Instead:
 
 - the TUI creates short-lived handoff agent instances
+- those handoff agents disable automatic heartbeat scheduling and are disposed after the chat handoff completes
 - each handoff agent switches into the current shared session id
 - `switchSession(..., { preserveCurrentModel: true })` prevents an older session metadata header from replacing the active Telegram profile/model
 - `extraTaskContext` is used to inject unfinished same-chat reply context into the next Telegram handoff turn

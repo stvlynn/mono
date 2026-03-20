@@ -78,8 +78,10 @@ describe("tui app bootstrap", () => {
     expect(appContainer).toContain("sanitizeTelegramReplyPreview(currentLane.draftText)");
     expect(appContainer).toContain('interactionMode: "channel_chat"');
     expect(appContainer).toContain("new AgentRuntime(");
+    expect(appContainer).toContain("heartbeatEnabled: false");
     expect(appContainer).toContain('switchSession(agent.getSessionId(), undefined, { preserveCurrentModel: true })');
     expect(appContainer).toContain("buildTelegramContinuationContext(previousLane)");
+    expect(appContainer).toContain("handoffAgent?.dispose()");
     expect(appContainer).not.toContain("telegramChatQueueRef");
     expect(appContainer).not.toContain("waitForAgentToBeIdle");
     expect(appContainer).not.toContain('return "Agent is busy with another task. Try again in a moment."');

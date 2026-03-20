@@ -61,6 +61,7 @@ export interface TelegramChatResponseMessage {
 export interface TelegramChatResponseSticker {
   emoji?: string;
   fileId?: string;
+  path?: string;
 }
 
 export interface TelegramChatResponse {

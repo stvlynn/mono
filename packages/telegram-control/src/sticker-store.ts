@@ -101,15 +101,14 @@ export async function cacheTelegramSticker(
   const filePath = resolveTelegramStickerCachePath(cwd);
   await mkdir(dirname(filePath), { recursive: true });
   const cache = await readTelegramStickerCache(cwd);
-  const cacheKey = sticker.fileUniqueId?.trim() || sticker.fileId.trim();
-  cache.stickers[cacheKey] = {
+  mergeTelegramStickerCacheEntry(cache.stickers, {
     fileId: sticker.fileId.trim(),
     ...(sticker.fileUniqueId?.trim() ? { fileUniqueId: sticker.fileUniqueId.trim() } : {}),
     ...(sticker.emoji?.trim() ? { emoji: sticker.emoji.trim() } : {}),
     ...(sticker.setName?.trim() ? { setName: sticker.setName.trim() } : {}),
     ...(sticker.description?.trim() ? { description: sticker.description.trim() } : {}),
     cachedAt: new Date().toISOString(),
-  };
+  });
   const next = {
     version: 1 as const,
     stickers: normalizeStickerCacheEntries(cache.stickers),
@@ -136,15 +135,14 @@ export async function cacheTelegramStickerSet(
     if (!fileId) {
       continue;
     }
-    const cacheKey = sticker.fileUniqueId?.trim() || fileId;
-    cache.stickers[cacheKey] = {
+    mergeTelegramStickerCacheEntry(cache.stickers, {
       fileId,
       ...(sticker.fileUniqueId?.trim() ? { fileUniqueId: sticker.fileUniqueId.trim() } : {}),
       ...(sticker.emoji?.trim() ? { emoji: sticker.emoji.trim() } : {}),
       ...(input.setName?.trim() ? { setName: input.setName.trim() } : {}),
       ...(sticker.description?.trim() ? { description: sticker.description.trim() } : {}),
       cachedAt: new Date().toISOString(),
-    };
+    });
   }
   const filePath = resolveTelegramStickerCachePath(cwd);
   await mkdir(dirname(filePath), { recursive: true });
@@ -179,10 +177,22 @@ export async function searchTelegramStickerCache(
     }))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score || left.sticker.fileId.localeCompare(right.sticker.fileId))
-    .slice(0, limit)
     .map((entry) => entry.sticker);
 
-  return results;
+  const deduped: TelegramStickerCacheEntry[] = [];
+  const seenFileIds = new Set<string>();
+  for (const sticker of results) {
+    if (seenFileIds.has(sticker.fileId)) {
+      continue;
+    }
+    seenFileIds.add(sticker.fileId);
+    deduped.push(sticker);
+    if (deduped.length >= limit) {
+      break;
+    }
+  }
+
+  return deduped;
 }
 
 export function summarizeTelegramStickerStore(
@@ -271,6 +281,53 @@ function normalizeStickerCacheEntries(
   }
 
   return normalized;
+}
+
+function mergeTelegramStickerCacheEntry(
+  target: Record<string, TelegramStickerCacheEntry>,
+  nextSticker: TelegramStickerCacheEntry,
+): void {
+  const normalizedFileId = nextSticker.fileId.trim();
+  const normalizedUniqueId = nextSticker.fileUniqueId?.trim();
+  const nextKey = normalizedUniqueId || normalizedFileId;
+  const duplicateKeys = new Set<string>();
+
+  for (const [key, sticker] of Object.entries(target)) {
+    if (sticker.fileId.trim() === normalizedFileId || (normalizedUniqueId && sticker.fileUniqueId?.trim() === normalizedUniqueId)) {
+      duplicateKeys.add(key);
+    }
+  }
+
+  let merged: TelegramStickerCacheEntry = {
+    fileId: normalizedFileId,
+    ...(normalizedUniqueId ? { fileUniqueId: normalizedUniqueId } : {}),
+    ...(nextSticker.emoji?.trim() ? { emoji: nextSticker.emoji.trim() } : {}),
+    ...(nextSticker.setName?.trim() ? { setName: nextSticker.setName.trim() } : {}),
+    ...(nextSticker.description?.trim() ? { description: nextSticker.description.trim() } : {}),
+    cachedAt: nextSticker.cachedAt?.trim() || new Date().toISOString(),
+  };
+
+  for (const key of duplicateKeys) {
+    const existing = target[key];
+    if (!existing) {
+      continue;
+    }
+    merged = {
+      fileId: normalizedFileId,
+      ...(normalizedUniqueId || existing.fileUniqueId?.trim()
+        ? { fileUniqueId: normalizedUniqueId ?? existing.fileUniqueId?.trim() }
+        : {}),
+      ...(merged.emoji || existing.emoji?.trim() ? { emoji: merged.emoji ?? existing.emoji?.trim() } : {}),
+      ...(merged.setName || existing.setName?.trim() ? { setName: merged.setName ?? existing.setName?.trim() } : {}),
+      ...(merged.description || existing.description?.trim()
+        ? { description: merged.description ?? existing.description?.trim() }
+        : {}),
+      cachedAt: merged.cachedAt || existing.cachedAt?.trim() || new Date().toISOString(),
+    };
+    delete target[key];
+  }
+
+  target[nextKey] = merged;
 }
 
 function scoreTelegramStickerCacheEntry(

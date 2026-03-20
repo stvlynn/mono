@@ -5,16 +5,25 @@ export interface ConversationOutcomeOptions {
   includeToolResultFallback?: boolean;
 }
 
+const FINAL_REPLY_OPEN = "[final-reply]";
+const FINAL_REPLY_CLOSE = "[/final-reply]";
+
 export function extractConversationOutcomeText(
   messages: ConversationMessage[],
   options: ConversationOutcomeOptions = {},
 ): string | null {
-  const completedReply = extractLatestAssistantText(messages, "stop");
+  const completedReply = extractLatestAssistantText(messages, "stop", { finalReplyOnly: true });
   if (completedReply) {
     return completedReply;
   }
 
-  if (options.includeToolUseAssistantText) {
+  const plainStopReply = extractLatestAssistantText(messages, "stop");
+  if (plainStopReply) {
+    return plainStopReply;
+  }
+
+  const hasToolActivity = messages.some((message) => message.role === "tool");
+  if (options.includeToolUseAssistantText && !hasToolActivity) {
     const toolUseReply = extractLatestAssistantText(messages, "tool_use");
     if (toolUseReply) {
       return toolUseReply;
@@ -31,6 +40,7 @@ export function extractConversationOutcomeText(
 function extractLatestAssistantText(
   messages: ConversationMessage[],
   stopReason: AssistantMessage["stopReason"],
+  options: { finalReplyOnly?: boolean } = {},
 ): string | null {
   const assistantMessages = messages.filter((message): message is AssistantMessage => message.role === "assistant");
 
@@ -46,13 +56,35 @@ function extractLatestAssistantText(
       .filter(Boolean)
       .join("\n\n")
       .trim();
+    const finalReply = extractFinalReply(reply);
+
+    if (options.finalReplyOnly) {
+      if (finalReply) {
+        return finalReply;
+      }
+      continue;
+    }
 
     if (reply) {
-      return reply;
+      return finalReply ?? reply;
     }
   }
 
   return null;
+}
+
+export function extractFinalReply(text: string): string | null {
+  const start = text.indexOf(FINAL_REPLY_OPEN);
+  if (start < 0) {
+    return null;
+  }
+  const end = text.indexOf(FINAL_REPLY_CLOSE, start + FINAL_REPLY_OPEN.length);
+  if (end < 0) {
+    return null;
+  }
+
+  const inner = text.slice(start + FINAL_REPLY_OPEN.length, end).trim();
+  return inner || null;
 }
 
 function synthesizeToolResultOutcome(messages: ConversationMessage[]): string | null {

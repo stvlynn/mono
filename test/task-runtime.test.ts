@@ -324,6 +324,111 @@ describeIfRealTestModel("task runtime", () => {
     expect(buildTaskTurnPlan(task).phase).toBe("execute");
   });
 
+  it("prefers final-reply text over tool-use preambles in task summaries", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "continue the investigation",
+        model,
+        existingMessages: []
+      }),
+      "summarize"
+    );
+
+    const summary = buildTaskSummary(task, [
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "tool_use",
+        timestamp: 1,
+        content: [{ type: "text", text: "网站 stv.pm 是个 portfolio 页面，信息量很大！继续查关联项目：" }],
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        content: "Navigation failed: net::ERR_NAME_NOT_RESOLVED",
+        isError: false,
+        timestamp: 2,
+      },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "stop",
+        timestamp: 3,
+        content: [{
+          type: "text",
+          text: "[final-reply]已确认 stv.pm 是个人作品集站点，但关联项目追查暂时卡在域名解析和搜索封禁上。[/final-reply]",
+        }],
+      },
+    ]);
+
+    expect(summary).toContain("Latest outcome: 已确认 stv.pm 是个人作品集站点");
+    expect(summary).not.toContain("继续查关联项目：");
+  });
+
+  it("does not use tool-use preambles as final summaries for tool-heavy direct-response turns", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "继续追查",
+        model,
+        existingMessages: []
+      }),
+      "summarize"
+    );
+
+    const summary = buildTaskSummary(task, [
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "tool_use",
+        timestamp: 1,
+        content: [{ type: "text", text: "网站 stv.pm 是个 portfolio 页面，信息量很大！继续查关联项目：" }],
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        content: "Navigation failed: net::ERR_NAME_NOT_RESOLVED",
+        isError: false,
+        timestamp: 2,
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-2",
+        toolName: "bash",
+        content: "Navigation failed: net::ERR_NAME_NOT_RESOLVED",
+        isError: false,
+        timestamp: 3,
+      },
+    ]);
+
+    expect(summary).toContain("No assistant summary was produced.");
+    expect(summary).not.toContain("继续查关联项目：");
+  });
+
+  it("uses a curiosity turn plan that avoids todo planning and requires reply tags", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "Explore one repo question suggested by recent runtime context.",
+        model,
+        existingMessages: []
+      }),
+      "execute"
+    );
+
+    const plan = buildTaskTurnPlan(task, null, "curiosity");
+
+    expect(plan.phase).toBe("execute");
+    expect(plan.prompt).toContain("You are in curiosity exploration mode.");
+    expect(plan.prompt).toContain("Do not create todo plans or edit files.");
+    expect(plan.prompt).toContain("[final-reply]...[/final-reply]");
+    expect(plan.prompt).toContain("[curiosity-question: ...]");
+    expect(plan.prompt).not.toContain("write_todos");
+  });
+
   it("builds a task summary from tool outcomes when no assistant text was produced", () => {
     const task = advanceTaskPhase(
       createTaskState({

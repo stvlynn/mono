@@ -76,6 +76,7 @@ import {
   createProtectedCodingTools,
   createChannelActionTool,
   createChannelStoreTool,
+  createReadTool,
   DefaultPermissionPolicy,
   wrapToolWithPermissions,
 } from "@mono/tools";
@@ -111,6 +112,9 @@ import {
   buildFeedbackSignals,
   buildHeartbeatSelection,
   createAutonomyLease,
+  createCuriosityLease,
+  CURIOSITY_COOLDOWN_KEY,
+  CURIOSITY_COOLDOWN_MS,
   diagnoseTaskOutcome,
   extractUserFeedbackSignals,
 } from "./autonomy-runtime.js";
@@ -118,6 +122,7 @@ import {
   buildHeartbeatReplyComparisonKey,
   buildHeartbeatReplyRecord,
   evaluateHeartbeatReply,
+  extractCuriosityReplyFields,
   type HeartbeatReplyEvaluation
 } from "./heartbeat-response.js";
 import { HeartbeatWakeController, type HeartbeatWakeTrigger } from "./heartbeat-wake.js";
@@ -129,7 +134,7 @@ interface TaskRunContext {
   controller: AbortController;
   session: SessionManager;
   model: UnifiedModel;
-  interactionMode: "default" | "channel_chat";
+  interactionMode: "default" | "channel_chat" | "curiosity";
   channel?: ToolExecutionChannel;
   input: TaskInput;
   extraTaskContext?: string;
@@ -157,7 +162,7 @@ interface TaskRunContext {
 
 export interface RunTaskOptions {
   channel?: ToolExecutionChannel;
-  interactionMode?: "default" | "channel_chat";
+  interactionMode?: "default" | "channel_chat" | "curiosity";
   extraTaskContext?: string;
   sandboxMode?: SandboxMode;
   approvalPolicy?: ApprovalPolicy;
@@ -171,6 +176,7 @@ export interface AgentOptions {
   model?: string;
   profile?: string;
   baseURL?: string;
+  heartbeatEnabled?: boolean;
   thinkingLevel?: ThinkingLevel;
   maxSteps?: number;
   maxTurns?: number;
@@ -221,6 +227,7 @@ interface HeartbeatRuntimeState {
   todos: TaskTodoRecord[];
   recentFeedback: FeedbackSignal[];
   recentIntents: AutonomyIntent[];
+  recentSessionTexts: string[];
 }
 
 interface TransientTaskStateSnapshot {
@@ -327,6 +334,10 @@ function normalizeApprovalPolicy(value: ApprovalPolicy | undefined): ApprovalPol
   throw new Error(`Unknown approval policy: ${value}`);
 }
 
+function isForegroundTask(task: TaskState | undefined): boolean {
+  return !task || task.origin === undefined || task.origin === "user";
+}
+
 export class Agent {
   private readonly cwd: string;
   private readonly registry: ModelRegistry;
@@ -344,7 +355,9 @@ export class Agent {
   private modelSelection?: string;
   private profileSelection?: string;
   private baseURLOverride?: string;
+  private readonly heartbeatEnabled: boolean;
   private continueSession: boolean;
+  private disposed = false;
   private requestedThinkingLevel: ThinkingLevel;
   private activeRun?: { id: number; controller: AbortController };
   private nextRunId = 1;
@@ -370,6 +383,7 @@ export class Agent {
     this.modelSelection = options.model;
     this.profileSelection = options.profile;
     this.baseURLOverride = options.baseURL;
+    this.heartbeatEnabled = options.heartbeatEnabled ?? true;
     this.continueSession = options.continueSession ?? false;
     this.requestedThinkingLevel = options.thinkingLevel ?? "medium";
     this.state = {} as AgentState;
@@ -869,6 +883,20 @@ export class Agent {
     return messages;
   }
 
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.heartbeatWake.stop();
+    this.activeRun?.controller.abort(new DOMException("Disposed", "AbortError"));
+    this.activeRun = undefined;
+    this.listeners.clear();
+    this.requestApprovalHandler = undefined;
+    this.channelCapabilityProvider = undefined;
+  }
+
   abort(): void {
     this.activeRun?.controller.abort(new DOMException("Aborted", "AbortError"));
   }
@@ -894,11 +922,11 @@ export class Agent {
   }
 
   getCurrentTask(): TaskState | undefined {
-    return this.state.currentTask;
+    return isForegroundTask(this.state.currentTask) ? this.state.currentTask : undefined;
   }
 
   getCurrentTodoRecord(): TaskTodoRecord | undefined {
-    return this.state.currentTodoRecord;
+    return this.getCurrentTask() ? this.state.currentTodoRecord : undefined;
   }
 
   getConfigSummary(): MonoConfigSummary {
@@ -1377,14 +1405,14 @@ export class Agent {
   }
 
   private scheduleHeartbeat(delayMs = 30_000, trigger: HeartbeatWakeTrigger = "timer"): void {
-    if (!this.initialized) {
+    if (!this.canScheduleHeartbeat()) {
       return;
     }
     this.heartbeatWake.requestWake({ trigger, delayMs });
   }
 
   private async runHeartbeat(trigger: HeartbeatWakeTrigger): Promise<{ intent?: AutonomyIntent } | undefined> {
-    if (!this.initialized) {
+    if (!this.initialized || this.disposed) {
       return undefined;
     }
 
@@ -1420,10 +1448,11 @@ export class Agent {
       learningState: heartbeatState.learningState,
       todos: heartbeatState.todos,
       recentFeedback: heartbeatState.recentFeedback,
+      recentSessionTexts: heartbeatState.recentSessionTexts,
       currentTaskId: this.state.currentTask?.taskId,
     });
     const duplicateIntent = selection.selectedIntent
-      ? this.findMatchingOpenAutonomyIntent(selection.selectedIntent, heartbeatState.recentIntents)
+      ? this.findMatchingOpenAutonomyIntent(selection.selectedIntent, heartbeatState.recentIntents, now)
       : undefined;
     if (duplicateIntent) {
       return this.skipHeartbeat(
@@ -1443,12 +1472,13 @@ export class Agent {
   }
 
   private async loadHeartbeatRuntimeState(): Promise<HeartbeatRuntimeState> {
-    const [selfRuntime, learningState, todos, recentFeedback, recentIntents] = await Promise.all([
+    const [selfRuntime, learningState, todos, recentFeedback, recentIntents, sessionMessages] = await Promise.all([
       this.state.structuredMemoryStore.getSelfRuntime(),
       this.state.structuredMemoryStore.getLearningState(),
       this.state.taskTodoStore.listBySession(this.state.session.sessionId),
       this.state.structuredMemoryStore.listFeedbackSignals({ limit: 12 }),
       this.state.structuredMemoryStore.listAutonomyIntents({ limit: 24 }),
+      this.state.session.loadMessages(),
     ]);
 
     return {
@@ -1457,6 +1487,7 @@ export class Agent {
       todos,
       recentFeedback,
       recentIntents,
+      recentSessionTexts: this.listRecentVisibleSessionTexts(sessionMessages),
     };
   }
 
@@ -1469,10 +1500,15 @@ export class Agent {
 
   private findMatchingOpenAutonomyIntent(
     selectedIntent: AutonomyIntent,
-    recentIntents: AutonomyIntent[]
+    recentIntents: AutonomyIntent[],
+    now: number,
   ): AutonomyIntent | undefined {
     return recentIntents.find((intent) =>
       intent.status !== "completed"
+      && (
+        selectedIntent.kind !== "curiosity_probe"
+        || intent.createdAt >= now - CURIOSITY_COOLDOWN_MS
+      )
       && intent.kind === selectedIntent.kind
       && intent.sourceSignal === selectedIntent.sourceSignal
       && intent.goal === selectedIntent.goal
@@ -1527,6 +1563,9 @@ export class Agent {
 
     await this.state.structuredMemoryStore.updateAutonomyIntent(storedIntent.id, { status: "accepted" });
     try {
+      if (storedIntent.kind === "curiosity_probe") {
+        await this.applyCuriosityCooldown(startedAt);
+      }
       const isolatedSession = (await this.state.structuredMemoryStore.getSelfRuntime()).autonomyPolicy.isolatedSession;
       const execution = await this.runAutonomousTask(storedIntent, startedAt, isolatedSession);
       await this.handleHeartbeatExecutionOutcome(storedIntent, execution);
@@ -1548,10 +1587,12 @@ export class Agent {
     startedAt: number,
     isolatedSession: boolean
   ): Promise<HeartbeatTaskExecution> {
+    const isCuriosityIntent = intent.kind === "curiosity_probe";
     const options: RunTaskOptions = {
+      interactionMode: isCuriosityIntent ? "curiosity" : "default",
       origin: intent.recommendedAction === "resume_task" ? "resume" : "heartbeat",
       autonomyIntent: intent,
-      lease: createAutonomyLease(startedAt),
+      lease: isCuriosityIntent ? createCuriosityLease(startedAt) : createAutonomyLease(startedAt),
       extraTaskContext: buildAutonomyExtraContext(intent),
     };
     if (!isolatedSession) {
@@ -1656,6 +1697,9 @@ export class Agent {
     if (!evaluation) {
       return;
     }
+    if (intent.kind === "curiosity_probe" && evaluation.status === "sent") {
+      await this.persistCuriosityReply(evaluation.visibleText);
+    }
     if (execution.isolatedSession && evaluation.status !== "sent") {
       await this.pruneIsolatedHeartbeatSession(execution.filePath);
     }
@@ -1684,9 +1728,69 @@ export class Agent {
     await this.state.structuredMemoryStore.appendHeartbeatDecision(decision);
   }
 
+  private async applyCuriosityCooldown(timestamp: number): Promise<void> {
+    const currentRuntime = await this.state.structuredMemoryStore.getSelfRuntime();
+    await this.state.structuredMemoryStore.upsertSelfRuntime({
+      cooldowns: this.mergeRuntimeCooldowns(currentRuntime.cooldowns, [{
+        key: CURIOSITY_COOLDOWN_KEY,
+        until: timestamp + CURIOSITY_COOLDOWN_MS,
+        reason: "A recent curiosity probe already explored the current runtime context.",
+      }]),
+    });
+  }
+
+  private async persistCuriosityReply(text: string): Promise<void> {
+    const fields = extractCuriosityReplyFields(text);
+    if (!fields.question || !fields.hypothesis || !fields.evidence) {
+      return;
+    }
+
+    const currentRuntime = await this.state.structuredMemoryStore.getSelfRuntime();
+    await this.state.structuredMemoryStore.upsertSelfRuntime({
+      openQuestions: this.appendUniqueTail(currentRuntime.openQuestions, fields.question, 6),
+      currentHypotheses: this.appendUniqueTail(currentRuntime.currentHypotheses, fields.hypothesis, 6),
+    });
+  }
+
   private handleHeartbeatFailure(error: unknown): void {
     const resolvedError = error instanceof Error ? error : new Error(String(error));
     this.emit({ type: "error", error: resolvedError });
+  }
+
+  private canScheduleHeartbeat(): boolean {
+    return this.initialized && this.heartbeatEnabled && !this.disposed;
+  }
+
+  private listRecentVisibleSessionTexts(messages: ConversationMessage[]): string[] {
+    return messages
+      .flatMap((message) => message.role === "user"
+        ? (() => {
+            const text = userContentToPlainText(message.content).trim();
+            return text ? [text] : [];
+          })()
+        : [])
+      .slice(-8);
+  }
+
+  private appendUniqueTail(items: string[], nextItem: string, limit: number): string[] {
+    const normalizedNext = nextItem.trim();
+    if (!normalizedNext) {
+      return items;
+    }
+    return [...new Set([...items, normalizedNext])].slice(-limit);
+  }
+
+  private mergeRuntimeCooldowns(
+    current: Array<{ key: string; until: number; reason: string }>,
+    additions: Array<{ key: string; until: number; reason: string }>,
+  ): Array<{ key: string; until: number; reason: string }> {
+    const next = new Map(current.map((item) => [item.key, item]));
+    for (const addition of additions) {
+      next.set(addition.key, addition);
+    }
+    return [...next.values()]
+      .sort((left, right) => right.until - left.until)
+      .slice(0, 8);
   }
 
   private evaluateTaskLease(context: TaskRunContext, task: TaskState): {
@@ -1835,7 +1939,7 @@ export class Agent {
   }
 
   private applyRunMode(task: TaskState, context: TaskRunContext): TaskState {
-    if (context.interactionMode === "channel_chat") {
+    if (context.interactionMode === "channel_chat" || context.interactionMode === "curiosity") {
       return applyVerificationMode(task, "none");
     }
     return this.verificationMode ? applyVerificationMode(task, this.verificationMode) : task;
@@ -1914,7 +2018,7 @@ export class Agent {
       task.currentTodoMemoryId = todoRecord.id;
     }
     const tools = await this.createToolsForRun(context, task);
-    const turnPlan = buildTaskTurnPlan(task, todoRecord);
+    const turnPlan = buildTaskTurnPlan(task, todoRecord, context.interactionMode);
 
     if (turnPlan.phase === "verify") {
       this.emitIfCurrent(context.runId, { type: "task-verify-start", task });
@@ -2041,7 +2145,7 @@ export class Agent {
       "Channel Delivery Notes:",
       "- Write a normal user-facing reply.",
       "- Use the channel_action tool for platform-native sends, edits, deletes, reactions, or native media actions when a direct channel action is needed.",
-      "- On Telegram, channel_action(action=\"photo\"|\"document\") can resend a Telegram file with payload.fileId or upload a local file with payload.path / payload.filePath.",
+      "- On Telegram, channel_action(action=\"photo\"|\"document\"|\"sticker\") can resend a Telegram file with payload.fileId or upload a local file with payload.path / payload.filePath.",
       "- Use the channel_store tool when the user wants to save a reusable channel-native source for future runs.",
       "- The runtime may split long answers into multiple platform messages automatically when needed.",
       `- Available channel actions: ${context.actions.join(", ") || "<none>"}.`,
@@ -2123,8 +2227,30 @@ export class Agent {
   private buildTaskContextForRun(
     task: TaskState,
     todoRecord: TaskTodoRecord | null,
-    interactionMode: "default" | "channel_chat",
+    interactionMode: "default" | "channel_chat" | "curiosity",
   ): string {
+    if (interactionMode === "curiosity") {
+      return [
+        "<TaskContext>",
+        `Goal: ${task.goal}`,
+        `Phase: ${task.phase}`,
+        `Attempts: ${task.attempts}`,
+        `Origin: ${task.origin ?? "user"}`,
+        task.parentIntentId ? `AutonomyIntent: ${task.parentIntentId}` : "",
+        task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
+        "Mode: curiosity",
+        "This is an idle curiosity exploration.",
+        "Scan the repo lightly and gather only read-only evidence.",
+        "If bash is available, use it only for read-only inspection commands.",
+        "Do not edit files or use write_todos.",
+        "Return exactly one curiosity question, one hypothesis, and one evidence line using:",
+        "[curiosity-question: ...]",
+        "[curiosity-hypothesis: ...]",
+        "[curiosity-evidence: ...]",
+        "</TaskContext>",
+      ].join("\n");
+    }
+
     if (interactionMode !== "channel_chat") {
       return buildTaskContext(task, todoRecord);
     }
@@ -2146,6 +2272,7 @@ export class Agent {
       "This is a live channel chat turn.",
       "Do not plan engineering work or use write_todos.",
       "If bash is available in this chat, use it only for concrete workspace evidence or shell execution.",
+      "Only the final user-visible reply should be wrapped in [final-reply]...[/final-reply].",
       "Respond in-channel and prefer channel_action for required native actions.",
       "</TaskContext>",
     ].join("\n");
@@ -2168,11 +2295,13 @@ export class Agent {
     } as const;
     const protectedTools = context.interactionMode === "channel_chat"
       ? this.buildChannelChatProtectedTools(policy, toolPermissionOptions, context.channel)
-      : createProtectedCodingTools(this.cwd, {
-        ...toolPermissionOptions,
-        policy,
-      });
-    const writeTodosTool = context.interactionMode === "channel_chat"
+      : context.interactionMode === "curiosity"
+        ? this.buildCuriosityProtectedTools(policy, toolPermissionOptions)
+        : createProtectedCodingTools(this.cwd, {
+          ...toolPermissionOptions,
+          policy,
+        });
+    const writeTodosTool = context.interactionMode === "channel_chat" || context.interactionMode === "curiosity"
       ? null
       : createWriteTodosTool({
         cwd: this.cwd,
@@ -2208,7 +2337,8 @@ export class Agent {
           }
         }
       });
-    const channelActionTool = context.channel && this.channelCapabilityProvider?.supportsChannel(context.channel)
+    const channelActionTool = context.interactionMode === "channel_chat"
+      && context.channel && this.channelCapabilityProvider?.supportsChannel(context.channel)
       && this.channelCapabilityProvider.listAvailableActions(context.channel).length > 0
       ? wrapToolWithPermissions(createChannelActionTool({
         channel: context.channel,
@@ -2220,7 +2350,8 @@ export class Agent {
           : undefined,
       }), wrappedToolOptions)
       : null;
-    const channelStoreTool = context.channel && this.channelCapabilityProvider?.supportsChannel(context.channel)
+    const channelStoreTool = context.interactionMode === "channel_chat"
+      && context.channel && this.channelCapabilityProvider?.supportsChannel(context.channel)
       && this.channelCapabilityProvider.listStoreResources(context.channel).length > 0
       ? wrapToolWithPermissions(createChannelStoreTool({
         channel: context.channel,
@@ -2256,6 +2387,30 @@ export class Agent {
       ...toolPermissionOptions,
       policy,
     })];
+  }
+
+  private buildCuriosityProtectedTools(
+    policy: DefaultPermissionPolicy,
+    toolPermissionOptions: {
+      sessionId: string;
+      channel?: ToolExecutionChannel;
+      requestApproval: (request: ApprovalRequest) => Promise<boolean>;
+      requestInstallApproval: (request: ApprovalRequest) => Promise<boolean>;
+      emit: (event: { type: "approval-request"; request: ApprovalRequest } | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }) => void;
+    },
+  ) {
+    return [
+      wrapToolWithPermissions(createReadTool(this.cwd), {
+        ...toolPermissionOptions,
+        cwd: this.cwd,
+        policy,
+      }),
+      createProtectedBashTool(this.cwd, {
+        ...toolPermissionOptions,
+        policy,
+        requestInstallApproval: toolPermissionOptions.requestInstallApproval,
+      }),
+    ];
   }
 
   private async createPermissionPolicy(
@@ -2670,10 +2825,13 @@ function inferChannelNativeActionRequirement(
   const refersToCurrentResource = /这个|这套|this|same/.test(text) && context.currentResource?.available;
   const searchableActions = context.actions.filter((action) => action.toLowerCase() !== "send");
 
+  if (!context.currentResource?.available || !currentKind || !searchableActions.includes(currentKind)) {
+    return undefined;
+  }
+
   const candidateAction = [
     currentKind && searchableActions.includes(currentKind) && text.includes(currentKind) ? currentKind : null,
     currentKind && context.currentResource?.available && refersToCurrentResource ? currentKind : null,
-    searchableActions.find((action) => text.includes(action.toLowerCase())) ?? null,
   ].find((value): value is string => Boolean(value));
 
   if (!candidateAction) {

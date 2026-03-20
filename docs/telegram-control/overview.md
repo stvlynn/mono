@@ -145,17 +145,18 @@ Agent tool behavior:
 
 - Telegram DM runs can expose the generic `channel_action` tool for explicit `send` / `sticker` / `edit` / `delete` / `react` actions
 - Telegram DM runs can expose `channel_action(photo|document)` to send back the current Telegram photo or document by `fileId`
-- `channel_action(photo|document)` can also upload a local file path through Telegram Bot API multipart transfer, in addition to reusing an existing Telegram `fileId`
+- `channel_action(photo|document|sticker)` can also upload a local file path through Telegram Bot API multipart transfer, in addition to reusing an existing Telegram `fileId`
 - Telegram DM runs can expose the generic `channel_store` tool for listing, searching, or persisting reusable sticker sources
 - Telegram chat handoff runs in a dedicated `channel_chat` interaction mode rather than the normal coding-task mode
 - `channel_chat` turns do not expose `write_todos` or the full coding toolset; allowlisted Telegram chats can expose protected `bash`, and all other native replies still go through `channel_action` / `channel_store`
 - Telegram chat handoff now runs through short-lived handoff agent instances instead of borrowing the main TUI agent run slot
+- those handoff agents disable automatic autonomy heartbeat and are disposed after the handoff finishes
 - those handoff agents still switch into the current shared session rather than creating per-chat sessions
 - handoff session switches use `preserveCurrentModel` so an older shared-session metadata header cannot override the active Telegram profile/model
-- current-turn sticker metadata is injected as structured context from `TaskInput.metadata.telegram`, including `chatId`, `fileId`, `fileUniqueId`, `emoji`, and `setName`
+- current-turn sticker metadata is injected as structured context from `TaskInput.metadata.telegram`, including `chatId`, `fileId`, `fileUniqueId`, `emoji`, `setName`, and animated/video flags
 - current-turn Telegram photos and documents now keep native metadata in `TaskInput.metadata.telegram`, including `fileId`, `messageId`, `mimeType`, optional caption, and document `fileName`
 - recent-history sticker recovery is scoped to the active Telegram chat id, so stickers do not bleed across chats handled by the same TUI process
-- Telegram runtime keeps a global sticker search cache under `~/.mono/state/telegram/sticker-cache.json`, keyed by `fileId` / `fileUniqueId` / `setName`
+- Telegram runtime keeps a global sticker search cache under `~/.mono/state/telegram/sticker-cache.json`, keyed by `fileUniqueId` when available and deduplicated by `fileId`
 - `channel_store(resource="sticker_source", action="search", ...)` can search that cache and return other stickers from the same set before `channel_action(sticker)` sends one
 - missing `.mono/telegram/stickers.json` blocks “save this as a default/common sticker source”, but does not block sending the current-turn sticker back when `Sticker.fileId` is available
 - allowlisted Telegram private chats can receive inline approval buttons for sensitive bash commands instead of relying on the local TUI
@@ -318,6 +319,7 @@ Per-message behavior:
 - for authorized chat handoff:
   - model-menu traffic runs before normal chat handoff
   - the TUI creates a handoff-specific agent instance and calls it with `interactionMode: "channel_chat"`
+  - the handoff-specific agent disables automatic autonomy heartbeat and is disposed after the handoff returns
   - handoff agents switch into the current shared session id so Telegram chat turns stay inside the same repository session history as the TUI
   - session switches for handoff use `preserveCurrentModel` so the shared session metadata does not silently replace the active Telegram profile/model
   - the runtime forwards Telegram channel context into the agent permission policy
@@ -332,6 +334,7 @@ Per-message behavior:
   - the runtime can append one configured sticker after the text reply when the model emits a Telegram sticker tag
   - sticker-only replies are allowed; if the assistant emits only a valid sticker tag or file-id tag, the runtime sends just the sticker and does not add fallback text
   - for freshly received Telegram stickers, the normalized task input includes structured metadata under `metadata.telegram`
+  - animated and video stickers are still handed off to chat as native sticker metadata even when no image attachment can be generated
   - the model can reply with `[telegram-sticker-file:<file_id>]` to send that exact sticker immediately
   - sticker delivery can use:
     - the current sticker `fileId`
@@ -358,6 +361,7 @@ Current behavior:
 - runtime notifications are surfaced as TUI toasts and status messages
 - the TUI registers the Telegram runtime as a channel capability provider backing the generic `channel_action` and `channel_store` tools
 - Telegram chat handoff now uses short-lived parallel handoff agents that switch into the current shared session instead of reusing the main interactive run slot
+- those handoff agents disable automatic autonomy heartbeat and are disposed after the handoff completes
 - pair and Telegram slash commands execute shared service helpers and open info dialogs with the result
 - slash commands that change Telegram runtime config request a runtime reload
 - the Telegram runtime receives `listConfiguredProfiles`, `applyProfile`, and busy-state callbacks from the TUI container

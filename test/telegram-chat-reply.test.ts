@@ -62,7 +62,7 @@ describe("telegram chat reply formatting", () => {
           model: "gpt-4.1-mini",
           stopReason: "stop",
           timestamp: 3,
-          content: [{ type: "text", text: "The repository has a CLI, TUI, and Telegram control runtime." }],
+          content: [{ type: "text", text: "[final-reply]The repository has a CLI, TUI, and Telegram control runtime.[/final-reply]" }],
         },
       ],
     });
@@ -96,10 +96,47 @@ describe("telegram chat reply formatting", () => {
       ],
     });
 
-    expect(formatTelegramChatReply(result)).toBe("我来帮你查一下 X 上 stv_lynn 的 follower 数量。");
+    expect(formatTelegramChatReply(result)).toBe("I finished the attempt, but I don't have a reliable result to send yet.");
     expect(formatTelegramChatResponse(result)).toEqual({
-      messages: [{ text: "我来帮你查一下 X 上 stv_lynn 的 follower 数量。", format: "markdown" }],
+      messages: [{ text: "I finished the attempt, but I don't have a reliable result to send yet.", format: "markdown" }],
     });
+  });
+
+  it("uses final-reply content instead of tool-use preambles", () => {
+    const result = createTaskResult({
+      status: "done",
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [{ type: "text", text: "网站 stv.pm 是个 portfolio 页面，信息量很大！继续查关联项目：" }],
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: "ok",
+          isError: false,
+          timestamp: 2,
+        },
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "stop",
+          timestamp: 3,
+          content: [{
+            type: "text",
+            text: "[final-reply]已确认 stv.pm 是个人作品集页面，但关联项目追查暂时卡在域名解析和搜索封禁上。[/final-reply]",
+          }],
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe("已确认 stv.pm 是个人作品集页面，但关联项目追查暂时卡在域名解析和搜索封禁上。");
   });
 
   it("summarizes tool results when a done run produced no assistant text at all", () => {
@@ -365,6 +402,12 @@ describe("telegram chat reply formatting", () => {
     expect(sanitizeTelegramReplyPreview("Almost done\n[telegram-sticker:")).toBe("Almost done");
     expect(sanitizeTelegramReplyPreview("Almost done\n[telegram-sticker:🙂]")).toBe("Almost done");
     expect(sanitizeTelegramReplyPreview("Almost done\n[telegram-sticker-file:CAAC")).toBe("Almost done");
+  });
+
+  it("hides pre-final chatter from streamed preview text", () => {
+    expect(sanitizeTelegramReplyPreview("先查一下站点情况")).toBe("先查一下站点情况");
+    expect(sanitizeTelegramReplyPreview("先查一下站点情况\n[final-reply]已确认站点可访问")).toBe("已确认站点可访问");
+    expect(sanitizeTelegramReplyPreview("先查一下站点情况\n[final-reply]已确认站点可访问[/final-reply]")).toBe("已确认站点可访问");
   });
 
   it("uses a native-action fallback when the requested channel action was not satisfied", () => {

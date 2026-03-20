@@ -4,6 +4,7 @@ import {
   applyFeedbackToLearningState,
   applyFeedbackToSelfRuntime,
   buildHeartbeatSelection,
+  CURIOSITY_COOLDOWN_KEY,
   createAutonomyLease,
   diagnoseTaskOutcome,
   extractUserFeedbackSignals,
@@ -60,6 +61,7 @@ describe("autonomy runtime", () => {
       learningState: createLearningState(),
       todos: [todo],
       recentFeedback: [],
+      recentSessionTexts: [],
     });
 
     expect(selection.selectedIntent?.kind).toBe("resume_task");
@@ -187,6 +189,7 @@ describe("autonomy runtime", () => {
       },
       todos: [todo],
       recentFeedback: [],
+      recentSessionTexts: [],
     });
 
     expect(selection.selectedIntent).toBeUndefined();
@@ -219,9 +222,120 @@ describe("autonomy runtime", () => {
       learningState: createLearningState(),
       todos: [todo],
       recentFeedback: [],
+      recentSessionTexts: [],
     });
 
     expect(selection.selectedIntent?.recommendedAction).toBe("request_user_confirmation");
     expect(selection.decision.decision).toBe("request_user_confirmation");
+  });
+
+  it("creates a curiosity probe when runtime context has novelty but no stronger candidate", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        openQuestions: [],
+        currentHypotheses: ["The Telegram channel runtime may be hiding a reusable sticker context bug."],
+        taskHints: ["User keeps asking for native sticker behavior."],
+        currentTensions: ["The same sticker workflow keeps resurfacing."],
+        currentGoals: ["Understand why sticker replies behave differently in Telegram."],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: ["Can mono figure out why the sticker path is inconsistent?"],
+    });
+
+    expect(selection.selectedIntent?.kind).toBe("curiosity_probe");
+    expect(selection.selectedIntent?.sourceSignal).toBe("novelty_signal");
+    expect(selection.decision.decision).toBe("enqueue_task");
+  });
+
+  it("suppresses curiosity probes while the global curiosity cooldown is active", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        openQuestions: [],
+        currentHypotheses: ["The runtime may be missing a curiosity writeback path."],
+        cooldowns: [{
+          key: CURIOSITY_COOLDOWN_KEY,
+          until: 120_000,
+          reason: "Recent curiosity probe still cooling down.",
+        }],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: ["Maybe there is another idle question worth checking."],
+    });
+
+    expect(selection.selectedIntent).toBeUndefined();
+    expect(selection.decision.decision).toBe("noop");
+  });
+
+  it("does not create a curiosity probe from a generic tension-only command seed", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        openQuestions: [],
+        currentHypotheses: [],
+        taskHints: [],
+        currentGoals: [],
+        currentTensions: ["用sticker，不要用文本"],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: [],
+    });
+
+    expect(selection.selectedIntent).toBeUndefined();
+    expect(selection.decision.decision).toBe("noop");
+  });
+
+  it("does not create a curiosity probe from a previous curiosity goal", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        openQuestions: [],
+        currentHypotheses: [],
+        taskHints: [],
+        currentGoals: [
+          "Explore one repo question suggested by runtime seed: 用sticker，不要用文本. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.",
+        ],
+        currentTensions: [],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: [],
+    });
+
+    expect(selection.selectedIntent).toBeUndefined();
+    expect(selection.decision.decision).toBe("noop");
+  });
+
+  it("does not create a curiosity probe from a style-only hint or generic status prompt", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        openQuestions: [],
+        currentHypotheses: [],
+        taskHints: ["Prefer concise answers by default."],
+        currentGoals: [],
+        currentTensions: [],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: ["怎么样了"],
+    });
+
+    expect(selection.selectedIntent).toBeUndefined();
+    expect(selection.decision.decision).toBe("noop");
   });
 });

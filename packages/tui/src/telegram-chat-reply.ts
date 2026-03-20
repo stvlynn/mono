@@ -1,9 +1,11 @@
 import { splitTelegramMessageText } from "@mono/im-platform";
-import { extractConversationOutcomeText, type TaskResult } from "@mono/shared";
+import { extractConversationOutcomeText, extractFinalReply, type TaskResult } from "@mono/shared";
 import type { TelegramChatResponse } from "@mono/telegram-control";
 
 const TELEGRAM_STICKER_TAG_PREFIX = "[telegram-sticker:";
 const TELEGRAM_STICKER_FILE_TAG_PREFIX = "[telegram-sticker-file:";
+const FINAL_REPLY_OPEN = "[final-reply]";
+const FINAL_REPLY_CLOSE = "[/final-reply]";
 const TELEGRAM_STICKER_TAG_RE = /(?:^|\n)\[telegram-sticker:([^\]\n]+)\]\s*$/u;
 const TELEGRAM_STICKER_FILE_TAG_RE = /(?:^|\n)\[telegram-sticker-file:([^\]\n]+)\]\s*$/u;
 const TELEGRAM_MULTI_MESSAGE_SOFT_LIMIT = 1200;
@@ -54,7 +56,8 @@ export function formatTelegramChatResponse(result: TaskResult): TelegramChatResp
     };
   }
 
-  const metadata = extractTelegramReplyMetadata(latestReply);
+  const latestReplyMetadataSource = extractLatestAssistantReplyText(result);
+  const metadata = extractTelegramReplyMetadata(latestReplyMetadataSource ?? latestReply);
   const messages = splitTelegramReplyMessages(metadata.text).map((text) => ({
     text,
     format: "markdown" as const,
@@ -110,19 +113,22 @@ function parseJsonObject(content: unknown): Record<string, unknown> | null {
 }
 
 export function sanitizeTelegramReplyPreview(text: string): string {
-  return stripTelegramReplyMetadataSuffix(text).trimEnd();
+  return stripTelegramReplyMetadataSuffix(extractVisibleFinalReplyPreview(text, true)).trimEnd();
 }
 
 function extractTelegramReplyMetadata(text: string): { text: string; stickerEmoji?: string; stickerFileId?: string } {
+  const finalBody = extractFinalReply(text);
+  const body = finalBody ?? text;
+
   const fileMatch = TELEGRAM_STICKER_FILE_TAG_RE.exec(text.trimEnd());
   if (fileMatch?.[1]?.trim()) {
     return {
-      text: stripTelegramReplyMetadataSuffix(text).trim(),
+      text: stripFinalReplyMarkers(stripTelegramReplyMetadataSuffix(body)).trim(),
       stickerFileId: fileMatch[1].trim(),
     };
   }
 
-  const stripped = stripTelegramReplyMetadataSuffix(text).trim();
+  const stripped = stripFinalReplyMarkers(stripTelegramReplyMetadataSuffix(body)).trim();
   const match = TELEGRAM_STICKER_TAG_RE.exec(text.trimEnd());
   const stickerEmoji = match?.[1]?.trim();
 
@@ -149,6 +155,51 @@ function stripTelegramReplyMetadataSuffix(text: string): string {
     return "";
   }
   return complete;
+}
+
+function extractVisibleFinalReplyPreview(text: string, preserveFallbackText = false): string {
+  const completed = extractFinalReply(text);
+  if (completed) {
+    return completed;
+  }
+
+  const start = text.indexOf(FINAL_REPLY_OPEN);
+  if (start < 0) {
+    return preserveFallbackText ? text : "";
+  }
+
+  const partial = text.slice(start + FINAL_REPLY_OPEN.length);
+  const close = partial.indexOf(FINAL_REPLY_CLOSE);
+  return (close >= 0 ? partial.slice(0, close) : partial).trimStart();
+}
+
+function stripFinalReplyMarkers(text: string): string {
+  return text
+    .replace(FINAL_REPLY_OPEN, "")
+    .replace(FINAL_REPLY_CLOSE, "")
+    .trim();
+}
+
+function extractLatestAssistantReplyText(result: TaskResult): string | null {
+  const assistantMessages = result.messages.filter((message) => message.role === "assistant");
+  for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
+    const message = assistantMessages[index];
+    if (!message) {
+      continue;
+    }
+
+    const reply = message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text.trim())
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    if (reply) {
+      return reply;
+    }
+  }
+
+  return null;
 }
 
 function splitTelegramReplyMessages(text: string): string[] {

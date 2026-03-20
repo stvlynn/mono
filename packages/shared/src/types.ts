@@ -31,6 +31,9 @@ export interface TelegramStickerInputMetadata {
   fileUniqueId?: string;
   emoji?: string;
   setName?: string;
+  type?: string;
+  isAnimated?: boolean;
+  isVideo?: boolean;
 }
 
 export interface TelegramPhotoInputMetadata {
@@ -306,8 +309,8 @@ export type PreferenceStatus = "observation" | "pattern" | "stable";
 export type ConflictStatus = "unresolved" | "monitoring" | "resolved";
 export type SalienceQueueStatus = "pending" | "processed";
 export type TaskOrigin = "user" | "heartbeat" | "resume";
-export type AutonomyIntentKind = "resume_task" | "investigate_gap" | "self_reflection";
-export type AutonomySourceSignal = "stalled_task" | "open_question" | "feedback_pattern";
+export type AutonomyIntentKind = "resume_task" | "investigate_gap" | "self_reflection" | "curiosity_probe";
+export type AutonomySourceSignal = "stalled_task" | "open_question" | "feedback_pattern" | "novelty_signal";
 export type AutonomyIntentStatus = "pending" | "accepted" | "completed" | "deferred" | "blocked";
 export type AutonomyRiskLevel = "low" | "medium" | "high";
 export type AutonomyDecisionAction = "noop" | "enqueue_task" | "resume_task" | "request_user_confirmation" | "defer";

@@ -72,7 +72,7 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
     case "budget-warning":
       return {
         ...pushSystemMessage(state, event.message, "warning"),
-        currentTask: event.task,
+        currentTask: shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask,
         status: event.message
       };
     case "autonomy-blocked":
@@ -221,28 +221,33 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
     case "task-start":
       return {
         ...state,
-        currentTask: event.task,
-        currentTodoRecord: agent.getCurrentTodoRecord(),
+        currentTask: shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask,
+        currentTodoRecord: shouldDisplayForegroundTask(event.task) ? agent.getCurrentTodoRecord() : state.currentTodoRecord,
         running: true,
         waitingCopy: resolveWaitingCopy("task_planning", { goal: event.task.goal }),
         status: describeTaskStart(event.task)
       };
     case "task-update":
     case "task-phase-change":
-      return { ...state, currentTask: event.task, currentTodoRecord: agent.getCurrentTodoRecord(), status: currentTaskStatus(event.task) };
+      return {
+        ...state,
+        currentTask: shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask,
+        currentTodoRecord: shouldDisplayForegroundTask(event.task) ? agent.getCurrentTodoRecord() : state.currentTodoRecord,
+        status: currentTaskStatus(shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask),
+      };
     case "task-verify-start":
       return {
         ...state,
-        currentTask: event.task,
-        currentTodoRecord: agent.getCurrentTodoRecord(),
+        currentTask: shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask,
+        currentTodoRecord: shouldDisplayForegroundTask(event.task) ? agent.getCurrentTodoRecord() : state.currentTodoRecord,
         waitingCopy: resolveWaitingCopy("task_verifying", { goal: event.task.goal }),
         status: "Verifying result..."
       };
     case "task-verify-result":
       return {
         ...state,
-        currentTask: event.task,
-        currentTodoRecord: agent.getCurrentTodoRecord(),
+        currentTask: shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask,
+        currentTodoRecord: shouldDisplayForegroundTask(event.task) ? agent.getCurrentTodoRecord() : state.currentTodoRecord,
         waitingCopy: undefined,
         status: event.passed ? "Verification passed" : `Verification failed: ${event.reason}`
       };
@@ -262,13 +267,14 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
       return {
         ...pushSystemMessage(state, event.result.summary, "success"),
         currentTask: agent.getCurrentTask(),
+        currentTodoRecord: agent.getCurrentTodoRecord(),
         waitingCopy: undefined,
         status: event.result.summary
       };
     case "loop-detected":
       return {
         ...pushSystemMessage(state, `Loop detected: ${event.reason}`, "warning"),
-        currentTask: event.task,
+        currentTask: shouldDisplayForegroundTask(event.task) ? event.task : state.currentTask,
         waitingCopy: undefined,
         status: `Loop detected: ${event.reason}`
       };
@@ -280,6 +286,7 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
         pendingAssistant: null,
         pendingTools: [],
         currentTask: agent.getCurrentTask(),
+        currentTodoRecord: agent.getCurrentTodoRecord(),
         status: "Ready"
       };
     case "run-aborted":
@@ -290,6 +297,7 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
         pendingAssistant: null,
         pendingTools: [],
         currentTask: agent.getCurrentTask(),
+        currentTodoRecord: agent.getCurrentTodoRecord(),
         status: "Cancelled"
       };
     case "error":
@@ -299,6 +307,8 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
         waitingCopy: undefined,
         pendingAssistant: null,
         pendingTools: [],
+        currentTask: agent.getCurrentTask(),
+        currentTodoRecord: agent.getCurrentTodoRecord(),
         status: event.error.message
       };
     default:
@@ -365,6 +375,10 @@ function describeTaskStart(task: NonNullable<UIState["currentTask"]>): string {
     return `Planning ${task.origin} task: ${task.goal}`;
   }
   return `Planning task: ${task.goal}`;
+}
+
+function shouldDisplayForegroundTask(task: UIState["currentTask"]): boolean {
+  return !task || task.origin === undefined || task.origin === "user";
 }
 
 function updateToolWaitingState(state: UIState, fallbackStatus: string): UIState {

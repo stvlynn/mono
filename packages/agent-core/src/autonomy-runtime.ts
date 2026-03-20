@@ -18,6 +18,7 @@ export interface HeartbeatInputs {
   learningState: LearningState;
   todos: TaskTodoRecord[];
   recentFeedback: FeedbackSignal[];
+  recentSessionTexts: string[];
   currentTaskId?: string;
 }
 
@@ -47,6 +48,8 @@ const MAX_CURRENT_GOALS = 6;
 const MAX_FAILURE_PATTERNS = 8;
 const MAX_COOLDOWNS = 8;
 const AUTONOMY_COOLDOWN_MS = 5 * 60_000;
+export const CURIOSITY_COOLDOWN_KEY = "curiosity:global";
+export const CURIOSITY_COOLDOWN_MS = 15 * 60_000;
 
 export function createAutonomyLease(now = Date.now()): TaskLease {
   return {
@@ -57,16 +60,34 @@ export function createAutonomyLease(now = Date.now()): TaskLease {
   };
 }
 
+export function createCuriosityLease(now = Date.now()): TaskLease {
+  return {
+    startedAt: now,
+    maxWallTimeMs: 20_000,
+    maxToolCalls: 2,
+    maxSteps: 3,
+  };
+}
+
 export function buildHeartbeatSelection(input: HeartbeatInputs): HeartbeatSelection {
   const autonomyBias = resolveAutonomyBias(input.learningState);
   if (autonomyBias <= -0.35) {
     return createNoopHeartbeatSelection(input.now, "Recent feedback currently discourages autonomous action.");
   }
 
+  const todoCandidates = buildTodoCandidates(input);
+  const openQuestionCandidates = buildOpenQuestionCandidates(input);
+  const feedbackCandidates = buildFeedbackReflectionCandidate(input);
+  const curiosityCandidates = buildCuriosityCandidates(input, {
+    todoCandidates,
+    openQuestionCandidates,
+    feedbackCandidates,
+  });
   const candidates = applyAutonomyBias([
-    ...buildTodoCandidates(input),
-    ...buildOpenQuestionCandidates(input),
-    ...buildFeedbackReflectionCandidate(input),
+    ...todoCandidates,
+    ...openQuestionCandidates,
+    ...feedbackCandidates,
+    ...curiosityCandidates,
   ], autonomyBias)
     .sort((left, right) => right.priority - left.priority || left.goal.localeCompare(right.goal));
 
@@ -98,6 +119,65 @@ export function buildHeartbeatSelection(input: HeartbeatInputs): HeartbeatSelect
       candidates: candidates.map(toDecisionCandidate),
     },
   };
+}
+
+function buildCuriosityCandidates(
+  input: HeartbeatInputs,
+  existing: {
+    todoCandidates: AutonomyIntent[];
+    openQuestionCandidates: AutonomyIntent[];
+    feedbackCandidates: AutonomyIntent[];
+  },
+): AutonomyIntent[] {
+  if (
+    existing.todoCandidates.length > 0
+    || existing.openQuestionCandidates.length > 0
+    || existing.feedbackCandidates.length > 0
+  ) {
+    return [];
+  }
+
+  if (isCooldownActive(input.now, CURIOSITY_COOLDOWN_KEY, input.selfRuntime.cooldowns, input.learningState.cooldowns)) {
+    return [];
+  }
+
+  const representedQuestions = new Set(input.selfRuntime.openQuestions.map(normalizeKey));
+  const representedHypotheses = new Set(input.selfRuntime.currentHypotheses.map(normalizeKey));
+  const seenSeeds = new Set<string>();
+
+  for (const seed of collectCuriositySeeds(input)) {
+    if (!isCuriositySeedEligible(seed)) {
+      continue;
+    }
+
+    const normalizedSeed = normalizeKey(seed.text);
+    if (!normalizedSeed || seenSeeds.has(normalizedSeed)) {
+      continue;
+    }
+    seenSeeds.add(normalizedSeed);
+
+    if (representedQuestions.has(normalizedSeed)) {
+      continue;
+    }
+    if (seed.source !== "hypothesis" && representedHypotheses.has(normalizedSeed)) {
+      continue;
+    }
+
+    return [{
+      id: createId(),
+      createdAt: input.now,
+      kind: "curiosity_probe",
+      sourceSignal: "novelty_signal",
+      priority: 0.58,
+      riskLevel: "low",
+      recommendedAction: "enqueue_task",
+      status: "pending",
+      goal: `Explore one repo question suggested by runtime seed: ${seed.text}. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.`,
+      evidence: [`Seed: ${seed.text}`],
+    } satisfies AutonomyIntent];
+  }
+
+  return [];
 }
 
 function createNoopHeartbeatSelection(
@@ -145,14 +225,27 @@ function applyAutonomyBias(intents: AutonomyIntent[], autonomyBias: number): Aut
 }
 
 export function buildAutonomyExtraContext(intent: AutonomyIntent): string {
-  return [
+  const lines = [
     "This task was created by the autonomy heartbeat.",
     `Intent: ${intent.kind}`,
     `Source signal: ${intent.sourceSignal}`,
     `Priority: ${intent.priority.toFixed(2)}`,
     `Risk: ${intent.riskLevel}`,
     "Act conservatively. Prefer evidence, scoped work, and explicit uncertainty over blind progress.",
-  ].join("\n");
+  ];
+
+  if (intent.kind === "curiosity_probe") {
+    lines.push(
+      "This is a curiosity probe, not a user-requested implementation task.",
+      "Scan lightly and stop after one concrete question, one hypothesis, and one evidence line.",
+      "Use the required tags exactly:",
+      "[curiosity-question: ...]",
+      "[curiosity-hypothesis: ...]",
+      "[curiosity-evidence: ...]",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 export function diagnoseTaskOutcome(task: TaskState, result: TaskResult, options: {
@@ -590,6 +683,27 @@ function buildFeedbackReflectionCandidate(input: HeartbeatInputs): AutonomyInten
   }];
 }
 
+function collectCuriositySeeds(input: HeartbeatInputs): Array<{
+  text: string;
+  source: "session" | "hypothesis";
+}> {
+  return [
+    ...input.selfRuntime.currentHypotheses.slice(-4).reverse().map((text) => ({ text, source: "hypothesis" as const })),
+    ...input.recentSessionTexts.slice(-8).reverse().map((text) => ({ text, source: "session" as const })),
+  ].filter((seed) => seed.text.trim() && !isSelfReferentialCuriosityText(seed.text));
+}
+
+function isCuriositySeedEligible(seed: {
+  text: string;
+  source: "session" | "hypothesis";
+}): boolean {
+  if (seed.source === "hypothesis") {
+    return true;
+  }
+
+  return isDiagnosticSessionSeed(seed.text);
+}
+
 function toDecisionCandidate(intent: AutonomyIntent): HeartbeatDecision["candidates"][number] {
   return {
     intentId: intent.id,
@@ -647,6 +761,46 @@ function tokenize(text: string): string[] {
     .split(/[^a-z0-9\u4e00-\u9fff]+/u)
     .map((item) => item.trim())
     .filter((item) => item.length >= 2);
+}
+
+function isDiagnosticSeedText(text: string): boolean {
+  return /\b(why|how|issue|bug|path|behavior|support|handle|difference|inconsistent|runtime|session|channel|tool)\b/iu.test(text)
+    || /(为什么|如何|问题|原因|路径|行为|支持|处理|不一致|运行时|会话|通道|工具)/u.test(text)
+    || /[?？]/u.test(text);
+}
+
+function isImperativeSeedText(text: string): boolean {
+  return /^(用|不要|发|把|查|全网找|安装|send|use|find|check|look|list|show)\b/iu.test(text.trim());
+}
+
+function isDiagnosticSessionSeed(text: string): boolean {
+  if (isImperativeSeedText(text) || isStatusPromptSeed(text)) {
+    return false;
+  }
+
+  const normalized = text.trim();
+  return /`[^`]+`/u.test(normalized)
+    || /\/[A-Za-z0-9._/-]+/.test(normalized)
+    || /\b(sendSticker|channel_action|write_todos|getUpdates|telegram|sticker|runtime|session|channel|tool|function|api|repo|path)\b/iu.test(normalized)
+    || /(为什么|如何|问题|原因|路径|行为|运行时|会话|通道|工具|函数|接口|仓库|代码)/u.test(normalized);
+}
+
+function isStatusPromptSeed(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return normalized === "怎么样了"
+    || normalized === "继续追查"
+    || normalized === "继续查"
+    || normalized === "分析进度如何"
+    || normalized === "精读如何"
+    || normalized === "你不是有agent-browser吗"
+    || normalized === "正常运行中。你问的是哪个任务的进度？";
+}
+
+function isSelfReferentialCuriosityText(text: string): boolean {
+  return text.startsWith("Explore one repo question suggested by runtime seed:")
+    || text.includes("[curiosity-question:")
+    || text.includes("[curiosity-hypothesis:")
+    || text.includes("[curiosity-evidence:");
 }
 
 function uniqueTail(items: string[], limit: number): string[] {

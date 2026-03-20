@@ -3,6 +3,7 @@ import {
   DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
   HEARTBEAT_ACK_TOKEN,
   evaluateHeartbeatReply,
+  extractCuriosityReplyFields,
 } from "../packages/agent-core/src/heartbeat-response.js";
 import type { ConversationMessage } from "../packages/shared/src/index.js";
 import { createTestUnifiedModel, describeIfRealTestModel } from "./helpers/test-model-env.js";
@@ -56,5 +57,18 @@ describeIfRealTestModel("heartbeat response", () => {
     });
 
     expect(result.status).toBe("duplicate");
+  });
+
+  it("extracts curiosity reply tags from assistant text", () => {
+    const fields = extractCuriosityReplyFields([
+      "Quick scan complete.",
+      "[curiosity-question: Why does the idle runtime keep revisiting the same sticker path?]",
+      "[curiosity-hypothesis: The runtime context keeps a repeated tension without a synthesized open question.]",
+      "[curiosity-evidence: Recent structured runtime state contains tensions but no openQuestions entries.]",
+    ].join("\n"));
+
+    expect(fields.question).toContain("idle runtime");
+    expect(fields.hypothesis).toContain("repeated tension");
+    expect(fields.evidence).toContain("openQuestions");
   });
 });

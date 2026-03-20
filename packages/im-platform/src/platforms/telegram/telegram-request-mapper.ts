@@ -61,12 +61,26 @@ export function mapTelegramDispatchRequest(context: TelegramDispatchContext): Te
         ),
       ];
     case "sticker":
+      if (isBinaryFile(context.content.source)) {
+        const formData = new FormData();
+        appendTelegramFields(formData, {
+          ...targetParams,
+          ...optionFields,
+          ...(context.content.emoji ? { emoji: context.content.emoji } : {}),
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+        });
+        appendBinaryAttachment(formData, "sticker", context.content.source);
+        return [{
+          method: "sendSticker",
+          body: formData,
+        }];
+      }
       return [{
         method: "sendSticker",
         body: {
           ...targetParams,
           ...optionFields,
-          sticker: context.content.fileId,
+          sticker: context.content.source,
           ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
         },
       }];

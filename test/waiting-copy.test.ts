@@ -108,6 +108,29 @@ describe("waiting copy reducer", () => {
     expect(state.status).toBe("Verifying result...");
   });
 
+  it("does not surface heartbeat tasks in the foreground currentTask slot", () => {
+    const agent = createAgentStub();
+    let state = createUiState();
+    const heartbeatTask = {
+      taskId: "task-1",
+      goal: "background curiosity",
+      phase: "plan",
+      attempts: 0,
+      origin: "heartbeat" as const,
+      verification: {
+        mode: "none" as const,
+        evidence: []
+      }
+    };
+
+    state = reduceEvent(state, { type: "task-start", task: heartbeatTask }, agent);
+    expect(state.currentTask).toBeUndefined();
+
+    state = reduceEvent(state, { type: "task-phase-change", task: { ...heartbeatTask, phase: "blocked" } }, agent);
+    expect(state.currentTask).toBeUndefined();
+    expect(state.status).toBe("Ready");
+  });
+
   it("keeps tool waiting copy while another tool is still running", () => {
     const agent = createAgentStub();
     let state = createUiState();

@@ -17,6 +17,12 @@ export interface HeartbeatReplyEvaluation {
   reason: string;
 }
 
+export interface CuriosityReplyFields {
+  question?: string;
+  hypothesis?: string;
+  evidence?: string;
+}
+
 export function extractHeartbeatReplyText(messages: ConversationMessage[]): string {
   const assistantMessages = messages.filter((message) => message.role === "assistant");
   for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
@@ -91,6 +97,14 @@ export function buildHeartbeatReplyComparisonKey(intent: AutonomyIntent): string
   return `${intent.kind}:${normalizeHeartbeatReply(intent.goal)}`;
 }
 
+export function extractCuriosityReplyFields(text: string): CuriosityReplyFields {
+  return {
+    question: extractTaggedValue(text, "curiosity-question"),
+    hypothesis: extractTaggedValue(text, "curiosity-hypothesis"),
+    evidence: extractTaggedValue(text, "curiosity-evidence"),
+  };
+}
+
 export function normalizeHeartbeatReply(text: string): string {
   return text.replace(/\s+/gu, " ").trim();
 }
@@ -140,4 +154,11 @@ function stripBoundaryAck(text: string, ackToken: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function extractTaggedValue(text: string, tagName: string): string | undefined {
+  const pattern = new RegExp(`(?:^|\\n)\\[${escapeRegExp(tagName)}:([^\\]\\n]+)\\]`, "u");
+  const match = pattern.exec(text);
+  const value = match?.[1]?.trim();
+  return value || undefined;
 }

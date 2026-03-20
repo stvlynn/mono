@@ -1,9 +1,9 @@
 import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTaskTodoRecord } from "../packages/agent-core/src/memory-runtime.js";
-import type { MemoryRecord } from "../packages/shared/src/index.js";
+import type { MemoryRecord, TaskResult } from "../packages/shared/src/index.js";
 import { createTestProfileConfig, describeIfRealTestModel, getTestModelSelectionString } from "./helpers/test-model-env.js";
 
 async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean; memory?: Record<string, unknown>; channels?: Record<string, unknown> }): Promise<string> {
@@ -60,6 +60,11 @@ function createMemoryRecord(overrides: Partial<MemoryRecord> & Pick<MemoryRecord
 }
 
 describeIfRealTestModel("Agent", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
   it("preserves the original session id when updating an existing todo record", () => {
     const existing = createTaskTodoRecord({
       taskId: "task-1",
@@ -303,6 +308,168 @@ describeIfRealTestModel("Agent", () => {
     expect(structured.heartbeatDecisions[0]?.decision).toBe("noop");
 
     delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("does not schedule automatic heartbeat work when heartbeat is disabled", async () => {
+    vi.useFakeTimers();
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-disabled-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd, heartbeatEnabled: false });
+    await agent.initialize();
+
+    await vi.advanceTimersByTimeAsync(35_000);
+
+    const structured = await agent.inspectStructuredMemory();
+    expect(structured.heartbeatDecisions).toHaveLength(0);
+  });
+
+  it("stops pending automatic heartbeat work when disposed", async () => {
+    vi.useFakeTimers();
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-dispose-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+    agent.dispose();
+
+    await vi.advanceTimersByTimeAsync(35_000);
+
+    const structured = await agent.inspectStructuredMemory();
+    expect(structured.heartbeatDecisions).toHaveLength(0);
+  });
+
+  it("still runs manual heartbeat work when automatic heartbeat is disabled", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-manual-disabled-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd, heartbeatEnabled: false });
+    await agent.initialize();
+
+    const heartbeat = await agent.runHeartbeatOnce();
+    const structured = await agent.inspectStructuredMemory();
+
+    expect(heartbeat.decision?.decision).toBe("noop");
+    expect(heartbeat.triggeredIntent).toBeUndefined();
+    expect(structured.heartbeatDecisions.length).toBeGreaterThan(0);
+    expect(structured.heartbeatDecisions[0]?.decision).toBe("noop");
+  });
+
+  it("runs a curiosity heartbeat in curiosity mode and writes back one question and hypothesis", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-curiosity-heartbeat-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const internal = agent as unknown as {
+      state: {
+        structuredMemoryStore: {
+          upsertSelfRuntime: (patch: unknown) => Promise<void>;
+        };
+      };
+      runTaskDetailed: (goal: string, options?: unknown) => Promise<{
+        result: TaskResult;
+        heartbeatReplyEvaluation?: {
+          status: "ack" | "duplicate" | "sent" | "suppressed";
+          rawText: string;
+          normalizedText: string;
+          visibleText: string;
+          reason: string;
+        };
+      }>;
+    };
+
+    await internal.state.structuredMemoryStore.upsertSelfRuntime({
+      openQuestions: [],
+      currentHypotheses: ["The idle runtime may need a lightweight curiosity pass."],
+      taskHints: ["Look for one repo question worth exploring."],
+      currentGoals: ["Understand the heartbeat curiosity behavior."],
+      currentTensions: ["The runtime keeps idling without synthesizing new questions."],
+    });
+
+    let optionsSeen: {
+      interactionMode?: string;
+      sandboxMode?: string;
+      lease?: { maxWallTimeMs: number; maxToolCalls: number; maxSteps: number };
+    } | undefined;
+    const originalRunTaskDetailed = internal.runTaskDetailed.bind(agent);
+    internal.runTaskDetailed = async (_goal, options) => {
+      optionsSeen = options as {
+        interactionMode?: string;
+        sandboxMode?: string;
+        lease?: { maxWallTimeMs: number; maxToolCalls: number; maxSteps: number };
+      };
+      return {
+        result: {
+          taskId: "curiosity-task",
+          status: "done",
+          summary: "Curiosity probe completed.",
+          turns: 1,
+          verification: { mode: "none", evidence: [], passed: true },
+          messages: [
+            {
+              role: "assistant",
+              provider: "openai",
+              model: "gpt-4.1-mini",
+              stopReason: "stop",
+              timestamp: Date.now(),
+              content: [{
+                type: "text",
+                text: [
+                  "Light scan complete.",
+                  "[curiosity-question: Why does the heartbeat never synthesize a follow-up repo question from recent tensions?]",
+                  "[curiosity-hypothesis: The runtime only records tensions directly and lacks a curiosity probe to turn them into open questions.]",
+                  "[curiosity-evidence: Current structured runtime contains tensions and hints, but openQuestions remains empty.]",
+                ].join("\n"),
+              }],
+            },
+          ],
+        },
+        heartbeatReplyEvaluation: {
+          status: "sent",
+          rawText: "raw",
+          normalizedText: "normalized",
+          visibleText: [
+            "Light scan complete.",
+            "[curiosity-question: Why does the heartbeat never synthesize a follow-up repo question from recent tensions?]",
+            "[curiosity-hypothesis: The runtime only records tensions directly and lacks a curiosity probe to turn them into open questions.]",
+            "[curiosity-evidence: Current structured runtime contains tensions and hints, but openQuestions remains empty.]",
+          ].join("\n"),
+          reason: "reply-sent",
+        },
+      };
+    };
+
+    try {
+      const heartbeat = await agent.runHeartbeatOnce();
+      const structured = await agent.inspectStructuredMemory();
+
+      expect(heartbeat.triggeredIntent?.kind).toBe("curiosity_probe");
+      expect(optionsSeen?.interactionMode).toBe("curiosity");
+      expect(optionsSeen?.lease).toMatchObject({
+        maxWallTimeMs: 20_000,
+        maxToolCalls: 2,
+        maxSteps: 3,
+      });
+      expect(structured.selfRuntime.openQuestions.some((item) => item.includes("synthesize a follow-up repo question"))).toBe(true);
+      expect(structured.selfRuntime.currentHypotheses.some((item) => item.includes("lacks a curiosity probe"))).toBe(true);
+      expect(structured.selfRuntime.cooldowns.some((item) => item.key === "curiosity:global")).toBe(true);
+    } finally {
+      internal.runTaskDetailed = originalRunTaskDetailed;
+    }
   });
 
   it("does not append duplicate blocked autonomy intents for repeated confirmation-only heartbeat candidates", async () => {
@@ -1064,6 +1231,11 @@ describeIfRealTestModel("Agent", () => {
         },
       },
     }, task);
+    const curiosityTools = await internal.createToolsForRun({
+      ...baseContext,
+      interactionMode: "curiosity",
+      sandboxMode: "read-only",
+    }, task);
     const nonAllowlistedTelegramTools = await internal.createToolsForRun({
       ...baseContext,
       interactionMode: "channel_chat",
@@ -1084,6 +1256,12 @@ describeIfRealTestModel("Agent", () => {
     expect(telegramTools.some((tool) => tool.name === "write")).toBe(false);
     expect(telegramTools.some((tool) => tool.name === "edit")).toBe(false);
     expect(telegramTools.some((tool) => tool.name === "bash")).toBe(true);
+    expect(curiosityTools.some((tool) => tool.name === "read")).toBe(true);
+    expect(curiosityTools.some((tool) => tool.name === "bash")).toBe(true);
+    expect(curiosityTools.some((tool) => tool.name === "write_todos")).toBe(false);
+    expect(curiosityTools.some((tool) => tool.name === "write")).toBe(false);
+    expect(curiosityTools.some((tool) => tool.name === "edit")).toBe(false);
+    expect(curiosityTools.some((tool) => tool.name === "channel_action")).toBe(false);
     expect(nonAllowlistedTelegramTools.some((tool) => tool.name === "bash")).toBe(false);
     expect(channelActionTool?.description).toContain("Available actions for this run: send, sticker.");
     expect(channelActionTool?.description).toContain("payload.fileId=\"CAAC123\"");
@@ -1112,7 +1290,7 @@ describeIfRealTestModel("Agent", () => {
           verification: { mode: "none" | "light" | "strict"; passed?: boolean; reason?: string };
         },
         todoRecord: null,
-        interactionMode: "default" | "channel_chat",
+        interactionMode: "default" | "channel_chat" | "curiosity",
       ) => string;
     }).buildTaskContextForRun({
       goal: "把这个sticker发我",
@@ -1126,9 +1304,45 @@ describeIfRealTestModel("Agent", () => {
     expect(contextText).toContain("Mode: channel_chat");
     expect(contextText).toContain("Do not plan engineering work or use write_todos.");
     expect(contextText).toContain("If bash is available in this chat");
+    expect(contextText).toContain("[final-reply]...[/final-reply]");
     expect(contextText).not.toContain("Use write_todos to create or update the current task plan when needed.");
 
     delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("uses a curiosity task context that requires tagged curiosity output", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-curiosity-context-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const contextText = (agent as unknown as {
+      buildTaskContextForRun: (
+        task: {
+          goal: string;
+          phase: string;
+          attempts: number;
+          verification: { mode: "none" | "light" | "strict"; passed?: boolean; reason?: string };
+        },
+        todoRecord: null,
+        interactionMode: "default" | "channel_chat" | "curiosity",
+      ) => string;
+    }).buildTaskContextForRun({
+      goal: "Explore one repo question suggested by recent runtime context.",
+      phase: "execute",
+      attempts: 0,
+      verification: {
+        mode: "none",
+      },
+    }, null, "curiosity");
+
+    expect(contextText).toContain("Mode: curiosity");
+    expect(contextText).toContain("Do not edit files or use write_todos.");
+    expect(contextText).toContain("[curiosity-question: ...]");
   });
 
   it("marks the task incomplete when a required native channel action was not satisfied", async () => {
@@ -1199,6 +1413,14 @@ describeIfRealTestModel("Agent", () => {
     const source = readFileSync("packages/agent-core/src/agent.ts", "utf8");
 
     expect(source).toContain('context.actions.filter((action) => action.toLowerCase() !== "send")');
+  });
+
+  it("does not infer native sticker actions without an available current resource", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("packages/agent-core/src/agent.ts", "utf8");
+
+    expect(source).toContain("if (!context.currentResource?.available || !currentKind || !searchableActions.includes(currentKind))");
+    expect(source).not.toContain('searchableActions.find((action) => text.includes(action.toLowerCase())) ?? null');
   });
 
   it("keeps failed channel_action tool results from satisfying required delivery", async () => {
@@ -1318,6 +1540,48 @@ describeIfRealTestModel("Agent", () => {
     await agent.switchSession("other-session");
 
     expect(agent.getCurrentTask()).toBeUndefined();
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("hides non-user currentTask and todo state from foreground getters", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-foreground-task-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    (agent as unknown as {
+      state: {
+        currentTask?: TaskState;
+        currentTodoRecord?: ReturnType<typeof createTaskTodoRecord>;
+      };
+    }).state.currentTask = {
+      taskId: "heartbeat-task",
+      goal: "background curiosity",
+      phase: "blocked",
+      attempts: 1,
+      origin: "heartbeat",
+      verification: { mode: "none", evidence: [] },
+    };
+    (agent as unknown as {
+      state: {
+        currentTodoRecord?: ReturnType<typeof createTaskTodoRecord>;
+      };
+    }).state.currentTodoRecord = createTaskTodoRecord({
+      taskId: "heartbeat-task",
+      goal: "background curiosity",
+      sessionId: "session-1",
+      cwd,
+      verificationMode: "none",
+      todos: [{ id: "probe", description: "probe repo", status: "in_progress" }],
+    });
+
+    expect(agent.getCurrentTask()).toBeUndefined();
+    expect(agent.getCurrentTodoRecord()).toBeUndefined();
 
     delete process.env.MONO_CONFIG_DIR;
   });

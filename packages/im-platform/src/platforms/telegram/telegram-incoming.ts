@@ -155,7 +155,7 @@ function resolveIncomingText(message: TelegramIncomingMessage): string {
 }
 
 function resolveIncomingMediaPlaceholder(message: TelegramIncomingMessage): string {
-  if (message.sticker && !message.sticker.is_animated && !message.sticker.is_video) {
+  if (message.sticker?.file_id) {
     return "<media:sticker>";
   }
 
@@ -250,12 +250,15 @@ function resolveIncomingMetadata(message: TelegramIncomingMessage): TaskInputPla
     chatId: String(message.chat.id),
   };
 
-  if (sticker?.file_id && !sticker.is_animated && !sticker.is_video) {
+  if (sticker?.file_id) {
     metadata.sticker = {
       fileId: sticker.file_id,
       fileUniqueId: sticker.file_unique_id,
       emoji: sticker.emoji,
       setName: sticker.set_name,
+      type: sticker.type,
+      ...(sticker.is_animated !== undefined ? { isAnimated: sticker.is_animated } : {}),
+      ...(sticker.is_video !== undefined ? { isVideo: sticker.is_video } : {}),
     };
   }
 
