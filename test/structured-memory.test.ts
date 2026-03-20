@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDefaultMemoryV2Config } from "../packages/config/src/defaults.js";
+import { writeJsonFile } from "../packages/shared/src/index.js";
 import {
   FolderStructuredMemoryStore,
   StructuredMemoryRetrievalPlanner,
@@ -72,6 +73,36 @@ describe("structured memory", () => {
     expect(rendered).toContain("<StructuredMemoryContext");
     expect(rendered).toContain("Task grounded:");
     expect(rendered).toContain("prefers_directness");
+  });
+
+  it("normalizes legacy self runtime and project profile records that are missing newer fields", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mono-structured-legacy-"));
+    const store = new FolderStructuredMemoryStore(root);
+    await store.ensureLayout();
+
+    await writeJsonFile(join(root, "self", "runtime.json"), {
+      updatedAt: 1,
+      currentGoals: [],
+      activeProjects: [],
+      currentTensions: [],
+      taskHints: [],
+    });
+    await writeJsonFile(join(root, "project", "workspace_profile.json"), {
+      updatedAt: 1,
+      workspaceSummary: "legacy profile",
+      durableFacts: [],
+      collaborationNorms: [],
+    });
+
+    const selfRuntime = await store.getSelfRuntime();
+    const projectProfile = await store.getProjectProfile();
+
+    expect(selfRuntime.openQuestions).toEqual([]);
+    expect(selfRuntime.frictionPatterns).toEqual([]);
+    expect(selfRuntime.autonomyPolicy.isolatedSession).toBe(true);
+    expect(projectProfile.maintenanceFocus).toEqual([]);
+    expect(projectProfile.knownRiskZones).toEqual([]);
+    expect(projectProfile.preferredInterventionOrder).toEqual([]);
   });
 
   it("records unresolved conflicts and clears pending queue entries during consolidation", async () => {

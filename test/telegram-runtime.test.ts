@@ -1,15 +1,17 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readJsonFile, writeJsonFile, type MonoGlobalConfig } from "../packages/shared/src/index.js";
+import { readJsonFile, writeJsonFile, type MonoGlobalConfig, type TaskResult } from "../packages/shared/src/index.js";
 import {
   buildTelegramModelMenuResult,
   isTelegramPollingConflict,
   TELEGRAM_MODEL_PROFILE_NAME,
   TelegramModelConfigWizard,
 } from "@mono/telegram-control";
+import { formatTelegramChatResponse } from "../packages/tui/src/telegram-chat-reply.js";
+import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 const originalMonoConfigDir = process.env.MONO_CONFIG_DIR;
@@ -26,22 +28,13 @@ async function writeTelegramRuntimeConfig(
   configDir: string,
   telegramOverrides: Partial<NonNullable<NonNullable<MonoGlobalConfig["mono"]["channels"]>["telegram"]>> = {},
 ): Promise<void> {
+  const testProfile = createTestProfileConfig();
   await writeJsonFile(join(configDir, "config.json"), {
     version: 1,
     mono: {
       defaultProfile: "default",
       profiles: {
-        default: {
-          provider: "openai",
-          modelId: "gpt-4.1-mini",
-          baseURL: "https://api.openai.com/v1",
-          family: "openai-compatible",
-          transport: "openai-compatible",
-          providerFactory: "openai",
-          apiKeyEnv: "OPENAI_API_KEY",
-          supportsTools: true,
-          supportsReasoning: true,
-        },
+        default: testProfile,
       },
       channels: {
         telegram: {
@@ -99,7 +92,7 @@ afterEach(async () => {
   await Promise.all(tempPaths.splice(0, tempPaths.length).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("telegram runtime conflict detection", () => {
+describeIfRealTestModel("telegram runtime conflict detection", () => {
   it("detects Telegram getUpdates conflict errors", () => {
     const error = new Error("Conflict: terminated by other getUpdates request; make sure that only one bot instance is running");
     expect(isTelegramPollingConflict(error)).toBe(true);
@@ -145,6 +138,7 @@ describe("telegram runtime conflict detection", () => {
       }
 
       if (method === "getUpdates") {
+        await new Promise((resolve) => setTimeout(resolve, 10));
         return new Response(JSON.stringify({ ok: true, result: [] }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -208,7 +202,7 @@ describe("telegram runtime conflict detection", () => {
         });
       }
 
-      if (method === "sendMessage" || method === "sendSticker" || method === "editMessageText") {
+      if (method === "sendMessage" || method === "sendSticker" || method === "sendPhoto" || method === "sendDocument" || method === "editMessageText") {
         return new Response(JSON.stringify({
           ok: true,
           result: { message_id: 500 + calls.length, chat: { id: 7001 } },
@@ -239,6 +233,18 @@ describe("telegram runtime conflict detection", () => {
       chatId: "7001",
       emoji: "🙂",
     });
+    const photoResult = await runtime.executeTelegramAction({
+      action: "photo",
+      chatId: "7001",
+      fileId: "photo-file-1",
+      text: "caption",
+    });
+    const documentResult = await runtime.executeTelegramAction({
+      action: "document",
+      chatId: "7001",
+      fileId: "doc-file-1",
+      text: "document caption",
+    });
     const editResult = await runtime.executeTelegramAction({
       action: "edit",
       chatId: "7001",
@@ -260,15 +266,125 @@ describe("telegram runtime conflict detection", () => {
     expect(sendResult.ok).toBe(true);
     expect(sendResult.action).toBe("send");
     expect(stickerResult).toMatchObject({ ok: true, action: "sticker" });
+    expect(photoResult).toMatchObject({ ok: true, action: "photo" });
+    expect(documentResult).toMatchObject({ ok: true, action: "document" });
     expect(editResult).toMatchObject({ ok: true, action: "edit", messageId: "701" });
     expect(deleteResult).toMatchObject({ ok: true, action: "delete", messageId: "702" });
     expect(reactResult).toMatchObject({ ok: true, action: "react", messageId: "703" });
     expect(calls.some((call) => call.method === "sendSticker" && call.body.sticker === "sticker-file-1")).toBe(true);
+    expect(calls.some((call) => call.method === "sendPhoto" && call.body.photo === "photo-file-1")).toBe(true);
+    expect(calls.some((call) => call.method === "sendDocument" && call.body.document === "doc-file-1")).toBe(true);
     expect(calls.some((call) => call.method === "editMessageText" && call.body.message_id === 701)).toBe(true);
     expect(calls.some((call) => call.method === "deleteMessage" && call.body.message_id === 702)).toBe(true);
     expect(calls.some((call) => call.method === "setMessageReaction" && call.body.message_id === 703)).toBe(true);
 
     await runtime.stop();
+  });
+
+  it("uploads local Telegram photo and document paths through multipart form data", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-local-upload");
+    await writeTelegramRuntimeConfig(configDir);
+
+    const localPhotoPath = join(cwd, "telegram-upload.png");
+    const localDocumentPath = join(cwd, "telegram-upload.txt");
+    await writeFile(localPhotoPath, Uint8Array.from([137, 80, 78, 71]));
+    await writeFile(localDocumentPath, "hello telegram");
+
+    const calls: Array<{ method: string; body: Record<string, unknown> | FormData }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body instanceof FormData
+        ? init.body
+        : init?.body
+          ? JSON.parse(String(init.body)) as Record<string, unknown>
+          : {};
+      calls.push({ method, body });
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "sendPhoto" || method === "sendDocument") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { message_id: 800 + calls.length, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({ cwd, fetchImpl });
+    await runtime.start();
+    try {
+      const photoResult = await runtime.executeAction({
+        action: "photo",
+        payload: {
+          photo: localPhotoPath,
+          caption: "**uploaded photo**",
+        },
+      }, {
+        channel: { platform: "telegram", kind: "dm", id: "7001" },
+      });
+
+      const documentResult = await runtime.executeAction({
+        action: "document",
+        payload: {
+          filePath: localDocumentPath,
+          caption: "document body",
+          filename: "renamed.txt",
+        },
+      }, {
+        channel: { platform: "telegram", kind: "dm", id: "7001" },
+      });
+
+      expect(photoResult).toMatchObject({ ok: true, action: "photo", targetId: "7001" });
+      expect(documentResult).toMatchObject({ ok: true, action: "document", targetId: "7001" });
+
+      const photoCall = calls.find((call) => call.method === "sendPhoto");
+      expect(photoCall?.body).toBeInstanceOf(FormData);
+      const photoForm = photoCall?.body as FormData;
+      expect(photoForm.get("chat_id")).toBe("7001");
+      expect(String(photoForm.get("caption"))).toContain("uploaded photo");
+      expect(photoForm.get("parse_mode")).toBe("HTML");
+      const photoFile = photoForm.get("photo");
+      expect(photoFile).toBeInstanceOf(File);
+      expect((photoFile as File).name).toBe("telegram-upload.png");
+      expect((photoFile as File).type).toBe("image/png");
+      expect(Array.from(new Uint8Array(await (photoFile as File).arrayBuffer()))).toEqual([137, 80, 78, 71]);
+
+      const documentCall = calls.find((call) => call.method === "sendDocument");
+      expect(documentCall?.body).toBeInstanceOf(FormData);
+      const documentForm = documentCall?.body as FormData;
+      expect(documentForm.get("chat_id")).toBe("7001");
+      expect(documentForm.get("caption")).toBe("document body");
+      const documentFile = documentForm.get("document");
+      expect(documentFile).toBeInstanceOf(File);
+      expect((documentFile as File).name).toBe("renamed.txt");
+      expect((documentFile as File).type).toBe("text/plain");
+      expect(Buffer.from(await (documentFile as File).arrayBuffer()).toString("utf8")).toBe("hello telegram");
+    } finally {
+      await runtime.stop();
+    }
   });
 
   it("builds channel context from the most recent sticker metadata in session history", async () => {
@@ -513,6 +629,164 @@ describe("telegram runtime conflict detection", () => {
       action: "sticker",
       reason: "current_input_native_resource",
       textOnlyFallbackAllowed: false,
+    });
+
+    await runtime.stop();
+  });
+
+  it("builds channel context from the current photo input and recommends a photo reply", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-context-photo");
+    await writeTelegramRuntimeConfig(configDir);
+
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({ cwd, fetchImpl });
+    await runtime.start();
+
+    const context = await runtime.buildContext(
+      {
+        text: "把这张图发回去",
+        metadata: {
+          telegram: {
+            photo: {
+              fileId: "photo-file-1",
+              fileUniqueId: "photo-unique-1",
+              mimeType: "image/jpeg",
+              messageId: 15,
+            },
+          },
+        },
+      },
+      { platform: "telegram", kind: "dm", id: "7001" },
+      [],
+    );
+
+    expect(context.actions).toContain("photo");
+    expect(context.currentResource).toEqual({
+      kind: "photo",
+      available: true,
+      source: "current_input",
+      attributes: {
+        fileId: "photo-file-1",
+        fileUniqueId: "photo-unique-1",
+        mimeType: "image/jpeg",
+        messageId: "15",
+      },
+    });
+    expect(context.recommendedAction).toEqual({
+      action: "photo",
+      targetId: "7001",
+      payload: {
+        fileId: "photo-file-1",
+      },
+    });
+
+    await runtime.stop();
+  });
+
+  it("builds channel context from the current document input and recommends a document reply", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-context-document");
+    await writeTelegramRuntimeConfig(configDir);
+
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({ cwd, fetchImpl });
+    await runtime.start();
+
+    const context = await runtime.buildContext(
+      {
+        text: "把这个文件发回去",
+        metadata: {
+          telegram: {
+            document: {
+              fileId: "doc-file-1",
+              fileUniqueId: "doc-unique-1",
+              mimeType: "application/pdf",
+              fileName: "report.pdf",
+              messageId: 16,
+            },
+          },
+        },
+      },
+      { platform: "telegram", kind: "dm", id: "7001" },
+      [],
+    );
+
+    expect(context.actions).toContain("document");
+    expect(context.currentResource).toEqual({
+      kind: "document",
+      available: true,
+      source: "current_input",
+      attributes: {
+        fileId: "doc-file-1",
+        fileUniqueId: "doc-unique-1",
+        mimeType: "application/pdf",
+        fileName: "report.pdf",
+        messageId: "16",
+      },
+    });
+    expect(context.recommendedAction).toEqual({
+      action: "document",
+      targetId: "7001",
+      payload: {
+        fileId: "doc-file-1",
+      },
     });
 
     await runtime.stop();
@@ -865,6 +1139,279 @@ describe("telegram runtime conflict detection", () => {
     expect(sendTexts).toEqual(["First reply", "Second reply"]);
     expect(calls.some((call) => call.method === "sendChatAction" && call.body.action === "typing")).toBe(true);
     expect(calls.some((call) => call.method === "sendSticker" && call.body.sticker === "sticker-file-1")).toBe(true);
+
+    await runtime.stop();
+  });
+
+  it("does not send a fallback Telegram text when formatter returns an empty response after successful in-channel delivery", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-empty-handoff-response");
+    await writeTelegramRuntimeConfig(configDir, {
+      reply: {
+        multiMessage: true,
+        splitDelayMs: 5,
+        stickers: {
+          enabled: true,
+          storePath: ".mono/telegram/stickers.json",
+        },
+      },
+    });
+
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    let deliveredMessage = false;
+    let resolveHandoff: (() => void) | undefined;
+    const handoffHandled = new Promise<void>((resolve) => {
+      resolveHandoff = resolve;
+    });
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ method, body });
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        if (!deliveredMessage) {
+          deliveredMessage = true;
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [{
+              update_id: 1,
+              message: {
+                message_id: 81,
+                chat: { id: 7001, type: "private" },
+                from: { id: 7001, username: "alice", first_name: "Alice" },
+                text: "ping",
+              },
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "sendChatAction" || method === "sendMessageDraft") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: method === "sendMessageDraft" ? true : { message_id: 950 + calls.length, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "sendMessage" || method === "sendSticker") {
+        throw new Error(`Unexpected delivery method: ${method}`);
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({
+      cwd,
+      fetchImpl,
+      onChatMessage: async () => {
+        const taskResult: TaskResult = {
+          status: "done",
+          summary: "Task status: done. Latest outcome: sent in channel.",
+          turns: 1,
+          messages: [
+            {
+              role: "assistant",
+              provider: "openai",
+              model: "gpt-4.1-mini",
+              stopReason: "tool_use",
+              timestamp: 1,
+              content: [{ type: "text", text: "I'll send the reply in-channel." }],
+            },
+            {
+              role: "tool",
+              toolCallId: "tool-1",
+              toolName: "channel_action",
+              content: JSON.stringify({
+                ok: true,
+                channel: "telegram",
+                action: "send",
+                targetId: "7001",
+                messageId: "9001",
+              }),
+              isError: false,
+              timestamp: 2,
+            },
+          ],
+        };
+
+        const response = formatTelegramChatResponse(taskResult);
+        resolveHandoff?.();
+        return response;
+      },
+    });
+    await runtime.start();
+
+    await Promise.race([
+      handoffHandled,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for empty handoff reply")), 1000)),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(calls.some((call) => call.method === "sendMessage")).toBe(false);
+    expect(calls.some((call) => call.method === "sendSticker")).toBe(false);
+
+    await runtime.stop();
+  });
+
+  it("delivers a synthesized Telegram fallback instead of Done when a done task produced only tool results", async () => {
+    const { cwd, configDir } = await createTelegramRuntimeWorkspace("mono-telegram-synthesized-fallback");
+    await writeTelegramRuntimeConfig(configDir, {
+      reply: {
+        multiMessage: true,
+        splitDelayMs: 5,
+        stickers: {
+          enabled: true,
+          storePath: ".mono/telegram/stickers.json",
+        },
+      },
+    });
+
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    let deliveredMessage = false;
+    let resolveDelivered: (() => void) | undefined;
+    const delivered = new Promise<void>((resolve) => {
+      resolveDelivered = resolve;
+    });
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ method, body });
+
+      if (method === "getMe") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { id: 9001, username: "mono_bot", first_name: "mono" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (method === "setMyCommands" || method === "setChatMenuButton") {
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "getUpdates") {
+        if (!deliveredMessage) {
+          deliveredMessage = true;
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [{
+              update_id: 1,
+              message: {
+                message_id: 82,
+                chat: { id: 7001, type: "private" },
+                from: { id: 7001, username: "alice", first_name: "Alice" },
+                text: "check followers",
+              },
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return new Response(JSON.stringify({ ok: true, result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (method === "sendMessage" || method === "sendChatAction") {
+        if (method === "sendMessage" && body.text === "I tried to check that, but this runtime is missing required commands: curl.") {
+          resolveDelivered?.();
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { message_id: 980 + calls.length, chat: { id: 7001 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      throw new Error(`Unexpected method: ${method}`);
+    };
+
+    const { TelegramControlRuntime } = await import("../packages/telegram-control/src/runtime.js");
+    const runtime = new TelegramControlRuntime({
+      cwd,
+      fetchImpl,
+      onChatMessage: async () => {
+        const taskResult: TaskResult = {
+          status: "done",
+          summary: "Task status: done. No assistant summary was produced. Verification was not required.",
+          turns: 1,
+          messages: [
+            {
+              role: "assistant",
+              provider: "openai",
+              model: "gpt-4.1-mini",
+              stopReason: "tool_use",
+              timestamp: 1,
+              content: [{ type: "tool-call", id: "tool-1", name: "bash", arguments: { command: "curl ..." } }],
+            },
+            {
+              role: "tool",
+              toolCallId: "tool-1",
+              toolName: "bash",
+              content: "bash: line 1: curl: command not found\n",
+              isError: false,
+              timestamp: 2,
+            },
+            {
+              role: "tool",
+              toolCallId: "tool-2",
+              toolName: "bash",
+              content: "not found\n",
+              isError: false,
+              timestamp: 3,
+            },
+            {
+              role: "tool",
+              toolCallId: "tool-3",
+              toolName: "bash",
+              content: "all failed\n",
+              isError: false,
+              timestamp: 4,
+            },
+          ],
+        };
+
+        return formatTelegramChatResponse(taskResult);
+      },
+    });
+    await runtime.start();
+
+    await Promise.race([
+      delivered,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for synthesized fallback reply")), 1000)),
+    ]);
+
+    const sentTexts = calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => String(call.body.text ?? ""));
+    expect(sentTexts).toContain("I tried to check that, but this runtime is missing required commands: curl.");
+    expect(sentTexts).not.toContain("Done.");
 
     await runtime.stop();
   });

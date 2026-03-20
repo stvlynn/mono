@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDefaultMemoryConfig } from "../packages/config/src/defaults.js";
 import { resolveMonoConfig } from "../packages/config/src/resolver.js";
 import { writeJsonFile, type MonoGlobalConfig, type MonoProjectConfig } from "../packages/shared/src/index.js";
+import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 const originalMonoConfigDir = process.env.MONO_CONFIG_DIR;
@@ -33,7 +34,7 @@ afterEach(async () => {
   await Promise.all(tempPaths.splice(0, tempPaths.length).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("OpenViking memory config", () => {
+describeIfRealTestModel("OpenViking memory config", () => {
   it("provides stable defaults for evaluation mode", () => {
     const config = createDefaultMemoryConfig();
 
@@ -55,22 +56,13 @@ describe("OpenViking memory config", () => {
     process.env.OPENVIKING_URL = "https://env.example";
     process.env.OPENVIKING_AGENT_ID = "env-agent";
 
+    const testProfile = createTestProfileConfig();
     const globalConfig: MonoGlobalConfig = {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         },
         memory: {
           retrievalBackend: "openviking",

@@ -32,7 +32,7 @@ describe("tool permission policy", () => {
     }))).toEqual({ type: "allow" });
   });
 
-  it("still denies destructive commands on allowlisted channels", () => {
+  it("asks for destructive commands on allowlisted channels", () => {
     const policy = new DefaultPermissionPolicy({
       allowlistedChannels: [telegramDmChannel],
     });
@@ -41,12 +41,12 @@ describe("tool permission policy", () => {
       input: { command: "rm -rf /tmp/demo" },
       channel: telegramDmChannel,
     }))).toEqual({
-      type: "deny",
+      type: "ask",
       reason: "Command matches destructive denylist",
     });
   });
 
-  it("denies configured command patterns before allowlist bypass", () => {
+  it("asks for configured command patterns before allowlist bypass", () => {
     const policy = new DefaultPermissionPolicy({
       allowlistedChannels: [telegramDmChannel],
       commandDenylist: ["pnpm publish"],
@@ -56,20 +56,17 @@ describe("tool permission policy", () => {
       input: { command: "pnpm   publish --tag next" },
       channel: telegramDmChannel,
     }))).toEqual({
-      type: "deny",
+      type: "ask",
       reason: "Command matches configured denylist",
     });
   });
 
-  it("keeps the default confirmation flow for non-allowlisted channels", () => {
+  it("allows ordinary bash commands by default on non-allowlisted channels", () => {
     const policy = new DefaultPermissionPolicy({
       allowlistedChannels: [telegramDmChannel],
     });
 
-    expect(policy.evaluate(createRequest())).toEqual({
-      type: "ask",
-      reason: "bash commands require confirmation by default",
-    });
+    expect(policy.evaluate(createRequest())).toEqual({ type: "allow" });
   });
 
   it("can deny interactive confirmations entirely via approval policy", () => {
@@ -77,7 +74,9 @@ describe("tool permission policy", () => {
       approvalPolicy: "never",
     });
 
-    expect(policy.evaluate(createRequest())).toEqual({
+    expect(policy.evaluate(createRequest({
+      input: { command: "rm notes.txt" },
+    }))).toEqual({
       type: "deny",
       reason: "Approval policy is set to never",
     });
@@ -88,7 +87,9 @@ describe("tool permission policy", () => {
       approvalPolicy: "auto-approve",
     });
 
-    expect(policy.evaluate(createRequest())).toEqual({ type: "allow" });
+    expect(policy.evaluate(createRequest({
+      input: { command: "rm notes.txt" },
+    }))).toEqual({ type: "allow" });
   });
 
   it("asks for sensitive bash commands on allowlisted channels in blacklist mode", () => {

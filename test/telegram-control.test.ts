@@ -16,6 +16,7 @@ import {
   readTelegramAllowFromStore,
   upsertTelegramPairingRequest,
 } from "@mono/telegram-control";
+import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 const originalMonoConfigDir = process.env.MONO_CONFIG_DIR;
@@ -40,7 +41,7 @@ async function createTempWorkspace(prefix: string) {
   return { cwd, configDir };
 }
 
-describe("telegram control", () => {
+describeIfRealTestModel("telegram control", () => {
   it("resolves default telegram channels config", async () => {
     const { cwd } = await createTempWorkspace("mono-telegram-defaults");
     const store = new MonoConfigStore(cwd);
@@ -55,6 +56,8 @@ describe("telegram control", () => {
     expect(resolved.channels.telegram.actions).toEqual({
       send: true,
       sticker: true,
+      photo: true,
+      document: true,
       edit: true,
       delete: true,
       react: true,
@@ -73,23 +76,14 @@ describe("telegram control", () => {
 
   it("rejects allowlist mode without a configured allowFrom entry", async () => {
     const { cwd, configDir } = await createTempWorkspace("mono-telegram-validation");
+    const testProfile = createTestProfileConfig();
 
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true,
-          },
+          default: testProfile,
         },
         channels: {
           telegram: {
@@ -111,23 +105,14 @@ describe("telegram control", () => {
 
   it("normalizes telegram approval channel config", async () => {
     const { cwd, configDir } = await createTempWorkspace("mono-telegram-approval");
+    const testProfile = createTestProfileConfig();
 
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true,
-          },
+          default: testProfile,
         },
         channels: {
           telegram: {
@@ -152,23 +137,14 @@ describe("telegram control", () => {
 
   it("normalizes telegram actions config", async () => {
     const { cwd, configDir } = await createTempWorkspace("mono-telegram-actions");
+    const testProfile = createTestProfileConfig();
 
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true,
-          },
+          default: testProfile,
         },
         channels: {
           telegram: {
@@ -176,6 +152,8 @@ describe("telegram control", () => {
             actions: {
               send: true,
               sticker: false,
+              photo: false,
+              document: true,
               edit: false,
               delete: true,
               react: false,
@@ -190,6 +168,8 @@ describe("telegram control", () => {
     expect(resolved.channels.telegram.actions).toEqual({
       send: true,
       sticker: false,
+      photo: false,
+      document: true,
       edit: false,
       delete: true,
       react: false,

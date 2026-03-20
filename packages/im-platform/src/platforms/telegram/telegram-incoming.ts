@@ -163,6 +163,10 @@ function resolveIncomingMediaPlaceholder(message: TelegramIncomingMessage): stri
     return "<media:image>";
   }
 
+  if (message.document?.file_id) {
+    return "<media:document>";
+  }
+
   return "";
 }
 
@@ -240,21 +244,45 @@ async function downloadIncomingAttachment(
 
 function resolveIncomingMetadata(message: TelegramIncomingMessage): TaskInputPlatformMetadata | undefined {
   const sticker = message.sticker;
-  if (!sticker?.file_id || sticker.is_animated || sticker.is_video) {
-    return undefined;
+  const photo = message.photo?.at(-1);
+  const document = message.document;
+  const metadata: NonNullable<TaskInputPlatformMetadata["telegram"]> = {
+    chatId: String(message.chat.id),
+  };
+
+  if (sticker?.file_id && !sticker.is_animated && !sticker.is_video) {
+    metadata.sticker = {
+      fileId: sticker.file_id,
+      fileUniqueId: sticker.file_unique_id,
+      emoji: sticker.emoji,
+      setName: sticker.set_name,
+    };
   }
 
-  return {
-    telegram: {
-      chatId: String(message.chat.id),
-      sticker: {
-        fileId: sticker.file_id,
-        fileUniqueId: sticker.file_unique_id,
-        emoji: sticker.emoji,
-        setName: sticker.set_name,
-      },
-    },
-  };
+  if (photo?.file_id) {
+    metadata.photo = {
+      fileId: photo.file_id,
+      fileUniqueId: photo.file_unique_id,
+      mimeType: "image/jpeg",
+      messageId: message.message_id,
+      caption: message.caption?.trim() || undefined,
+    };
+  }
+
+  if (document?.file_id) {
+    metadata.document = {
+      fileId: document.file_id,
+      fileUniqueId: document.file_unique_id,
+      mimeType: document.mime_type,
+      fileName: document.file_name,
+      messageId: message.message_id,
+      caption: message.caption?.trim() || undefined,
+    };
+  }
+
+  return metadata.sticker || metadata.photo || metadata.document
+    ? { telegram: metadata }
+    : undefined;
 }
 
 function resolveSender(message: TelegramIncomingMessage): InboundMessageSender {

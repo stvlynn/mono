@@ -15,6 +15,8 @@ import {
   type SessionSummary,
   type SessionCompressionResult,
   type TaskResult,
+  type TaskLease,
+  type TaskOrigin,
   type TaskState,
   type VerificationState,
   type UnifiedModel
@@ -76,7 +78,11 @@ export class SessionManager {
       payload: {
         cwd: this.cwd,
         model: model.modelId,
-        provider: model.provider
+        provider: model.provider,
+        family: model.family,
+        transport: model.transport,
+        runtimeProviderKey: model.runtimeProviderKey,
+        baseURL: model.baseURL
       }
     };
     this.headId = entry.id;
@@ -92,6 +98,23 @@ export class SessionManager {
         timestamp: message.timestamp,
         entryType,
         payload: message as never
+      };
+      this.headId = entry.id;
+      await appendJsonLine(this.filePath, entry);
+    });
+  }
+
+  async appendAutonomyTrigger(message: Extract<ConversationMessage, { role: "user" }>): Promise<void> {
+    await this.withAppendLock(async () => {
+      const entry: SessionEntry = {
+        id: createId(),
+        parentId: await this.syncHeadToLatest(),
+        timestamp: message.timestamp,
+        entryType: "autonomy_trigger",
+        payload: {
+          ...message,
+          origin: message.origin ?? "heartbeat"
+        }
       };
       this.headId = entry.id;
       await appendJsonLine(this.filePath, entry);
@@ -173,6 +196,9 @@ export class SessionManager {
     phase: TaskState["phase"];
     attempts: number;
     verification: VerificationState;
+    origin?: TaskOrigin;
+    parentIntentId?: string;
+    lease?: TaskLease;
   }): Promise<string> {
     return this.withAppendLock(async () => {
       const entry: SessionEntry = {
@@ -232,7 +258,12 @@ export class SessionManager {
     const entries = await this.readEntriesForHead(branchHeadId);
     const orderedEntries = branchHeadId ? [...entries].reverse() : entries;
     return orderedEntries
-      .filter((entry) => entry.entryType === "user" || entry.entryType === "assistant" || entry.entryType === "tool")
+      .filter((entry) =>
+        entry.entryType === "user"
+        || entry.entryType === "autonomy_trigger"
+        || entry.entryType === "assistant"
+        || entry.entryType === "tool"
+      )
       .map((entry) => entry.payload as ConversationMessage);
   }
 
@@ -286,10 +317,26 @@ export class SessionManager {
     return readJsonLines<SessionEntry>(this.filePath);
   }
 
-  async getMetadata(): Promise<{ cwd: string; model: string; provider: string } | undefined> {
+  async getMetadata(): Promise<{
+    cwd: string;
+    model: string;
+    provider: string;
+    family?: UnifiedModel["family"];
+    transport?: UnifiedModel["transport"];
+    runtimeProviderKey?: UnifiedModel["runtimeProviderKey"];
+    baseURL?: string;
+  } | undefined> {
     const entries = await this.readEntries();
     const metadata = entries.find((entry) => entry.entryType === "metadata");
-    return metadata?.payload as { cwd: string; model: string; provider: string } | undefined;
+    return metadata?.payload as {
+      cwd: string;
+      model: string;
+      provider: string;
+      family?: UnifiedModel["family"];
+      transport?: UnifiedModel["transport"];
+      runtimeProviderKey?: UnifiedModel["runtimeProviderKey"];
+      baseURL?: string;
+    } | undefined;
   }
 
   static async listSessions(cwd: string, sessionsDir = getSessionsDir(cwd)): Promise<SessionSummary[]> {
@@ -367,9 +414,11 @@ function summarizeEntry(entry: SessionEntry): string {
     return `branch ${(entry.payload as { name?: string }).name ?? entry.id.slice(0, 8)}`;
   }
 
-  if (entry.entryType === "user") {
+  if (entry.entryType === "user" || entry.entryType === "autonomy_trigger") {
     const content = (entry.payload as ConversationMessage).content;
-    return typeof content === "string" ? content.slice(0, 80) : "[user attachments]";
+    const prefix = entry.entryType === "autonomy_trigger" ? "autonomy" : "";
+    const summary = typeof content === "string" ? content.slice(0, 80) : "[user attachments]";
+    return prefix ? `${prefix}: ${summary}` : summary;
   }
 
   if (entry.entryType === "assistant") {

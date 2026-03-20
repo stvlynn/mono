@@ -1,12 +1,14 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTaskTodoRecord } from "../packages/agent-core/src/memory-runtime.js";
 import type { MemoryRecord } from "../packages/shared/src/index.js";
+import { createTestProfileConfig, describeIfRealTestModel, getTestModelSelectionString } from "./helpers/test-model-env.js";
 
 async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean; memory?: Record<string, unknown>; channels?: Record<string, unknown> }): Promise<string> {
   const configDir = join(rootDir, ".mono");
+  const testProfile = createTestProfileConfig();
   await mkdir(configDir, { recursive: true });
   await writeFile(
     join(configDir, "config.json"),
@@ -15,15 +17,7 @@ async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: bo
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         },
         memory: {
           enabled: options?.memoryEnabled ?? true,
@@ -65,7 +59,33 @@ function createMemoryRecord(overrides: Partial<MemoryRecord> & Pick<MemoryRecord
   };
 }
 
-describe("Agent", () => {
+describeIfRealTestModel("Agent", () => {
+  it("preserves the original session id when updating an existing todo record", () => {
+    const existing = createTaskTodoRecord({
+      taskId: "task-1",
+      goal: "Fix the failing test",
+      sessionId: "main-session",
+      branchHeadId: "main-head",
+      cwd: "/tmp/project",
+      verificationMode: "strict",
+      todos: [{ id: "todo-1", description: "Inspect the failure", status: "in_progress" }],
+    });
+
+    const updated = createTaskTodoRecord({
+      taskId: "task-1",
+      goal: "Fix the failing test",
+      sessionId: "isolated-session",
+      branchHeadId: "isolated-head",
+      cwd: "/tmp/project",
+      verificationMode: "strict",
+      existing,
+      todos: [{ id: "todo-1", description: "Rerun the test", status: "in_progress" }],
+    });
+
+    expect(updated.sessionId).toBe("main-session");
+    expect(updated.branchHeadId).toBe("main-head");
+  });
+
   it("aborts the active controller", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-"));
     const cwd = join(rootDir, "workspace");
@@ -120,11 +140,19 @@ describe("Agent", () => {
     const agent = new Agent({ cwd });
     await agent.initialize();
 
-    await (agent as unknown as { persistTaskMemory: (context: unknown) => Promise<void> }).persistTaskMemory({
+    await (agent as unknown as {
+      persistTaskMemory: (context: unknown, task: unknown, result: unknown, options: unknown) => Promise<void>;
+    }).persistTaskMemory({
       runId: 1,
       controller: new AbortController(),
       session: (agent as unknown as { state: { session: unknown } }).state.session,
       model: (agent as unknown as { state: { model: unknown } }).state.model,
+      interactionMode: "default",
+      input: { text: "fix bug" },
+      extraTaskContext: undefined,
+      channelContext: null,
+      channelActionRequirement: undefined,
+      channelActionFeedback: undefined,
       userMessage: {
         role: "user",
         content: "fix bug",
@@ -145,7 +173,29 @@ describe("Agent", () => {
         compactedIds: new Set(),
         rawPairIds: new Set(),
         selectedIds: new Set()
-      }
+      },
+      taskTodoRecord: null,
+      taskTodosDirty: false,
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never",
+      origin: "user"
+    }, {
+      taskId: "task-1",
+      goal: "fix bug",
+      phase: "summarize",
+      attempts: 1,
+      verification: { mode: "strict", evidence: [], passed: true }
+    }, {
+      taskId: "task-1",
+      status: "done",
+      summary: "done",
+      turns: 1,
+      verification: { mode: "strict", evidence: [], passed: true },
+      messages: []
+    }, {
+      loopDetected: false,
+      leaseExceeded: false,
+      diagnosis: null
     });
 
     expect(await agent.countMemories()).toBe(0);
@@ -165,11 +215,19 @@ describe("Agent", () => {
     const agent = new Agent({ cwd });
     await agent.initialize();
 
-    await (agent as unknown as { persistTaskMemory: (context: unknown) => Promise<void> }).persistTaskMemory({
+    await (agent as unknown as {
+      persistTaskMemory: (context: unknown, task: unknown, result: unknown, options: unknown) => Promise<void>;
+    }).persistTaskMemory({
       runId: 1,
       controller: new AbortController(),
       session: (agent as unknown as { state: { session: unknown } }).state.session,
       model: (agent as unknown as { state: { model: unknown } }).state.model,
+      interactionMode: "default",
+      input: { text: "请直接一点，不要自作主张地总结。" },
+      extraTaskContext: undefined,
+      channelContext: null,
+      channelActionRequirement: undefined,
+      channelActionFeedback: undefined,
       userMessage: {
         role: "user",
         content: "请直接一点，不要自作主张地总结。",
@@ -190,13 +248,303 @@ describe("Agent", () => {
         compactedIds: new Set(),
         rawPairIds: new Set(),
         selectedIds: new Set()
-      }
+      },
+      taskTodoRecord: null,
+      taskTodosDirty: false,
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never",
+      origin: "user"
+    }, {
+      taskId: "task-2",
+      goal: "请直接一点，不要自作主张地总结。",
+      phase: "summarize",
+      attempts: 1,
+      verification: { mode: "light", evidence: [], passed: true }
+    }, {
+      taskId: "task-2",
+      status: "done",
+      summary: "done",
+      turns: 1,
+      verification: { mode: "light", evidence: [], passed: true },
+      messages: []
+    }, {
+      loopDetected: false,
+      leaseExceeded: false,
+      diagnosis: null
     });
 
     const inspected = await agent.inspectContext("直接回答");
+    const structured = await agent.inspectStructuredMemory();
 
     expect(inspected.systemPrompt).toContain("<StructuredMemoryContext");
     expect(inspected.systemPrompt).toContain("prefers_directness");
+    expect(structured.feedbackSignals.length).toBeGreaterThan(0);
+    expect(structured.learningState.strategyStats.length).toBeGreaterThan(0);
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("runs a manual heartbeat and returns a noop decision when no autonomy candidates exist", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const heartbeat = await agent.runHeartbeatOnce();
+    const structured = await agent.inspectStructuredMemory();
+
+    expect(heartbeat.decision?.decision).toBe("noop");
+    expect(heartbeat.triggeredIntent).toBeUndefined();
+    expect(structured.heartbeatDecisions.length).toBeGreaterThan(0);
+    expect(structured.heartbeatDecisions[0]?.decision).toBe("noop");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("does not append duplicate blocked autonomy intents for repeated confirmation-only heartbeat candidates", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-dedupe-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const internal = agent as unknown as {
+      state: {
+        session: { sessionId: string; getHeadId: () => string | undefined };
+        structuredMemoryStore: {
+          upsertSelfRuntime: (patch: unknown) => Promise<void>;
+        };
+        taskTodoStore: {
+          upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void>;
+        };
+      };
+    };
+
+    await internal.state.structuredMemoryStore.upsertSelfRuntime({
+      autonomyPolicy: {
+        enabled: true,
+        heartbeatIntervalMs: 30_000,
+        maxAutonomousTasksPerHour: 6,
+        allowBroadExecution: false,
+      },
+    });
+    await internal.state.taskTodoStore.upsert(createTaskTodoRecord({
+      taskId: "task-blocked",
+      goal: "Fix the failing test",
+      sessionId: internal.state.session.sessionId,
+      branchHeadId: internal.state.session.getHeadId(),
+      cwd,
+      verificationMode: "strict",
+      todos: [{ id: "todo-1", description: "Inspect the failing test", status: "in_progress" }],
+      status: "blocked",
+    }));
+
+    await agent.runHeartbeatOnce();
+    await agent.runHeartbeatOnce();
+
+    const structured = await agent.inspectStructuredMemory();
+    expect(structured.autonomyQueue).toHaveLength(1);
+    expect(structured.autonomyQueue[0]?.status).toBe("blocked");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("counts recent blocked autonomy intents against the hourly cap", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-cap-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const internal = agent as unknown as {
+      state: {
+        session: { sessionId: string; getHeadId: () => string | undefined };
+        structuredMemoryStore: {
+          upsertSelfRuntime: (patch: unknown) => Promise<void>;
+          appendAutonomyIntent: (record: {
+            createdAt: number;
+            kind: "resume_task";
+            sourceSignal: "stalled_task";
+            priority: number;
+            riskLevel: "low";
+            recommendedAction: "resume_task";
+            status: "blocked";
+            goal: string;
+            evidence: string[];
+          }) => Promise<void>;
+        };
+        taskTodoStore: {
+          upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void>;
+        };
+      };
+      runTaskDetailed: (goal: string, options?: unknown) => Promise<unknown>;
+    };
+
+    await internal.state.structuredMemoryStore.upsertSelfRuntime({
+      autonomyPolicy: {
+        enabled: true,
+        heartbeatIntervalMs: 30_000,
+        maxAutonomousTasksPerHour: 1,
+        allowBroadExecution: true,
+      },
+    });
+    await internal.state.structuredMemoryStore.appendAutonomyIntent({
+      createdAt: Date.now() - 5_000,
+      kind: "resume_task",
+      sourceSignal: "stalled_task",
+      priority: 1,
+      riskLevel: "low",
+      recommendedAction: "resume_task",
+      status: "blocked",
+      goal: "Previous blocked heartbeat task",
+      evidence: ["blocked once"],
+    });
+    await internal.state.taskTodoStore.upsert(createTaskTodoRecord({
+      taskId: "task-cap",
+      goal: "Fix the newest failing test",
+      sessionId: internal.state.session.sessionId,
+      branchHeadId: internal.state.session.getHeadId(),
+      cwd,
+      verificationMode: "strict",
+      todos: [{ id: "todo-1", description: "Inspect the failing test", status: "in_progress" }],
+      status: "blocked",
+    }));
+
+    let runTaskCalls = 0;
+    const originalRunTaskDetailed = internal.runTaskDetailed.bind(agent);
+    internal.runTaskDetailed = async (...args) => {
+      runTaskCalls += 1;
+      return originalRunTaskDetailed(...args);
+    };
+
+    try {
+      const heartbeat = await agent.runHeartbeatOnce();
+      const structured = await agent.inspectStructuredMemory();
+      expect(heartbeat.decision?.decision).toBe("noop");
+      expect(structured.heartbeatDecisions[0]?.reasons).toContain("Autonomy hourly cap reached.");
+      expect(heartbeat.triggeredIntent).toBeUndefined();
+      expect(runTaskCalls).toBe(0);
+    } finally {
+      internal.runTaskDetailed = originalRunTaskDetailed;
+      delete process.env.MONO_CONFIG_DIR;
+    }
+  });
+
+  it("runs autonomous heartbeat tasks in an isolated session and restores the main session afterwards", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-isolated-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const internal = agent as unknown as {
+      state: {
+        session: { sessionId: string; getHeadId: () => string | undefined };
+        structuredMemoryStore: {
+          upsertSelfRuntime: (patch: unknown) => Promise<void>;
+        };
+        taskTodoStore: {
+          upsert: (record: ReturnType<typeof createTaskTodoRecord>) => Promise<void>;
+        };
+      };
+      runTaskDetailed: (goal: string, options?: unknown) => Promise<{
+        result: {
+          taskId?: string;
+          status: "done";
+          summary: string;
+          turns: number;
+          verification: { mode: "none"; evidence: string[]; passed: true };
+          messages: [];
+        };
+        heartbeatReplyEvaluation?: {
+          status: "ack" | "duplicate" | "sent" | "suppressed";
+          rawText: string;
+          normalizedText: string;
+          visibleText: string;
+          reason: string;
+        };
+      }>;
+    };
+
+    const mainSessionId = internal.state.session.sessionId;
+    await internal.state.structuredMemoryStore.upsertSelfRuntime({
+      autonomyPolicy: {
+        enabled: true,
+        heartbeatIntervalMs: 30_000,
+        maxAutonomousTasksPerHour: 6,
+        allowBroadExecution: true,
+        isolatedSession: true,
+      },
+    });
+    await internal.state.taskTodoStore.upsert(createTaskTodoRecord({
+      taskId: "task-isolated",
+      goal: "Fix the failing test",
+      sessionId: internal.state.session.sessionId,
+      branchHeadId: internal.state.session.getHeadId(),
+      cwd,
+      verificationMode: "strict",
+      todos: [{ id: "todo-1", description: "Inspect the failing test", status: "in_progress" }],
+      status: "blocked",
+    }));
+
+    let sessionIdSeenInsideRun: string | undefined;
+    let isolatedFilePath: string | undefined;
+    const originalRunTaskDetailed = internal.runTaskDetailed.bind(agent);
+    internal.runTaskDetailed = async (_goal: string) => {
+      sessionIdSeenInsideRun = internal.state.session.sessionId;
+      isolatedFilePath = internal.state.session.filePath;
+      return {
+        result: {
+          taskId: "heartbeat-task",
+          status: "done",
+          summary: "done",
+          turns: 1,
+          verification: { mode: "none", evidence: [], passed: true },
+          messages: [
+            {
+              role: "assistant",
+              provider: "openai",
+              model: "gpt-4.1-mini",
+              stopReason: "stop",
+              timestamp: Date.now(),
+              content: [{ type: "text", text: "HEARTBEAT_OK" }],
+            },
+          ],
+        },
+        heartbeatReplyEvaluation: {
+          status: "ack",
+          rawText: "HEARTBEAT_OK",
+          normalizedText: "HEARTBEAT_OK",
+          visibleText: "",
+          reason: "heartbeat-ack",
+        },
+      };
+    };
+
+    try {
+      await agent.runHeartbeatOnce();
+    } finally {
+      internal.runTaskDetailed = originalRunTaskDetailed;
+    }
+
+    expect(sessionIdSeenInsideRun).toBeDefined();
+    expect(sessionIdSeenInsideRun).not.toBe(mainSessionId);
+    expect(agent.getSessionId()).toBe(mainSessionId);
+    expect(isolatedFilePath).toBeDefined();
+    await expect(stat(isolatedFilePath!)).rejects.toThrow();
 
     delete process.env.MONO_CONFIG_DIR;
   });
@@ -265,7 +613,7 @@ describe("Agent", () => {
       sessionId: "session-1",
       channel: { platform: "telegram", kind: "dm", id: "7001" },
     })).toEqual({
-      type: "deny",
+      type: "ask",
       reason: "Command matches configured denylist",
     });
 
@@ -291,10 +639,7 @@ describe("Agent", () => {
       cwd,
       sessionId: "session-1",
       channel: { platform: "telegram", kind: "channel", id: "-1007001" },
-    })).toEqual({
-      type: "ask",
-      reason: "bash commands require confirmation by default",
-    });
+    })).toEqual({ type: "allow" });
 
     delete process.env.MONO_CONFIG_DIR;
   });
@@ -621,7 +966,7 @@ describe("Agent", () => {
     delete process.env.MONO_CONFIG_DIR;
   });
 
-  it("injects channel_action and channel_store only for supported channel runs", async () => {
+  it("injects channel tools and allowlisted bash for Telegram channel-chat runs", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-telegram-tool-"));
     const cwd = join(rootDir, "workspace");
     await mkdir(cwd, { recursive: true });
@@ -635,7 +980,7 @@ describe("Agent", () => {
           groupAllowFrom: [],
           groups: {},
           approval: {
-            allowChats: [],
+            allowChats: ["7002"],
             commandDenylist: [],
           },
           reply: {
@@ -688,6 +1033,8 @@ describe("Agent", () => {
       controller: new AbortController(),
       session: internal.state.session,
       model: internal.state.model,
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "on-request",
     };
     const task = {
       taskId: "task-1",
@@ -717,6 +1064,16 @@ describe("Agent", () => {
         },
       },
     }, task);
+    const nonAllowlistedTelegramTools = await internal.createToolsForRun({
+      ...baseContext,
+      interactionMode: "channel_chat",
+      channel: { platform: "telegram", kind: "dm", id: "7003" },
+      channelContext: {
+        channel: "telegram",
+        actions: ["send", "sticker"],
+        storeResources: ["sticker_source"],
+      },
+    }, task);
     const localTools = await internal.createToolsForRun(baseContext, task);
     const channelActionTool = telegramTools.find((tool) => tool.name === "channel_action");
 
@@ -724,7 +1081,10 @@ describe("Agent", () => {
     expect(telegramTools.some((tool) => tool.name === "channel_store")).toBe(true);
     expect(telegramTools.some((tool) => tool.name === "write_todos")).toBe(false);
     expect(telegramTools.some((tool) => tool.name === "read")).toBe(false);
-    expect(telegramTools.some((tool) => tool.name === "bash")).toBe(false);
+    expect(telegramTools.some((tool) => tool.name === "write")).toBe(false);
+    expect(telegramTools.some((tool) => tool.name === "edit")).toBe(false);
+    expect(telegramTools.some((tool) => tool.name === "bash")).toBe(true);
+    expect(nonAllowlistedTelegramTools.some((tool) => tool.name === "bash")).toBe(false);
     expect(channelActionTool?.description).toContain("Available actions for this run: send, sticker.");
     expect(channelActionTool?.description).toContain("payload.fileId=\"CAAC123\"");
     expect(localTools.some((tool) => tool.name === "channel_action")).toBe(false);
@@ -765,6 +1125,7 @@ describe("Agent", () => {
 
     expect(contextText).toContain("Mode: channel_chat");
     expect(contextText).toContain("Do not plan engineering work or use write_todos.");
+    expect(contextText).toContain("If bash is available in this chat");
     expect(contextText).not.toContain("Use write_todos to create or update the current task plan when needed.");
 
     delete process.env.MONO_CONFIG_DIR;
@@ -798,6 +1159,7 @@ describe("Agent", () => {
           content: Array<{ type: "text"; text: string }>;
         }>,
         loopDetected: boolean,
+        leaseExceeded: boolean,
         channelActionRequirement?: {
           nativeActionRequired: boolean;
           action?: string;
@@ -820,7 +1182,7 @@ describe("Agent", () => {
       stopReason: "stop",
       timestamp: 1,
       content: [{ type: "text", text: "I can't send stickers." }],
-    }], false, {
+    }], false, false, {
       nativeActionRequired: true,
       action: "sticker",
       textOnlyFallbackAllowed: false,
@@ -860,6 +1222,7 @@ describe("Agent", () => {
         },
         messages: Array<unknown>,
         loopDetected: boolean,
+        leaseExceeded: boolean,
         channelActionRequirement?: {
           nativeActionRequired: boolean;
           action?: string;
@@ -883,7 +1246,7 @@ describe("Agent", () => {
       content: JSON.stringify({ ok: false, action: "sticker", reason: "disabled" }),
       isError: false,
       timestamp: Date.now(),
-    }], false, {
+    }], false, false, {
       nativeActionRequired: true,
       action: "sticker",
       textOnlyFallbackAllowed: false,
@@ -1100,12 +1463,13 @@ describe("Agent", () => {
 
     const profiles = await agent.listConfiguredProfiles();
 
+    const testProfile = createTestProfileConfig();
     expect(profiles).toEqual([
       expect.objectContaining({
         name: "default",
         model: expect.objectContaining({
-          provider: "openai",
-          modelId: "gpt-4.1-mini"
+          provider: testProfile.provider,
+          modelId: testProfile.modelId
         })
       })
     ]);
@@ -1407,14 +1771,8 @@ describe("Agent", () => {
           defaultProfile: "default",
           profiles: {
             default: {
-              provider: "openai",
-              modelId: "gpt-4.1-mini",
-              baseURL: "https://api.openai.com/v1",
-              family: "openai-compatible",
-              transport: "openai-compatible",
+              ...createTestProfileConfig(),
               apiKeyRef: "local:default",
-              supportsTools: true,
-              supportsReasoning: true,
             },
             telegram: {
               provider: "anthropic",
@@ -1443,18 +1801,28 @@ describe("Agent", () => {
       "utf8"
     );
     process.env.MONO_CONFIG_DIR = configDir;
+    const originalMonoApiKey = process.env.MONO_API_KEY;
+    delete process.env.MONO_API_KEY;
 
     const { Agent } = await import("../packages/agent-core/src/agent.js");
     const agent = new Agent({ cwd });
 
-    await agent.setModel("openai/gpt-4.1-mini");
-    expect(agent.hasModelSelectionOverride()).toBe(true);
+    try {
+      await agent.setModel(getTestModelSelectionString());
+      expect(agent.hasModelSelectionOverride()).toBe(true);
 
-    const resolved = await agent.setProfile("telegram");
-    expect(agent.hasModelSelectionOverride()).toBe(false);
-    expect(resolved.profileName).toBe("telegram");
-    expect(resolved.model.provider).toBe("anthropic");
-    expect(resolved.apiKey).toBe("anthropic-key");
+      const resolved = await agent.setProfile("telegram");
+      expect(agent.hasModelSelectionOverride()).toBe(false);
+      expect(resolved.profileName).toBe("telegram");
+      expect(resolved.model.provider).toBe("anthropic");
+      expect(resolved.apiKey).toBe("anthropic-key");
+    } finally {
+      if (originalMonoApiKey === undefined) {
+        delete process.env.MONO_API_KEY;
+      } else {
+        process.env.MONO_API_KEY = originalMonoApiKey;
+      }
+    }
 
     delete process.env.MONO_CONFIG_DIR;
   });

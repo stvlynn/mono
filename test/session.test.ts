@@ -4,18 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SessionManager } from "../packages/session/src/index.js";
 import type { UnifiedModel } from "../packages/shared/src/index.js";
+import { createTestUnifiedModel, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
-const model: UnifiedModel = {
-  provider: "openai",
-  modelId: "gpt-4.1-mini",
-  family: "openai-compatible",
-  baseURL: "https://api.openai.com/v1",
-  apiKeyEnv: "OPENAI_API_KEY",
-  supportsTools: true,
-  supportsReasoning: true
-};
+const model: UnifiedModel = createTestUnifiedModel();
 
-describe("session manager", () => {
+describeIfRealTestModel("session manager", () => {
   it("writes and reloads conversation messages", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
     const sessionsDir = join(cwd, ".sessions");
@@ -39,6 +32,21 @@ describe("session manager", () => {
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe("user");
     expect(messages[1].role).toBe("assistant");
+  });
+
+  it("persists transport-aware session metadata for later transcript repair", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
+    const sessionsDir = join(cwd, ".sessions");
+    const manager = new SessionManager({ cwd, sessionsDir, sessionId: "session-metadata-rich" });
+    await manager.initialize(model);
+
+    const metadata = await manager.getMetadata();
+
+    expect(metadata?.provider).toBe(model.provider);
+    expect(metadata?.model).toBe(model.modelId);
+    expect(metadata?.family).toBe(model.family);
+    expect(metadata?.transport).toBe(model.transport);
+    expect(metadata?.baseURL).toBe(model.baseURL);
   });
 
   it("serializes concurrent appends against the same session file", async () => {
@@ -98,6 +106,31 @@ describe("session manager", () => {
 
     expect((userEntry?.payload as { metadata?: { telegram?: { sticker?: { fileId?: string } } } })?.metadata?.telegram?.sticker?.fileId).toBe("CAAC123");
     expect(userMessage.metadata?.telegram?.sticker?.fileId).toBe("CAAC123");
+  });
+
+  it("persists autonomy triggers separately from ordinary user entries while preserving replay order", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "mono-session-"));
+    const sessionsDir = join(cwd, ".sessions");
+    const manager = new SessionManager({ cwd, sessionsDir, sessionId: "session-autonomy" });
+    await manager.initialize(model);
+    await manager.appendAutonomyTrigger({
+      role: "user",
+      content: "Resume and finish: fix the failing test",
+      timestamp: Date.now(),
+      origin: "heartbeat",
+      parentIntentId: "intent-1",
+    });
+
+    const entries = await manager.readEntries();
+    const messages = await manager.loadMessages();
+
+    expect(entries.some((entry) => entry.entryType === "autonomy_trigger")).toBe(true);
+    expect(entries.some((entry) => entry.entryType === "user")).toBe(false);
+    expect(messages[0]?.role).toBe("user");
+    if (messages[0]?.role === "user") {
+      expect(messages[0].origin).toBe("heartbeat");
+      expect(messages[0].parentIntentId).toBe("intent-1");
+    }
   });
 
   it("lists the latest session for a workspace", async () => {

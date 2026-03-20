@@ -2,7 +2,9 @@ import { stdout as output } from "node:process";
 import { Command } from "commander";
 import { formatContextPreview, formatMemoryRecord, writeJson, writeLine } from "../output.js";
 import {
+  runMemoryHeartbeat,
   runMemoryList,
+  runMemoryRepairTranscripts,
   runMemoryRecall,
   runMemorySearch,
   runMemoryShow,
@@ -40,13 +42,34 @@ export function registerMemoryCommands(program: Command): void {
       output.write(`V2 OpenViking sync: ${payload.v2OpenVikingSync}\n`);
       output.write(`V2 current goals: ${payload.v2CurrentGoals}\n`);
       output.write(`V2 current tensions: ${payload.v2CurrentTensions}\n`);
+      output.write(`V2 open questions: ${payload.v2OpenQuestions}\n`);
+      output.write(`V2 friction patterns: ${payload.v2FrictionPatterns}\n`);
       output.write(`V2 pending queue: ${payload.v2PendingQueue}\n`);
+      output.write(`V2 autonomy queue: ${payload.v2AutonomyQueue}\n`);
+      output.write(`V2 feedback signals: ${payload.v2FeedbackSignals}\n`);
+      output.write(`V2 heartbeat decisions: ${payload.v2HeartbeatDecisions}\n`);
+      output.write(`V2 heartbeat replies: ${payload.v2HeartbeatReplies}\n`);
       output.write(`V2 conflicts: ${payload.v2Conflicts}\n`);
       output.write(`OpenViking: ${payload.openViking}\n`);
       output.write(`SeekDB: ${payload.seekDb}\n`);
       output.write(`Records: ${payload.records}\n`);
       output.write(`Current session: ${payload.currentSession}\n`);
       output.write(`Last memory: ${payload.lastMemory}\n`);
+    });
+
+  memory
+    .command("heartbeat")
+    .description("Run one autonomy heartbeat decision cycle and print the result")
+    .action(async () => {
+      writeJson(await runMemoryHeartbeat());
+    });
+
+  memory
+    .command("repair-transcripts")
+    .description("Repair malformed session transcripts so strict providers can replay tool history")
+    .argument("[sessionId]", "optional session id; defaults to all sessions for the current workspace")
+    .action(async (sessionId?: string) => {
+      writeJson(await runMemoryRepairTranscripts(sessionId));
     });
 
   memory

@@ -70,6 +70,84 @@ describe("telegram chat reply formatting", () => {
     expect(formatTelegramChatReply(result)).toBe("The repository has a CLI, TUI, and Telegram control runtime.");
   });
 
+  it("falls back to the latest tool-use assistant text when no final stop reply exists", () => {
+    const result = createTaskResult({
+      status: "done",
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [
+            { type: "text", text: "我来帮你查一下 X 上 stv_lynn 的 follower 数量。" },
+            { type: "tool-call", id: "tool-1", name: "bash", arguments: { command: "echo test" } },
+          ],
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: "not found",
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe("我来帮你查一下 X 上 stv_lynn 的 follower 数量。");
+    expect(formatTelegramChatResponse(result)).toEqual({
+      messages: [{ text: "我来帮你查一下 X 上 stv_lynn 的 follower 数量。", format: "markdown" }],
+    });
+  });
+
+  it("summarizes tool results when a done run produced no assistant text at all", () => {
+    const result = createTaskResult({
+      status: "done",
+      summary: "Task status: done. No assistant summary was produced. Verification was not required.",
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [{ type: "tool-call", id: "tool-1", name: "bash", arguments: { command: "curl ..." } }],
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: "bash: line 1: curl: command not found\n",
+          isError: false,
+          timestamp: 2,
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-2",
+          toolName: "bash",
+          content: "not found\n",
+          isError: false,
+          timestamp: 3,
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-3",
+          toolName: "bash",
+          content: "all failed\n",
+          isError: false,
+          timestamp: 4,
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe("I tried to check that, but this runtime is missing required commands: curl.");
+    expect(formatTelegramChatResponse(result)).toEqual({
+      messages: [{ text: "I tried to check that, but this runtime is missing required commands: curl.", format: "markdown" }],
+    });
+  });
+
   it("uses a short fallback when the run produced no assistant reply", () => {
     const result = createTaskResult({
       status: "incomplete",
@@ -86,6 +164,98 @@ describe("telegram chat reply formatting", () => {
     });
 
     expect(formatTelegramChatReply(result)).toBe("I couldn't verify that yet.");
+  });
+
+  it("does not inject a Done fallback after a successful channel send with no final assistant text", () => {
+    const result = createTaskResult({
+      status: "done",
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [{ type: "text", text: "I'll send the reply in-channel." }],
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-1",
+          toolName: "channel_action",
+          content: JSON.stringify({
+            ok: true,
+            channel: "telegram",
+            action: "send",
+            targetId: "123456",
+            messageId: "42",
+          }),
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe("");
+    expect(formatTelegramChatResponse(result)).toEqual({ messages: [] });
+  });
+
+  it("does not inject a fallback after successful Telegram media channel actions", () => {
+    for (const action of ["photo", "document"] as const) {
+      const result = createTaskResult({
+        status: "done",
+        messages: [
+          {
+            role: "assistant",
+            provider: "openai",
+            model: "gpt-4.1-mini",
+            stopReason: "tool_use",
+            timestamp: 1,
+            content: [{ type: "text", text: "I'll send the media in-channel." }],
+          },
+          {
+            role: "tool",
+            toolCallId: `tool-${action}`,
+            toolName: "channel_action",
+            content: JSON.stringify({
+              ok: true,
+              channel: "telegram",
+              action,
+              targetId: "123456",
+              messageId: "42",
+            }),
+            isError: false,
+            timestamp: 2,
+          },
+        ],
+      });
+
+      expect(formatTelegramChatReply(result)).toBe("");
+      expect(formatTelegramChatResponse(result)).toEqual({ messages: [] });
+    }
+  });
+
+  it("does not inject a Done fallback after a satisfied native channel delivery with no final assistant text", () => {
+    const result = createTaskResult({
+      status: "done",
+      channelDelivery: {
+        nativeActionRequired: true,
+        action: "sticker",
+        satisfied: true,
+      },
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [{ type: "text", text: "I'll send the sticker directly." }],
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe("");
+    expect(formatTelegramChatResponse(result)).toEqual({ messages: [] });
   });
 
   it("splits long paragraph-separated replies into multiple Telegram messages", () => {

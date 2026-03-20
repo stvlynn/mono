@@ -65,19 +65,35 @@ export class StructuredMemoryRetrievalPlanner {
         summary: compactLines([
           projectProfile.workspaceSummary,
           projectProfile.durableFacts.length > 0 ? `Facts: ${projectProfile.durableFacts.join("; ")}` : "",
-          projectProfile.collaborationNorms.length > 0 ? `Norms: ${projectProfile.collaborationNorms.join("; ")}` : ""
+          projectProfile.collaborationNorms.length > 0 ? `Norms: ${projectProfile.collaborationNorms.join("; ")}` : "",
+          projectProfile.maintenanceFocus.length > 0 ? `Maintenance focus: ${projectProfile.maintenanceFocus.join("; ")}` : "",
+          projectProfile.knownRiskZones.length > 0 ? `Risk zones: ${projectProfile.knownRiskZones.join("; ")}` : "",
+          projectProfile.qualityBar ? `Quality bar: ${projectProfile.qualityBar}` : "",
+          projectProfile.preferredInterventionOrder.length > 0
+            ? `Intervention order: ${projectProfile.preferredInterventionOrder.join(" -> ")}`
+            : ""
         ])
       });
     }
 
-    if (selfRuntime.currentGoals.length > 0 || selfRuntime.currentTensions.length > 0 || selfRuntime.taskHints.length > 0) {
+    if (
+      selfRuntime.currentGoals.length > 0
+      || selfRuntime.currentTensions.length > 0
+      || selfRuntime.taskHints.length > 0
+      || selfRuntime.openQuestions.length > 0
+      || selfRuntime.currentHypotheses.length > 0
+      || selfRuntime.frictionPatterns.length > 0
+    ) {
       taskGroundedHints.push({
         scope: "self",
         title: "Self Runtime",
         summary: compactLines([
           selfRuntime.currentGoals.length > 0 ? `Current goals: ${selfRuntime.currentGoals.join("; ")}` : "",
           selfRuntime.currentTensions.length > 0 ? `Current tensions: ${selfRuntime.currentTensions.join("; ")}` : "",
-          selfRuntime.taskHints.length > 0 ? `Task hints: ${selfRuntime.taskHints.join("; ")}` : ""
+          selfRuntime.taskHints.length > 0 ? `Task hints: ${selfRuntime.taskHints.join("; ")}` : "",
+          selfRuntime.openQuestions.length > 0 ? `Open questions: ${selfRuntime.openQuestions.join("; ")}` : "",
+          selfRuntime.currentHypotheses.length > 0 ? `Hypotheses: ${selfRuntime.currentHypotheses.join("; ")}` : "",
+          selfRuntime.frictionPatterns.length > 0 ? `Friction patterns: ${selfRuntime.frictionPatterns.join("; ")}` : ""
         ])
       });
     }

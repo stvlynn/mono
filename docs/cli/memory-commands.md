@@ -3,6 +3,8 @@
 ## Current Commands
 
 - `mono memory status`
+- `mono memory heartbeat`
+- `mono memory repair-transcripts [sessionId]`
 - `mono memory structured [entityId]`
 - `mono memory list`
 - `mono memory search <query>`
@@ -38,6 +40,7 @@ The command includes:
 - `memory.v2.openVikingSync`
 - current self-runtime goal / tension counts
 - pending salience-queue count
+- autonomy queue / feedback / heartbeat decision counts
 - unresolved conflict count
 - OpenViking and SeekDB integration status
 
@@ -55,6 +58,28 @@ The payload includes:
 - the current structured-memory package that would be used for prompt assembly
 
 If no `entityId` is provided, the configured `memory.v2.primaryEntityId` is used.
+
+## `mono memory heartbeat`
+
+Runs a single autonomy heartbeat cycle without waiting for the background timer.
+
+The JSON payload includes:
+
+- the latest heartbeat decision
+- the selected autonomy intent when one was created
+
+This is a debugging and inspection tool for the autonomy control loop. It does not bypass normal permissions or task leases.
+
+## `mono memory repair-transcripts [sessionId]`
+
+Repairs malformed session message history so strict providers can replay prior tool-use turns.
+
+Current behavior:
+
+- scans all sessions for the current workspace, or one session if `sessionId` is provided
+- repairs malformed assistant/tool ordering in linear transcripts
+- writes a `.bak` backup next to modified session files before rewriting
+- reports skipped sessions when the transcript is not a simple linear history
 
 ## Execution-Memory Commands
 

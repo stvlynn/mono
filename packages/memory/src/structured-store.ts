@@ -2,7 +2,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendJsonLine, createId, readJsonFile, readJsonLines, writeJsonFile } from "@mono/shared";
 import type {
+  AutonomyIntent,
   EpisodicEventRecord,
+  FeedbackSignal,
+  HeartbeatDecision,
+  HeartbeatReplyRecord,
+  LearningState,
   MemoryEvidenceRecord,
   NarrativeUpdateRecord,
   OtherConflictRecord,
@@ -99,9 +104,8 @@ export class FolderStructuredMemoryStore {
   }
 
   async getSelfRuntime(): Promise<SelfRuntimeRecord> {
-    return (
-      await readJsonFile<SelfRuntimeRecord>(this.selfRuntimePath())
-    ) ?? defaultSelfRuntimeRecord();
+    const record = await readJsonFile<SelfRuntimeRecord>(this.selfRuntimePath());
+    return record ? normalizeSelfRuntimeRecord(record) : defaultSelfRuntimeRecord();
   }
 
   async upsertSelfRuntime(patch: Partial<SelfRuntimeRecord>): Promise<SelfRuntimeRecord> {
@@ -114,9 +118,36 @@ export class FolderStructuredMemoryStore {
       activeProjects: patch.activeProjects ?? current.activeProjects,
       currentTensions: patch.currentTensions ?? current.currentTensions,
       taskHints: patch.taskHints ?? current.taskHints,
-      lastReflectionAt: patch.lastReflectionAt ?? current.lastReflectionAt
+      openQuestions: patch.openQuestions ?? current.openQuestions,
+      currentHypotheses: patch.currentHypotheses ?? current.currentHypotheses,
+      frictionPatterns: patch.frictionPatterns ?? current.frictionPatterns,
+      autonomyPolicy: patch.autonomyPolicy ?? current.autonomyPolicy,
+      cooldowns: patch.cooldowns ?? current.cooldowns,
+      lastReflectionAt: patch.lastReflectionAt ?? current.lastReflectionAt,
+      lastHeartbeatAt: patch.lastHeartbeatAt ?? current.lastHeartbeatAt,
+      lastFeedbackAt: patch.lastFeedbackAt ?? current.lastFeedbackAt
     };
     await writeJsonFile(this.selfRuntimePath(), next);
+    return next;
+  }
+
+  async getLearningState(): Promise<LearningState> {
+    const record = await readJsonFile<LearningState>(this.learningStatePath());
+    return record ? normalizeLearningState(record) : defaultLearningState();
+  }
+
+  async upsertLearningState(patch: Partial<LearningState>): Promise<LearningState> {
+    const current = await this.getLearningState();
+    const next: LearningState = {
+      ...current,
+      ...patch,
+      updatedAt: Date.now(),
+      strategyStats: patch.strategyStats ?? current.strategyStats,
+      failurePatterns: patch.failurePatterns ?? current.failurePatterns,
+      userPreferenceBias: patch.userPreferenceBias ?? current.userPreferenceBias,
+      cooldowns: patch.cooldowns ?? current.cooldowns
+    };
+    await writeJsonFile(this.learningStatePath(), next);
     return next;
   }
 
@@ -135,9 +166,8 @@ export class FolderStructuredMemoryStore {
   }
 
   async getProjectProfile(): Promise<ProjectMemoryProfileRecord> {
-    return (
-      await readJsonFile<ProjectMemoryProfileRecord>(this.projectProfilePath())
-    ) ?? defaultProjectProfileRecord();
+    const record = await readJsonFile<ProjectMemoryProfileRecord>(this.projectProfilePath());
+    return record ? normalizeProjectProfileRecord(record) : defaultProjectProfileRecord();
   }
 
   async upsertProjectProfile(patch: Partial<ProjectMemoryProfileRecord>): Promise<ProjectMemoryProfileRecord> {
@@ -147,7 +177,10 @@ export class FolderStructuredMemoryStore {
       ...patch,
       updatedAt: Date.now(),
       durableFacts: patch.durableFacts ?? current.durableFacts,
-      collaborationNorms: patch.collaborationNorms ?? current.collaborationNorms
+      collaborationNorms: patch.collaborationNorms ?? current.collaborationNorms,
+      maintenanceFocus: patch.maintenanceFocus ?? current.maintenanceFocus,
+      knownRiskZones: patch.knownRiskZones ?? current.knownRiskZones,
+      preferredInterventionOrder: patch.preferredInterventionOrder ?? current.preferredInterventionOrder
     };
     await writeJsonFile(this.projectProfilePath(), next);
     return next;
@@ -270,13 +303,141 @@ export class FolderStructuredMemoryStore {
       .slice(0, options.limit ?? conflicts.length);
   }
 
+  async countConflicts(options: {
+    entityId: string;
+    status?: OtherConflictRecord["status"];
+  }): Promise<number> {
+    const conflicts = await readJsonLines<OtherConflictRecord>(this.otherConflictsPath(options.entityId));
+    return conflicts.filter((item) => options.status ? item.status === options.status : true).length;
+  }
+
   async appendEpisodicEvent(record: Omit<EpisodicEventRecord, "id"> & { id?: string }): Promise<EpisodicEventRecord> {
     const next: EpisodicEventRecord = {
       ...record,
+      origin: record.origin ?? "user_task",
       id: record.id ?? createId()
     };
     await appendJsonLine(this.episodicEventsPath(), next);
     return next;
+  }
+
+  async appendAutonomyIntent(record: Omit<AutonomyIntent, "id"> & { id?: string }): Promise<AutonomyIntent> {
+    const next: AutonomyIntent = {
+      ...record,
+      id: record.id ?? createId()
+    };
+    await appendJsonLine(this.autonomyQueuePath(), next);
+    return next;
+  }
+
+  async listAutonomyIntents(options: {
+    status?: AutonomyIntent["status"];
+    limit?: number;
+  } = {}): Promise<AutonomyIntent[]> {
+    const records = await readJsonLines<AutonomyIntent>(this.autonomyQueuePath());
+    return records
+      .filter((item) => options.status ? item.status === options.status : true)
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, options.limit ?? records.length);
+  }
+
+  async countAutonomyIntents(options: {
+    status?: AutonomyIntent["status"];
+  } = {}): Promise<number> {
+    const records = await readJsonLines<AutonomyIntent>(this.autonomyQueuePath());
+    return records.filter((item) => options.status ? item.status === options.status : true).length;
+  }
+
+  async replaceAutonomyIntents(records: AutonomyIntent[]): Promise<void> {
+    const lines = records.map((record) => JSON.stringify(record)).join("\n");
+    await mkdir(this.episodicDir(), { recursive: true });
+    await writeFile(this.autonomyQueuePath(), lines ? `${lines}\n` : "", "utf8");
+  }
+
+  async updateAutonomyIntent(id: string, patch: Partial<AutonomyIntent>): Promise<AutonomyIntent | null> {
+    const records = await this.listAutonomyIntents();
+    const current = records.find((item) => item.id === id);
+    if (!current) {
+      return null;
+    }
+    const next = { ...current, ...patch };
+    await this.replaceAutonomyIntents(records.map((item) => item.id === id ? next : item));
+    return next;
+  }
+
+  async appendFeedbackSignal(record: Omit<FeedbackSignal, "id"> & { id?: string }): Promise<FeedbackSignal> {
+    const next: FeedbackSignal = {
+      ...record,
+      id: record.id ?? createId()
+    };
+    await appendJsonLine(this.feedbackLogPath(), next);
+    return next;
+  }
+
+  async listFeedbackSignals(options: {
+    source?: FeedbackSignal["source"];
+    kind?: FeedbackSignal["kind"];
+    limit?: number;
+  } = {}): Promise<FeedbackSignal[]> {
+    const records = await readJsonLines<FeedbackSignal>(this.feedbackLogPath());
+    return records
+      .filter((item) => options.source ? item.source === options.source : true)
+      .filter((item) => options.kind ? item.kind === options.kind : true)
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, options.limit ?? records.length);
+  }
+
+  async countFeedbackSignals(options: {
+    source?: FeedbackSignal["source"];
+    kind?: FeedbackSignal["kind"];
+  } = {}): Promise<number> {
+    const records = await readJsonLines<FeedbackSignal>(this.feedbackLogPath());
+    return records
+      .filter((item) => options.source ? item.source === options.source : true)
+      .filter((item) => options.kind ? item.kind === options.kind : true)
+      .length;
+  }
+
+  async appendHeartbeatDecision(record: HeartbeatDecision): Promise<HeartbeatDecision> {
+    await appendJsonLine(this.heartbeatLogPath(), record);
+    return record;
+  }
+
+  async listHeartbeatDecisions(limit = 20): Promise<HeartbeatDecision[]> {
+    const records = await readJsonLines<HeartbeatDecision>(this.heartbeatLogPath());
+    return records
+      .sort((left, right) => right.timestamp - left.timestamp)
+      .slice(0, limit);
+  }
+
+  async countHeartbeatDecisions(): Promise<number> {
+    const records = await readJsonLines<HeartbeatDecision>(this.heartbeatLogPath());
+    return records.length;
+  }
+
+  async appendHeartbeatReplyRecord(record: Omit<HeartbeatReplyRecord, "id"> & { id?: string }): Promise<HeartbeatReplyRecord> {
+    const next: HeartbeatReplyRecord = {
+      ...record,
+      id: record.id ?? createId()
+    };
+    await appendJsonLine(this.heartbeatRepliesPath(), next);
+    return next;
+  }
+
+  async listHeartbeatReplyRecords(options: {
+    comparisonKey?: string;
+    limit?: number;
+  } = {}): Promise<HeartbeatReplyRecord[]> {
+    const records = await readJsonLines<HeartbeatReplyRecord>(this.heartbeatRepliesPath());
+    return records
+      .filter((item) => options.comparisonKey ? item.comparisonKey === options.comparisonKey : true)
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, options.limit ?? records.length);
+  }
+
+  async countHeartbeatReplyRecords(): Promise<number> {
+    const records = await readJsonLines<HeartbeatReplyRecord>(this.heartbeatRepliesPath());
+    return records.length;
   }
 
   async listRecentEpisodic(options: {
@@ -312,6 +473,17 @@ export class FolderStructuredMemoryStore {
       .filter((item) => options.status ? item.status === options.status : true)
       .sort((left, right) => left.createdAt - right.createdAt)
       .slice(0, options.limit ?? queue.length);
+  }
+
+  async countSalienceQueue(options: {
+    entityId?: string;
+    status?: SalienceQueueRecord["status"];
+  } = {}): Promise<number> {
+    const queue = await readJsonLines<SalienceQueueRecord>(this.salienceQueuePath());
+    return queue
+      .filter((item) => options.entityId ? item.entityId === options.entityId : true)
+      .filter((item) => options.status ? item.status === options.status : true)
+      .length;
   }
 
   async replaceSalienceQueue(records: SalienceQueueRecord[]): Promise<void> {
@@ -360,6 +532,10 @@ export class FolderStructuredMemoryStore {
     return join(this.selfDir(), "runtime.json");
   }
 
+  private learningStatePath(): string {
+    return join(this.selfDir(), "learning_state.json");
+  }
+
   private selfNarrativePath(): string {
     return join(this.selfDir(), "narrative.jsonl");
   }
@@ -399,6 +575,22 @@ export class FolderStructuredMemoryStore {
   private salienceQueuePath(): string {
     return join(this.episodicDir(), "salience_queue.jsonl");
   }
+
+  private autonomyQueuePath(): string {
+    return join(this.episodicDir(), "autonomy_queue.jsonl");
+  }
+
+  private feedbackLogPath(): string {
+    return join(this.episodicDir(), "feedback_log.jsonl");
+  }
+
+  private heartbeatLogPath(): string {
+    return join(this.episodicDir(), "heartbeat_log.jsonl");
+  }
+
+  private heartbeatRepliesPath(): string {
+    return join(this.episodicDir(), "heartbeat_replies.jsonl");
+  }
 }
 
 function defaultSelfIdentityRecord(): SelfIdentityRecord {
@@ -434,7 +626,60 @@ function defaultSelfRuntimeRecord(): SelfRuntimeRecord {
     currentGoals: [],
     activeProjects: [],
     currentTensions: [],
-    taskHints: []
+    taskHints: [],
+    openQuestions: [],
+    currentHypotheses: [],
+    frictionPatterns: [],
+    autonomyPolicy: {
+      enabled: true,
+      heartbeatIntervalMs: 30_000,
+      maxAutonomousTasksPerHour: 6,
+      allowBroadExecution: true,
+      isolatedSession: true
+    },
+    cooldowns: []
+  };
+}
+
+function normalizeSelfRuntimeRecord(record: SelfRuntimeRecord): SelfRuntimeRecord {
+  const defaults = defaultSelfRuntimeRecord();
+  return {
+    ...defaults,
+    ...record,
+    currentGoals: record.currentGoals ?? defaults.currentGoals,
+    activeProjects: record.activeProjects ?? defaults.activeProjects,
+    currentTensions: record.currentTensions ?? defaults.currentTensions,
+    taskHints: record.taskHints ?? defaults.taskHints,
+    openQuestions: record.openQuestions ?? defaults.openQuestions,
+    currentHypotheses: record.currentHypotheses ?? defaults.currentHypotheses,
+    frictionPatterns: record.frictionPatterns ?? defaults.frictionPatterns,
+    autonomyPolicy: {
+      ...defaults.autonomyPolicy,
+      ...(record.autonomyPolicy ?? {}),
+    },
+    cooldowns: record.cooldowns ?? defaults.cooldowns,
+  };
+}
+
+function defaultLearningState(): LearningState {
+  return {
+    updatedAt: 0,
+    strategyStats: [],
+    failurePatterns: [],
+    userPreferenceBias: {},
+    cooldowns: []
+  };
+}
+
+function normalizeLearningState(record: LearningState): LearningState {
+  const defaults = defaultLearningState();
+  return {
+    ...defaults,
+    ...record,
+    strategyStats: record.strategyStats ?? defaults.strategyStats,
+    failurePatterns: record.failurePatterns ?? defaults.failurePatterns,
+    userPreferenceBias: record.userPreferenceBias ?? defaults.userPreferenceBias,
+    cooldowns: record.cooldowns ?? defaults.cooldowns,
   };
 }
 
@@ -443,7 +688,23 @@ function defaultProjectProfileRecord(): ProjectMemoryProfileRecord {
     updatedAt: 0,
     workspaceSummary: "",
     durableFacts: [],
-    collaborationNorms: []
+    collaborationNorms: [],
+    maintenanceFocus: [],
+    knownRiskZones: [],
+    preferredInterventionOrder: []
+  };
+}
+
+function normalizeProjectProfileRecord(record: ProjectMemoryProfileRecord): ProjectMemoryProfileRecord {
+  const defaults = defaultProjectProfileRecord();
+  return {
+    ...defaults,
+    ...record,
+    durableFacts: record.durableFacts ?? defaults.durableFacts,
+    collaborationNorms: record.collaborationNorms ?? defaults.collaborationNorms,
+    maintenanceFocus: record.maintenanceFocus ?? defaults.maintenanceFocus,
+    knownRiskZones: record.knownRiskZones ?? defaults.knownRiskZones,
+    preferredInterventionOrder: record.preferredInterventionOrder ?? defaults.preferredInterventionOrder,
   };
 }
 

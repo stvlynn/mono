@@ -31,6 +31,9 @@ A task starts with a lightweight `TaskState`:
 - `attempts`
 - `verification`
 - optional `currentTodoMemoryId`
+- optional `origin` (`user`, `heartbeat`, or `resume`)
+- optional `parentIntentId` for heartbeat-created work
+- optional autonomy `lease`
 
 The task state does not own the todo list directly.
 
@@ -63,6 +66,7 @@ Current phases:
 Important detail:
 - the runtime still owns phase transitions and verification rails
 - the model owns todo decomposition through `write_todos`
+- heartbeat-created work still reuses the same task runtime rather than a separate execution engine
 
 ## Verification
 
@@ -79,9 +83,26 @@ Current direct-response behavior:
 - `verification=none` skips the verify phase entirely
 - the execute prompt tells the model to answer directly and only use tools when they provide concrete evidence
 - this keeps casual chat and lightweight questions from generating extra verifier-only assistant turns
-- Telegram `channel_chat` turns force this direct-response path and do not expose `write_todos` or coding tools
+- Telegram `channel_chat` turns force this direct-response path and do not expose `write_todos` or the full coding toolset
+- allowlisted Telegram `channel_chat` turns may expose `bash`, but still do not expose `read`, `write`, or `edit`
 - `verification=light` can also short-circuit to summarize when a turn produced a normal assistant reply and no tool evidence was needed
 - light verification that only failed due to missing evidence does not re-open execution if the verify turn also produced no tool evidence
+
+## Autonomy Heartbeat
+
+The runtime now includes a low-frequency autonomy heartbeat layered on top of normal user tasks.
+
+Current behavior:
+
+- heartbeat runs only while the agent process is alive and idle
+- it reads structured runtime state, learning state, recent feedback, and task todo records
+- it can enqueue or resume a task by calling back into `Agent.runTask()`
+- autonomous tasks are marked in `TaskState.origin`
+- autonomous tasks receive a bounded `lease` so they do not run indefinitely
+- recent user feedback can suppress or down-rank autonomous work through learning-state bias
+- `allowBroadExecution=false` forces medium/high-risk autonomous work to stop at a confirmation boundary
+
+This is intentionally a control loop, not a separate background worker system.
 
 ## Loop Detection
 

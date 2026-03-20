@@ -16,6 +16,7 @@ export interface StructuredMemoryTurnInput {
   entityId: string;
   userMessage: string;
   assistantMessages: ConversationMessage[];
+  origin?: EpisodicEventRecord["origin"];
   sessionId?: string;
   branchHeadId?: string;
 }
@@ -36,6 +37,7 @@ export async function persistStructuredMemoryTurn(input: StructuredMemoryTurnInp
 
   const event = await input.store.appendEpisodicEvent({
     createdAt: now,
+    origin: input.origin ?? "user_task",
     entityId: input.entityId,
     sessionId: input.sessionId,
     branchHeadId: input.branchHeadId,
@@ -151,7 +153,12 @@ async function updateSelfRuntime(
   return store.upsertSelfRuntime({
     currentGoals,
     currentTensions,
-    taskHints
+    taskHints,
+    openQuestions: current.openQuestions,
+    currentHypotheses: current.currentHypotheses,
+    frictionPatterns: current.frictionPatterns,
+    autonomyPolicy: current.autonomyPolicy,
+    cooldowns: current.cooldowns
   });
 }
 

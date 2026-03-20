@@ -34,6 +34,52 @@ export function useAgentBridge(options: UseAgentBridgeOptions): void {
 
 export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): UIState {
   switch (event.type) {
+    case "heartbeat-start":
+      return {
+        ...state,
+        status: "Autonomy heartbeat..."
+      };
+    case "heartbeat-skip":
+      return {
+        ...state,
+        status: `Heartbeat skipped: ${event.reason}`
+      };
+    case "heartbeat-decision":
+      return {
+        ...state,
+        status: `Heartbeat decision: ${event.decision.decision}`
+      };
+    case "autonomy-task-enqueued":
+      return {
+        ...pushSystemMessage(state, `Autonomy queued: ${event.intent.goal}`, "info"),
+        status: `Autonomy queued: ${event.intent.kind}`
+      };
+    case "autonomy-task-resumed":
+      return {
+        ...pushSystemMessage(state, `Autonomy resumed: ${event.intent.goal}`, "info"),
+        status: `Autonomy resumed: ${event.intent.kind}`
+      };
+    case "self-reflection-generated":
+      return {
+        ...pushSystemMessage(state, event.summary, "muted"),
+        status: event.summary
+      };
+    case "feedback-integrated":
+      return {
+        ...state,
+        status: `Integrated ${event.signals.length} feedback signal(s)`
+      };
+    case "budget-warning":
+      return {
+        ...pushSystemMessage(state, event.message, "warning"),
+        currentTask: event.task,
+        status: event.message
+      };
+    case "autonomy-blocked":
+      return {
+        ...pushSystemMessage(state, `Autonomy blocked: ${event.reason}`, "warning"),
+        status: `Autonomy blocked: ${event.reason}`
+      };
     case "assistant-start":
       return {
         ...state,
@@ -179,7 +225,7 @@ export function reduceEvent(state: UIState, event: RuntimeEvent, agent: Agent): 
         currentTodoRecord: agent.getCurrentTodoRecord(),
         running: true,
         waitingCopy: resolveWaitingCopy("task_planning", { goal: event.task.goal }),
-        status: `Planning task: ${event.task.goal}`
+        status: describeTaskStart(event.task)
       };
     case "task-update":
     case "task-phase-change":
@@ -310,7 +356,15 @@ function currentTaskStatus(task: UIState["currentTask"]): string {
   if (!task) {
     return "Ready";
   }
-  return `Task phase: ${task.phase}`;
+  const origin = task.origin && task.origin !== "user" ? ` (${task.origin})` : "";
+  return `Task phase: ${task.phase}${origin}`;
+}
+
+function describeTaskStart(task: NonNullable<UIState["currentTask"]>): string {
+  if (task.origin && task.origin !== "user") {
+    return `Planning ${task.origin} task: ${task.goal}`;
+  }
+  return `Planning task: ${task.goal}`;
 }
 
 function updateToolWaitingState(state: UIState, fallbackStatus: string): UIState {

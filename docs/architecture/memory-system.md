@@ -46,10 +46,11 @@ Structured memory is the new local-first long-term memory layer used for:
 
 - self identity and behavior constraints
 - self runtime goals, tensions, and task hints
+- self runtime open questions, hypotheses, friction patterns, and autonomy policy
 - per-entity profiles, preferences, and inference records
 - per-entity conflicts and evidence ledgers
 - project-level durable facts
-- episodic event capture plus queued observations for later promotion
+- episodic event capture plus queued observations, autonomy intents, and feedback logs
 
 Structured memory is stored locally and is the canonical source for these higher-level records.
 
@@ -81,8 +82,12 @@ Structured memory is further split into:
 Current notable files include:
 
 - `self/runtime.json`
+- `self/learning_state.json`
 - `others/<entityId>/conflicts.jsonl`
 - `episodic/salience_queue.jsonl`
+- `episodic/autonomy_queue.jsonl`
+- `episodic/feedback_log.jsonl`
+- `episodic/heartbeat_log.jsonl`
 
 ## Write Path
 
@@ -96,6 +101,7 @@ During a normal task turn, the runtime may:
    - append evidence records
    - append salience-queue records
    - update self runtime state
+   - append feedback events and learning-state updates when a task completes
 4. run structured-memory consolidation:
    - promote queued observations into preferences
    - derive lightweight inferences when enabled
@@ -128,6 +134,7 @@ What this system does today:
 - stores structured memory locally
 - augments prompt context with structured summaries and evidence
 - separates structured-memory writes into fast-path observation capture and explicit consolidation
+- stores autonomy heartbeat state locally, including learning state, feedback signals, and autonomy intents
 - uses OpenViking for retrieval augmentation and async shadow sync
 
 What it does not do today:

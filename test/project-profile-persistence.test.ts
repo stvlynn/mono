@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { writeJsonFile } from "../packages/shared/src/index.js";
 import { persistProjectProfileSelection } from "../packages/config/src/project-profile.js";
+import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 const originalMonoConfigDir = process.env.MONO_CONFIG_DIR;
@@ -18,7 +19,7 @@ afterEach(async () => {
   await Promise.all(tempPaths.splice(0, tempPaths.length).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("project profile persistence", () => {
+describeIfRealTestModel("project profile persistence", () => {
   it("preserves unrelated project settings and clears stale model overrides", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-project-profile-cwd-"));
     const configDir = await mkdtemp(join(tmpdir(), "mono-project-profile-config-"));
@@ -29,11 +30,11 @@ describe("project profile persistence", () => {
       version: 1,
       mono: {
         profile: "old-profile",
-        provider: "openai",
-        modelId: "gpt-4.1-mini",
+        provider: createTestProfileConfig().provider,
+        modelId: createTestProfileConfig().modelId,
         baseURL: "https://proxy.example/v1",
         apiKeyRef: "local:old-profile",
-        apiKeyEnv: "OPENAI_API_KEY",
+        apiKeyEnv: createTestProfileConfig().apiKeyEnv,
         memory: {
           enabled: false
         },

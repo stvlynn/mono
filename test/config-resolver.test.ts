@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { writeJsonFile, type MonoGlobalConfig } from "../packages/shared/src/index.js";
 import { resolveMonoConfig } from "../packages/config/src/resolver.js";
+import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 const originalMonoConfigDir = process.env.MONO_CONFIG_DIR;
+const originalMonoApiKey = process.env.MONO_API_KEY;
 
 afterEach(async () => {
   if (originalMonoConfigDir === undefined) {
@@ -14,33 +16,29 @@ afterEach(async () => {
   } else {
     process.env.MONO_CONFIG_DIR = originalMonoConfigDir;
   }
+  if (originalMonoApiKey === undefined) {
+    delete process.env.MONO_API_KEY;
+  } else {
+    process.env.MONO_API_KEY = originalMonoApiKey;
+  }
 
   await Promise.all(tempPaths.splice(0, tempPaths.length).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("config resolver", () => {
+describeIfRealTestModel("config resolver", () => {
   it("defaults sensitive action mode to blacklist and resolves explicit overrides", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-resolver-settings-cwd-"));
     const configDir = await mkdtemp(join(tmpdir(), "mono-resolver-settings-config-"));
     tempPaths.push(cwd, configDir);
     process.env.MONO_CONFIG_DIR = configDir;
 
+    const testProfile = createTestProfileConfig();
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         }
       },
       projects: {}
@@ -56,17 +54,7 @@ describe("config resolver", () => {
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         },
         settings: {
           sensitiveActionMode: "strict",
@@ -89,22 +77,13 @@ describe("config resolver", () => {
     tempPaths.push(cwd, configDir);
     process.env.MONO_CONFIG_DIR = configDir;
 
+    const testProfile = createTestProfileConfig();
     const baseConfig = {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         }
       },
       projects: {}
@@ -150,22 +129,13 @@ describe("config resolver", () => {
     tempPaths.push(cwd, configDir);
     process.env.MONO_CONFIG_DIR = configDir;
 
+    const testProfile = createTestProfileConfig();
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         },
         context: {
           bootstrap: {
@@ -373,21 +343,16 @@ describe("config resolver", () => {
     tempPaths.push(cwd, configDir);
     process.env.MONO_CONFIG_DIR = configDir;
 
+    const testProfile = createTestProfileConfig();
+    delete process.env.MONO_API_KEY;
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
           default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
+            ...testProfile,
             apiKeyRef: "local:default",
-            supportsTools: true,
-            supportsReasoning: true
           }
         }
       },

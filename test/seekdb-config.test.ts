@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDefaultMemoryConfig } from "../packages/config/src/defaults.js";
 import { resolveMonoConfig } from "../packages/config/src/resolver.js";
 import { writeJsonFile, type MonoGlobalConfig, type MonoProjectConfig } from "../packages/shared/src/index.js";
+import { createTestProfileConfig, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 const originalMonoConfigDir = process.env.MONO_CONFIG_DIR;
@@ -54,7 +55,7 @@ afterEach(async () => {
   await Promise.all(tempPaths.splice(0, tempPaths.length).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("SeekDB memory config", () => {
+describeIfRealTestModel("SeekDB memory config", () => {
   it("provides stable defaults for evaluation mode", () => {
     delete process.env.MONO_SEEKDB_MODE;
     delete process.env.MONO_SEEKDB_DATABASE;
@@ -83,22 +84,13 @@ describe("SeekDB memory config", () => {
     process.env.MONO_SEEKDB_PYTHON = "python3.13";
     process.env.MONO_SEEKDB_EMBEDDED_PATH = "/tmp/seekdb-eval";
 
+    const testProfile = createTestProfileConfig();
     const globalConfig: MonoGlobalConfig = {
       version: 1,
       mono: {
         defaultProfile: "default",
         profiles: {
-          default: {
-            provider: "openai",
-            modelId: "gpt-4.1-mini",
-            baseURL: "https://api.openai.com/v1",
-            family: "openai-compatible",
-            transport: "openai-compatible",
-            providerFactory: "openai",
-            apiKeyEnv: "OPENAI_API_KEY",
-            supportsTools: true,
-            supportsReasoning: true
-          }
+          default: testProfile
         },
         memory: {
           retrievalBackend: "seekdb",

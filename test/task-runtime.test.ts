@@ -11,17 +11,11 @@ import {
   shouldCompressMessages,
   updateTaskAfterTurn
 } from "../packages/agent-core/src/task-runtime.js";
+import { createTestUnifiedModel, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
-const model: UnifiedModel = {
-  provider: "openai",
-  modelId: "gpt-4.1-mini",
-  family: "openai-compatible",
-  baseURL: "https://api.openai.com/v1",
-  supportsTools: true,
-  supportsReasoning: true
-};
+const model: UnifiedModel = createTestUnifiedModel();
 
-describe("task runtime", () => {
+describeIfRealTestModel("task runtime", () => {
   it("creates a task shell without hard-coded todos", () => {
     const task = createTaskState({
       goal: "fix the failing test and verify it",
@@ -328,6 +322,54 @@ describe("task runtime", () => {
     expect(summary).toContain("Task status: done.");
     expect(summary).toContain("Latest outcome");
     expect(buildTaskTurnPlan(task).phase).toBe("execute");
+  });
+
+  it("builds a task summary from tool outcomes when no assistant text was produced", () => {
+    const task = advanceTaskPhase(
+      createTaskState({
+        goal: "check a follower count",
+        model,
+        existingMessages: []
+      }),
+      "summarize"
+    );
+
+    const summary = buildTaskSummary(task, [
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        stopReason: "tool_use",
+        timestamp: Date.now(),
+        content: [{ type: "tool-call", id: "tool-1", name: "bash", arguments: { command: "curl ..." } }]
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        content: "bash: line 1: curl: command not found\n",
+        isError: false,
+        timestamp: Date.now()
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-2",
+        toolName: "bash",
+        content: "not found\n",
+        isError: false,
+        timestamp: Date.now()
+      },
+      {
+        role: "tool",
+        toolCallId: "tool-3",
+        toolName: "bash",
+        content: "all failed\n",
+        isError: false,
+        timestamp: Date.now()
+      },
+    ]);
+
+    expect(summary).toContain("Latest outcome: I tried to check that, but this runtime is missing required commands: curl.");
   });
 
   it("overrides verification mode without relying on local todo state", () => {

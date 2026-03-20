@@ -78,8 +78,8 @@ export function createTaskTodoRecord(input: {
   return {
     id: input.existing?.id ?? input.taskId,
     taskId: input.taskId,
-    sessionId: input.sessionId,
-    branchHeadId: input.branchHeadId,
+    sessionId: input.existing?.sessionId ?? input.sessionId,
+    branchHeadId: input.existing?.branchHeadId ?? input.branchHeadId,
     projectKey: projectKeyFromCwd(input.cwd),
     createdAt: input.existing?.createdAt ?? now,
     updatedAt: now,

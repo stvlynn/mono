@@ -14,6 +14,16 @@ Describe the runtime events that bridge the agent/runtime to the TUI and print m
   - `assistant-start`
   - `assistant-text-delta`
   - `assistant-thinking-delta`
+- autonomy lifecycle
+  - `heartbeat-start`
+  - `heartbeat-skip`
+  - `heartbeat-decision`
+  - `autonomy-task-enqueued`
+  - `autonomy-task-resumed`
+  - `autonomy-blocked`
+  - `self-reflection-generated`
+  - `feedback-integrated`
+  - `budget-warning`
 - tool lifecycle
   - `tool-start`
   - `tool-update`

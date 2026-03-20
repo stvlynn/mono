@@ -489,6 +489,16 @@ describe("@mono/im-platform", () => {
       topicId: undefined,
     });
     expect(incoming?.text).toBe("<media:image>\nwhat is in this image?");
+    expect(incoming?.metadata).toEqual({
+      telegram: {
+        chatId: "42",
+        photo: {
+          fileId: "large",
+          messageId: 10,
+          mimeType: "image/jpeg",
+        },
+      },
+    });
     expect(incoming?.attachments).toHaveLength(1);
     expect(incoming?.attachments[0]).toMatchObject({
       kind: "image",
@@ -499,6 +509,7 @@ describe("@mono/im-platform", () => {
     expect(inboundMessageToTaskInput(incoming!)).toEqual({
       text: "<media:image>\nwhat is in this image?",
       attachments: incoming?.attachments,
+      metadata: incoming?.metadata,
     });
     expect(calls[0]?.url.endsWith("/getFile")).toBe(true);
     expect(calls[1]?.url).toContain("/file/botbot-token/photos/file_10.jpg");
@@ -530,6 +541,17 @@ describe("@mono/im-platform", () => {
     });
 
     expect(captioned?.text).toBe("<media:image>\ndescribe this");
+    expect(captioned?.metadata).toEqual({
+      telegram: {
+        chatId: "42",
+        photo: {
+          fileId: "large",
+          messageId: 12,
+          mimeType: "image/jpeg",
+          caption: "describe this",
+        },
+      },
+    });
     expect(captioned?.attachments).toHaveLength(1);
 
     const photoOnly = await provider.normalizeIncomingMessage?.({
@@ -554,10 +576,21 @@ describe("@mono/im-platform", () => {
 
     expect(photoOnly).not.toBeNull();
     expect(photoOnly?.text).toBe("<media:image>");
+    expect(photoOnly?.metadata).toEqual({
+      telegram: {
+        chatId: "42",
+        photo: {
+          fileId: "large",
+          messageId: 13,
+          mimeType: "image/jpeg",
+        },
+      },
+    });
     expect(photoOnly?.attachments).toHaveLength(1);
     expect(inboundMessageToTaskInput(photoOnly!)).toEqual({
       text: "<media:image>",
       attachments: photoOnly?.attachments,
+      metadata: photoOnly?.metadata,
     });
   });
 
@@ -714,6 +747,32 @@ describe("@mono/im-platform", () => {
       },
     });
 
-    expect(incoming).toBeNull();
+    expect(incoming).toEqual({
+      provider: "primary-dispatch",
+      platform: "telegram",
+      sender: {
+        id: "-1001",
+        username: undefined,
+        displayName: "mono",
+      },
+      target: {
+        kind: "channel",
+        address: -1001,
+        topicId: undefined,
+      },
+      text: "<media:document>",
+      attachments: [],
+      metadata: {
+        telegram: {
+          chatId: "-1001",
+          document: {
+            fileId: "doc",
+            messageId: 11,
+            mimeType: "application/pdf",
+          },
+        },
+      },
+      raw: expect.any(Object),
+    });
   });
 });

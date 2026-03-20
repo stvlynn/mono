@@ -265,6 +265,96 @@ describe("llm adapters", () => {
     }]);
   });
 
+  it("repairs malformed assistant tool history by inserting a synthetic tool result before replay", () => {
+    const modelMessages = conversationMessagesToModelMessages({
+      provider: "openai",
+      modelId: "MiniMax-M2.7-highspeed",
+      family: "openai-compatible",
+      transport: "openai-compatible",
+      runtimeProviderKey: "openai:openai-compatible",
+      baseURL: "https://api.minimaxi.com/v1",
+      apiKey: "test-key",
+      apiKeyEnv: "OPENAI_API_KEY",
+      providerFactory: "custom",
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsAttachments: true
+    }, [
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "MiniMax-M2.7-highspeed",
+        stopReason: "tool_use",
+        timestamp: Date.now(),
+        content: [
+          {
+            type: "tool-call",
+            id: "call_1",
+            name: "bash",
+            arguments: { command: "pwd" }
+          }
+        ]
+      },
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "MiniMax-M2.7-highspeed",
+        stopReason: "stop",
+        timestamp: Date.now(),
+        content: [{ type: "text", text: "fallback answer" }]
+      }
+    ]);
+
+    expect(modelMessages).toHaveLength(3);
+    expect(modelMessages[0]).toMatchObject({ role: "assistant" });
+    expect(modelMessages[1]).toMatchObject({ role: "tool" });
+    expect(modelMessages[2]).toMatchObject({ role: "assistant" });
+  });
+
+  it("drops replayed tool calls that are not available in the current tool surface", () => {
+    const modelMessages = conversationMessagesToModelMessages({
+      provider: "openai",
+      modelId: "MiniMax-M2.7-highspeed",
+      family: "openai-compatible",
+      transport: "openai-compatible",
+      runtimeProviderKey: "openai:openai-compatible",
+      baseURL: "https://api.minimaxi.com/v1",
+      apiKey: "test-key",
+      apiKeyEnv: "OPENAI_API_KEY",
+      providerFactory: "custom",
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsAttachments: true
+    }, [
+      {
+        role: "assistant",
+        provider: "openai",
+        model: "MiniMax-M2.7-highspeed",
+        stopReason: "tool_use",
+        timestamp: Date.now(),
+        content: [
+          {
+            type: "tool-call",
+            id: "call_1",
+            name: "bash",
+            arguments: { command: "pwd" }
+          },
+          {
+            type: "text",
+            text: "Let me check that."
+          }
+        ]
+      }
+    ], ["read"]);
+
+    expect(modelMessages).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Let me check that." }]
+      }
+    ]);
+  });
+
   it("uses the responses endpoint for openai responses transport models", async () => {
     const fetchMock = vi.fn().mockResolvedValue(createOpenAIResponsesTextResponse("Responses API ok"));
     global.fetch = fetchMock as typeof global.fetch;

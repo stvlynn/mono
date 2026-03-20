@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import { normalize as normalizePath } from "node:path";
-import type {
-  AssistantMessage,
-  ConversationMessage,
-  RuntimeEvent,
-  SessionCompressionResult,
-  TaskPhase,
-  TaskResult,
-  TaskState,
-  TaskTodoRecord,
-  UnifiedModel,
-  VerificationMode,
-  VerificationState
+import {
+  extractConversationOutcomeText,
+  type AssistantMessage,
+  type ConversationMessage,
+  type RuntimeEvent,
+  type SessionCompressionResult,
+  type TaskPhase,
+  type TaskLease,
+  type TaskOrigin,
+  type TaskResult,
+  type TaskState,
+  type TaskTodoRecord,
+  type UnifiedModel,
+  type VerificationMode,
+  type VerificationState,
 } from "@mono/shared";
 
 export interface TaskRuntimeOptions {
@@ -19,6 +22,9 @@ export interface TaskRuntimeOptions {
   model: UnifiedModel;
   existingMessages: ConversationMessage[];
   maxTurns?: number;
+  origin?: TaskOrigin;
+  parentIntentId?: string;
+  lease?: TaskLease;
 }
 
 export interface TurnRuntimePlan {
@@ -47,6 +53,9 @@ export function createTaskState(options: TaskRuntimeOptions): TaskState {
     goal: options.goal,
     phase: "plan",
     attempts: 0,
+    origin: options.origin ?? "user",
+    parentIntentId: options.parentIntentId,
+    lease: options.lease,
     verification: {
       mode: verificationMode,
       evidence: []
@@ -174,13 +183,10 @@ export function updateTaskAfterTurn(context: CompletedTurnContext): {
 }
 
 export function buildTaskSummary(task: TaskState, messages: ConversationMessage[], status?: TaskResult["status"]): string {
-  const assistantMessages = messages.filter((message): message is AssistantMessage => message.role === "assistant");
-  const assistantText = assistantMessages
-    .flatMap((message) => message.content)
-    .filter((part) => part.type === "text")
-    .map((part) => part.text.trim())
-    .filter(Boolean);
-  const latestAssistant = assistantText.at(-1);
+  const latestAssistant = extractConversationOutcomeText(messages, {
+    includeToolUseAssistantText: true,
+    includeToolResultFallback: true,
+  });
   const verificationLine =
     task.verification.mode === "none"
       ? "Verification was not required."
@@ -298,6 +304,9 @@ export function buildTaskContext(task: TaskState, todoRecord?: TaskTodoRecord | 
     `Phase: ${task.phase}`,
     `Attempts: ${task.attempts}`,
     verificationLine,
+    `Origin: ${task.origin ?? "user"}`,
+    task.parentIntentId ? `AutonomyIntent: ${task.parentIntentId}` : "",
+    task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
     ...(todoLines ? ["Todos:", todoLines] : ["Todos: <none>"]),
     "Use write_todos to create or update the current task plan when needed.",
     "</TaskContext>"

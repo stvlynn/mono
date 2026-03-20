@@ -14,6 +14,7 @@ import {
   type ToolCallOptions,
   tool
 } from "ai";
+import { resolveTranscriptPolicy, sanitizeConversationMessages } from "@mono/shared";
 import type {
   AssistantMessage,
   AssistantPart,
@@ -301,13 +302,18 @@ function toModelToolMessage(message: ToolResultMessage): ModelMessage {
 
 function conversationMessagesToModelMessages(
   model: UnifiedModel,
-  messages: ConversationMessage[]
+  messages: ConversationMessage[],
+  allowedToolNames?: Iterable<string>
 ): ModelMessage[] {
+  const sanitized = sanitizeConversationMessages(messages, {
+    policy: resolveTranscriptPolicy(model),
+    allowedToolNames
+  }).messages;
   const transport = resolveModelTransport(model);
   const replayReasoning = transport !== "anthropic";
   const output: ModelMessage[] = [];
 
-  for (const message of messages) {
+  for (const message of sanitized) {
     if (message.role === "user") {
       output.push(toModelUserMessage(message));
       continue;
@@ -685,7 +691,7 @@ export async function runAiSdkConversation(options: LlmRunOptions): Promise<Conv
   const result = streamText({
     model: createLanguageModel(options.model) as never,
     system: options.systemPrompt,
-    messages: conversationMessagesToModelMessages(options.model, options.messages),
+    messages: conversationMessagesToModelMessages(options.model, options.messages, options.tools.map((tool) => tool.name)),
     tools: Object.keys(tools).length === 0 ? undefined : tools,
     stopWhen: stepCountIs(options.maxSteps),
     abortSignal: options.signal,

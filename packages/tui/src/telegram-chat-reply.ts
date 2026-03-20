@@ -1,5 +1,5 @@
 import { splitTelegramMessageText } from "@mono/im-platform";
-import type { AssistantMessage, ConversationMessage, TaskResult } from "@mono/shared";
+import { extractConversationOutcomeText, type TaskResult } from "@mono/shared";
 import type { TelegramChatResponse } from "@mono/telegram-control";
 
 const TELEGRAM_STICKER_TAG_PREFIX = "[telegram-sticker:";
@@ -7,6 +7,15 @@ const TELEGRAM_STICKER_FILE_TAG_PREFIX = "[telegram-sticker-file:";
 const TELEGRAM_STICKER_TAG_RE = /(?:^|\n)\[telegram-sticker:([^\]\n]+)\]\s*$/u;
 const TELEGRAM_STICKER_FILE_TAG_RE = /(?:^|\n)\[telegram-sticker-file:([^\]\n]+)\]\s*$/u;
 const TELEGRAM_MULTI_MESSAGE_SOFT_LIMIT = 1200;
+const VISIBLE_TELEGRAM_CHANNEL_ACTIONS = new Set([
+  "send",
+  "sticker",
+  "photo",
+  "document",
+  "edit",
+  "delete",
+  "react",
+]);
 
 export function formatTelegramChatReply(result: TaskResult): string {
   if (result.channelDelivery?.nativeActionRequired && !result.channelDelivery.satisfied) {
@@ -16,7 +25,7 @@ export function formatTelegramChatReply(result: TaskResult): string {
   return response.messages
     .map((message) => message.text)
     .find(Boolean)
-    ?? (response.sticker ? "" : buildTelegramChatFallback(result));
+    ?? "";
 }
 
 export function formatTelegramChatResponse(result: TaskResult): TelegramChatResponse {
@@ -26,8 +35,20 @@ export function formatTelegramChatResponse(result: TaskResult): TelegramChatResp
     };
   }
 
-  const latestReply = extractLatestAssistantReply(result.messages);
+  const latestReply = extractConversationOutcomeText(result.messages);
   if (!latestReply) {
+    if (hasSatisfiedVisibleChannelAction(result)) {
+      return { messages: [] };
+    }
+    const synthesizedFallback = extractConversationOutcomeText(result.messages, {
+      includeToolUseAssistantText: result.status === "done",
+      includeToolResultFallback: true,
+    });
+    if (synthesizedFallback) {
+      return {
+        messages: [{ text: synthesizedFallback, format: "markdown" }],
+      };
+    }
     return {
       messages: [{ text: buildTelegramChatFallback(result), format: "markdown" }],
     };
@@ -53,32 +74,43 @@ export function formatTelegramChatResponse(result: TaskResult): TelegramChatResp
   };
 }
 
-export function sanitizeTelegramReplyPreview(text: string): string {
-  return stripTelegramReplyMetadataSuffix(text).trimEnd();
-}
-
-function extractLatestAssistantReply(messages: ConversationMessage[]): string | null {
-  const assistantMessages = messages.filter((message): message is AssistantMessage => message.role === "assistant");
-
-  for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
-    const message = assistantMessages[index];
-    if (!message || message.stopReason === "tool_use") {
-      continue;
-    }
-
-    const reply = message.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text.trim())
-      .filter(Boolean)
-      .join("\n\n")
-      .trim();
-
-    if (reply) {
-      return reply;
-    }
+function hasSatisfiedVisibleChannelAction(result: TaskResult): boolean {
+  if (result.channelDelivery?.satisfied) {
+    return true;
   }
 
-  return null;
+  return result.messages.some((message) => {
+    if (message.role !== "tool" || message.toolName !== "channel_action" || message.isError) {
+      return false;
+    }
+
+    const payload = parseJsonObject(message.content);
+    if (payload?.ok !== true) {
+      return false;
+    }
+
+    const action = typeof payload.action === "string" ? payload.action.trim().toLowerCase() : "";
+    return VISIBLE_TELEGRAM_CHANNEL_ACTIONS.has(action);
+  });
+}
+
+function parseJsonObject(content: unknown): Record<string, unknown> | null {
+  if (typeof content !== "string") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function sanitizeTelegramReplyPreview(text: string): string {
+  return stripTelegramReplyMetadataSuffix(text).trimEnd();
 }
 
 function extractTelegramReplyMetadata(text: string): { text: string; stickerEmoji?: string; stickerFileId?: string } {
@@ -205,7 +237,7 @@ function buildTelegramChatFallback(result: TaskResult): string {
     return "I couldn't verify that yet.";
   }
 
-  return "Done.";
+  return "I finished the attempt, but I don't have a reliable result to send yet.";
 }
 
 function buildTelegramNativeActionFallback(result: TaskResult): string {

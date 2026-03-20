@@ -319,7 +319,14 @@ function buildNextSelfRuntime(
     activeProjects: current.activeProjects,
     currentTensions: uniqueTail(tensionLines, 6),
     taskHints: uniqueTail(taskHints, 6),
-    lastReflectionAt: conflicts.length > 0 ? Date.now() : current.lastReflectionAt
+    openQuestions: current.openQuestions,
+    currentHypotheses: current.currentHypotheses,
+    frictionPatterns: current.frictionPatterns,
+    autonomyPolicy: current.autonomyPolicy,
+    cooldowns: current.cooldowns,
+    lastReflectionAt: conflicts.length > 0 ? Date.now() : current.lastReflectionAt,
+    lastHeartbeatAt: current.lastHeartbeatAt,
+    lastFeedbackAt: current.lastFeedbackAt
   };
 }
 

@@ -20,6 +20,33 @@ export class AgentEventCoordinator {
 
   handle(event: RuntimeEvent): void {
     switch (event.type) {
+      case "heartbeat-start":
+        this.actions.setStatus("Autonomy heartbeat...");
+        break;
+      case "heartbeat-skip":
+        this.actions.setStatus(`Heartbeat skipped: ${event.reason}`);
+        break;
+      case "heartbeat-decision":
+        this.actions.setStatus(`Heartbeat decision: ${event.decision.decision}`);
+        break;
+      case "autonomy-task-enqueued":
+        this.actions.setStatus(`Autonomy queued: ${event.intent.kind}`);
+        break;
+      case "autonomy-task-resumed":
+        this.actions.setStatus(`Autonomy resumed: ${event.intent.kind}`);
+        break;
+      case "self-reflection-generated":
+        this.actions.setStatus(event.summary);
+        break;
+      case "feedback-integrated":
+        this.actions.setStatus(`Integrated ${event.signals.length} feedback signal(s)`);
+        break;
+      case "budget-warning":
+        this.actions.setStatus(event.message);
+        break;
+      case "autonomy-blocked":
+        this.actions.setStatus(`Autonomy blocked: ${event.reason}`);
+        break;
       case "assistant-start":
         this.actions.setRunning(true);
         this.actions.setStreamingText("");
@@ -33,14 +60,16 @@ export class AgentEventCoordinator {
         break;
       case "task-start":
         this.actions.setRunning(true);
-        this.actions.setStatus(`Planning task: ${event.task.goal}`);
+        this.actions.setStatus(event.task.origin && event.task.origin !== "user"
+          ? `Planning ${event.task.origin} task: ${event.task.goal}`
+          : `Planning task: ${event.task.goal}`);
         break;
       case "task-update": {
-        this.actions.setStatus(`Task phase: ${event.task.phase}`);
+        this.actions.setStatus(`Task phase: ${event.task.phase}${event.task.origin && event.task.origin !== "user" ? ` (${event.task.origin})` : ""}`);
         break;
       }
       case "task-phase-change":
-        this.actions.setStatus(`Task phase: ${event.task.phase}`);
+        this.actions.setStatus(`Task phase: ${event.task.phase}${event.task.origin && event.task.origin !== "user" ? ` (${event.task.origin})` : ""}`);
         break;
       case "task-verify-start":
         this.actions.setStatus("Verifying result...");

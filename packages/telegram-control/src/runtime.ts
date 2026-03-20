@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { basename, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveMonoConfig } from "@mono/config";
 import {
   createBuiltInProvider,
@@ -17,6 +20,7 @@ import {
   type ChannelContextResourceSource,
   type ChannelStoreRequest,
   type ChannelStoreResult,
+  guessImageMimeTypeFromPath,
   readJsonFile,
   isTelegramSenderAllowed,
   mergeTelegramAllowFrom,
@@ -121,6 +125,19 @@ interface PendingTelegramProfileApply {
 interface ActiveTelegramTypingHeartbeat {
   token: symbol;
   stop: () => void;
+}
+
+interface PreparedTelegramMediaSend {
+  method: "sendPhoto" | "sendDocument";
+  mediaKey: "photo" | "document";
+  remoteReference?: string;
+  upload?: {
+    filename: string;
+    bytes: Uint8Array;
+    mimeType: string;
+  };
+  preparedCaption?: ReturnType<typeof prepareTelegramSingleText>;
+  threadParams: Record<string, unknown>;
 }
 
 export class TelegramControlRuntime implements ChannelCapabilityProvider {
@@ -290,6 +307,8 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     return [
       this.#config.actions.send ? "send" : null,
       this.#config.actions.sticker ? "sticker" : null,
+      this.#config.actions.photo ? "photo" : null,
+      this.#config.actions.document ? "document" : null,
       this.#config.actions.edit ? "edit" : null,
       this.#config.actions.delete ? "delete" : null,
       this.#config.actions.react ? "react" : null,
@@ -305,12 +324,23 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
   }
 
   async buildContext(
-    input: { text?: string; metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } },
+    input: { text?: string; metadata?: { telegram?: {
+      chatId?: string;
+      sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string };
+      photo?: { fileId?: string; fileUniqueId?: string; mimeType?: string; messageId?: number; caption?: string };
+      document?: { fileId?: string; fileUniqueId?: string; mimeType?: string; fileName?: string; messageId?: number; caption?: string };
+    } } },
     channel: { platform: string; kind: "dm" | "channel"; id: string },
-    history: Array<{ role: string; metadata?: { telegram?: { chatId?: string; sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } } } }>,
+    history: Array<{ role: string; metadata?: { telegram?: {
+      chatId?: string;
+      sticker?: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string };
+      photo?: { fileId?: string; fileUniqueId?: string; mimeType?: string; messageId?: number; caption?: string };
+      document?: { fileId?: string; fileUniqueId?: string; mimeType?: string; fileName?: string; messageId?: number; caption?: string };
+    } } }>,
   ): Promise<ChannelCapabilityContext> {
     const stickerContext = resolveTelegramStickerContext(input, history, channel.id);
     const sticker = stickerContext?.sticker;
+    const mediaContext = resolveTelegramCurrentMediaContext(input);
     const actions = this.listAvailableActions(channel);
     const storeResources = this.listStoreResources(channel);
     const requestsAlternativeSticker = resolveTelegramAlternativeStickerRequest(input, stickerContext?.sticker);
@@ -351,7 +381,23 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       channel: channel.platform,
       actions,
       storeResources,
-      ...(sticker?.fileId
+      ...(mediaContext
+        ? {
+          currentResource: {
+            kind: mediaContext.kind,
+            available: true,
+            source: "current_input",
+            attributes: mediaContext.attributes,
+          },
+          recommendedAction: {
+            action: mediaContext.kind,
+            targetId: channel.id,
+            payload: {
+              fileId: mediaContext.attributes.fileId ?? "",
+            },
+          },
+        }
+        : sticker?.fileId
         ? {
           currentResource: {
             kind: "sticker",
@@ -410,6 +456,9 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         ...(requestsAlternativeSticker
           ? [`Sticker catalog search reads from ${cachePath}.`]
           : []),
+        ...(mediaContext
+          ? [`The current ${mediaContext.kind} can be sent back with channel_action(action="${mediaContext.kind}", payload.fileId="${mediaContext.attributes.fileId ?? ""}").`]
+          : []),
       ],
     };
   }
@@ -428,7 +477,6 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       };
     }
 
-    const payload = request.payload ?? {};
     if (!isSupportedTelegramChannelAction(request.action)) {
       return {
         ok: false,
@@ -438,18 +486,9 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         reason: "unsupported_channel_action",
       };
     }
-    const telegramResult = await this.executeTelegramAction({
-      action: request.action as TelegramActionRequest["action"],
-      chatId: request.targetId?.trim() || context.channel.id,
-      messageId: toOptionalNumber(request.messageId),
-      replyToMessageId: toOptionalNumber(request.replyToMessageId),
-      messageThreadId: toOptionalNumber(request.threadId),
-      text: typeof payload.text === "string" ? payload.text : undefined,
-      format: payload.format === "plain" || payload.format === "markdown" ? payload.format : undefined,
-      fileId: typeof payload.fileId === "string" ? payload.fileId : undefined,
-      emoji: typeof payload.emoji === "string" ? payload.emoji : undefined,
-      remove: typeof payload.remove === "boolean" ? payload.remove : undefined,
-    });
+    const telegramResult = await this.executeTelegramAction(
+      this.#buildTelegramActionRequest(request, context.channel.id),
+    );
 
     return {
       ok: telegramResult.ok,
@@ -459,6 +498,30 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       ...(telegramResult.messageId ? { messageId: telegramResult.messageId } : {}),
       ...(telegramResult.messageIds ? { messageIds: telegramResult.messageIds } : {}),
       ...(telegramResult.reason ? { reason: telegramResult.reason } : {}),
+    };
+  }
+
+  #buildTelegramActionRequest(
+    request: ChannelActionRequest,
+    defaultChatId: string,
+  ): TelegramActionRequest {
+    const payload = request.payload ?? {};
+    const mediaInput = resolveTelegramActionMediaInput(request.action, payload);
+
+    return {
+      action: request.action as TelegramActionRequest["action"],
+      chatId: request.targetId?.trim() || defaultChatId,
+      messageId: toOptionalNumber(request.messageId),
+      replyToMessageId: toOptionalNumber(request.replyToMessageId),
+      messageThreadId: toOptionalNumber(request.threadId),
+      text: firstString(payload.text, payload.caption),
+      format: payload.format === "plain" || payload.format === "markdown" ? payload.format : undefined,
+      fileId: typeof payload.fileId === "string" ? payload.fileId : mediaInput.fileId,
+      path: mediaInput.path,
+      filename: typeof payload.filename === "string" ? payload.filename : undefined,
+      mimeType: typeof payload.mimeType === "string" ? payload.mimeType : undefined,
+      emoji: typeof payload.emoji === "string" ? payload.emoji : undefined,
+      remove: typeof payload.remove === "boolean" ? payload.remove : undefined,
     };
   }
 
@@ -572,6 +635,10 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
           return await this.#executeSendTelegramAction(chatId, request as TelegramActionRequest & { action: "send" });
         case "sticker":
           return await this.#executeStickerTelegramAction(chatId, request as TelegramActionRequest & { action: "sticker" });
+        case "photo":
+          return await this.#executeMediaTelegramAction(chatId, request as TelegramActionRequest & { action: "photo" });
+        case "document":
+          return await this.#executeMediaTelegramAction(chatId, request as TelegramActionRequest & { action: "document" });
         case "edit":
           return await this.#executeEditTelegramAction(chatId, request as TelegramActionRequest & { action: "edit" });
         case "delete":
@@ -1043,6 +1110,10 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         return this.#config.actions.send;
       case "sticker":
         return this.#config.actions.sticker;
+      case "photo":
+        return this.#config.actions.photo;
+      case "document":
+        return this.#config.actions.document;
       case "edit":
         return this.#config.actions.edit;
       case "delete":
@@ -1135,6 +1206,87 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       chatId,
       messageId: String(result.response.message_id ?? ""),
     };
+  }
+
+  async #executeMediaTelegramAction(
+    chatId: string,
+    request: TelegramActionRequest & { action: "photo" | "document" },
+  ): Promise<TelegramActionResult> {
+    const media = await this.#prepareTelegramMediaSend(request);
+    if (!media) {
+      return {
+        ok: false,
+        action: request.action,
+        chatId,
+        reason: "missing_file_source",
+      };
+    }
+
+    const sendMedia = (
+      params?: Record<string, unknown>,
+      captionText?: string,
+      parseMode?: string,
+    ) => this.#callTelegram<{ message_id?: number }>(
+      media.method,
+      this.#buildTelegramMediaRequestBody({
+        chatId,
+        mediaKey: media.mediaKey,
+        remoteReference: media.remoteReference,
+        upload: media.upload,
+        captionText,
+        parseMode,
+        params,
+      }),
+    );
+
+    try {
+      const result = await this.#callWithThreadFallback(
+        media.threadParams,
+        (params) => sendMedia(params, media.preparedCaption?.text, media.preparedCaption?.parseMode),
+      );
+      if (!result.response) {
+        return {
+          ok: false,
+          action: request.action,
+          chatId,
+          reason: result.reason ?? `${request.action}_send_failed`,
+        };
+      }
+      return {
+        ok: true,
+        action: request.action,
+        chatId,
+        messageId: typeof result.response.message_id === "number" ? String(result.response.message_id) : undefined,
+      };
+    } catch (error) {
+      if (!media.preparedCaption?.fallbackText || !isTelegramParseModeError(error)) {
+        return {
+          ok: false,
+          action: request.action,
+          chatId,
+          reason: formatTelegramRuntimeError(error),
+        };
+      }
+
+      const fallback = await this.#callWithThreadFallback(
+        media.threadParams,
+        (params) => sendMedia(params, media.preparedCaption!.fallbackText!),
+      );
+      if (!fallback.response) {
+        return {
+          ok: false,
+          action: request.action,
+          chatId,
+          reason: fallback.reason ?? `${request.action}_send_failed`,
+        };
+      }
+      return {
+        ok: true,
+        action: request.action,
+        chatId,
+        messageId: typeof fallback.response.message_id === "number" ? String(fallback.response.message_id) : undefined,
+      };
+    }
   }
 
   async #executeEditTelegramAction(
@@ -1619,7 +1771,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
 
   async #callTelegram<Result>(
     method: string,
-    body: Record<string, unknown>,
+    body: Record<string, unknown> | FormData,
     signal?: AbortSignal,
   ): Promise<Result> {
     if (!this.#token) {
@@ -1630,10 +1782,14 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     try {
       response = await this.#fetchImpl(`https://api.telegram.org/bot${this.#token}/${method}`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
+        ...(body instanceof FormData
+          ? { body }
+          : {
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+          }),
         signal,
       });
     } catch (error) {
@@ -1669,6 +1825,95 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     } catch {
       return false;
     }
+  }
+
+  async #prepareTelegramMediaSend(
+    request: TelegramActionRequest & { action: "photo" | "document" },
+  ): Promise<PreparedTelegramMediaSend | null> {
+    const remoteReference = request.fileId?.trim();
+    const upload = !remoteReference && request.path?.trim()
+      ? await this.#prepareTelegramUpload(request)
+      : undefined;
+
+    if (!remoteReference && !upload) {
+      return null;
+    }
+
+    return {
+      method: request.action === "photo" ? "sendPhoto" : "sendDocument",
+      mediaKey: request.action === "photo" ? "photo" : "document",
+      remoteReference,
+      upload,
+      preparedCaption: request.text?.trim()
+        ? prepareTelegramSingleText(request.text, request.format, "markdown")
+        : undefined,
+      threadParams: this.#buildTelegramThreadParams({
+        replyToMessageId: request.replyToMessageId,
+        messageThreadId: request.messageThreadId,
+      }),
+    };
+  }
+
+  async #prepareTelegramUpload(
+    request: TelegramActionRequest & { action: "photo" | "document" },
+  ): Promise<{ filename: string; bytes: Uint8Array; mimeType: string }> {
+    const resolvedPath = resolveTelegramUploadPath(request.path ?? "", this.#cwd);
+    const fileName = request.filename?.trim() || basename(resolvedPath);
+    const bytes = await readFile(resolvedPath);
+    const mimeType = request.mimeType?.trim()
+      || guessTelegramUploadMimeType(resolvedPath, request.action);
+
+    if (request.action === "photo" && !mimeType.startsWith("image/")) {
+      throw new Error(`Telegram photo upload requires an image file: ${resolvedPath}`);
+    }
+
+    return {
+      filename: fileName,
+      bytes,
+      mimeType,
+    };
+  }
+
+  #buildTelegramMediaRequestBody(options: {
+    chatId: string;
+    mediaKey: "photo" | "document";
+    remoteReference?: string;
+    upload?: { filename: string; bytes: Uint8Array; mimeType: string };
+    captionText?: string;
+    parseMode?: string;
+    params?: Record<string, unknown>;
+  }): Record<string, unknown> | FormData {
+    if (!options.upload) {
+      return {
+        chat_id: options.chatId,
+        [options.mediaKey]: options.remoteReference,
+        ...(options.captionText ? { caption: options.captionText } : {}),
+        ...(options.parseMode ? { parse_mode: options.parseMode } : {}),
+        ...(options.params ?? {}),
+      };
+    }
+
+    const formData = new FormData();
+    formData.append("chat_id", options.chatId);
+    if (options.captionText) {
+      formData.append("caption", options.captionText);
+    }
+    if (options.parseMode) {
+      formData.append("parse_mode", options.parseMode);
+    }
+    for (const [key, value] of Object.entries(options.params ?? {})) {
+      if (value === undefined) {
+        continue;
+      }
+      formData.append(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
+
+    formData.append(
+      options.mediaKey,
+      new Blob([options.upload.bytes], { type: options.upload.mimeType }),
+      options.upload.filename,
+    );
+    return formData;
   }
 
   async #finalizeApproval(
@@ -1911,6 +2156,45 @@ function resolveTelegramStickerContext(
   return undefined;
 }
 
+function resolveTelegramCurrentMediaContext(
+  input: { metadata?: { telegram?: {
+    photo?: { fileId?: string; fileUniqueId?: string; mimeType?: string; messageId?: number; caption?: string };
+    document?: { fileId?: string; fileUniqueId?: string; mimeType?: string; fileName?: string; messageId?: number; caption?: string };
+  } } },
+): {
+  kind: "photo" | "document";
+  attributes: Record<string, string>;
+} | undefined {
+  const photo = input.metadata?.telegram?.photo;
+  if (photo?.fileId) {
+    return {
+      kind: "photo",
+      attributes: {
+        fileId: photo.fileId,
+        ...(photo.fileUniqueId ? { fileUniqueId: photo.fileUniqueId } : {}),
+        ...(photo.mimeType ? { mimeType: photo.mimeType } : {}),
+        ...(photo.messageId ? { messageId: String(photo.messageId) } : {}),
+      },
+    };
+  }
+
+  const document = input.metadata?.telegram?.document;
+  if (document?.fileId) {
+    return {
+      kind: "document",
+      attributes: {
+        fileId: document.fileId,
+        ...(document.fileUniqueId ? { fileUniqueId: document.fileUniqueId } : {}),
+        ...(document.mimeType ? { mimeType: document.mimeType } : {}),
+        ...(document.fileName ? { fileName: document.fileName } : {}),
+        ...(document.messageId ? { messageId: String(document.messageId) } : {}),
+      },
+    };
+  }
+
+  return undefined;
+}
+
 function resolveTelegramAlternativeStickerRequest(
   input: { text?: string },
   sticker: { fileId?: string; fileUniqueId?: string; emoji?: string; setName?: string } | undefined,
@@ -2002,10 +2286,123 @@ function toOptionalNumber(value: string | number | undefined): number | undefine
   return undefined;
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function resolveTelegramRequestedMediaReference(
+  action: string,
+  payload: Record<string, unknown>,
+): string | undefined {
+  return firstString(
+    payload.source,
+    action === "photo" ? payload.photo : undefined,
+    action === "photo" ? payload.image : undefined,
+    action === "document" ? payload.document : undefined,
+  );
+}
+
+function resolveTelegramActionMediaInput(
+  action: string,
+  payload: Record<string, unknown>,
+): Pick<TelegramActionRequest, "fileId" | "path"> {
+  const explicitPath = firstString(payload.path, payload.filePath);
+  if (explicitPath) {
+    return { path: explicitPath };
+  }
+
+  const mediaReference = resolveTelegramRequestedMediaReference(action, payload);
+  if (!mediaReference) {
+    return {};
+  }
+
+  return looksLikeLocalFilePath(mediaReference)
+    ? { path: mediaReference }
+    : { fileId: mediaReference };
+}
+
+function looksLikeLocalFilePath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (/^https?:\/\//iu.test(trimmed)) {
+    return false;
+  }
+
+  return trimmed.startsWith("file://")
+    || trimmed.startsWith("/")
+    || trimmed.startsWith("./")
+    || trimmed.startsWith("../")
+    || trimmed.startsWith("~/")
+    || /^[A-Za-z]:[\\/]/u.test(trimmed);
+}
+
+function resolveTelegramUploadPath(path: string, cwd: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    throw new Error("Telegram upload path is empty");
+  }
+  if (trimmed.startsWith("file://")) {
+    return fileURLToPath(trimmed);
+  }
+  if (trimmed.startsWith("~/")) {
+    return resolve(process.env.HOME ?? "", trimmed.slice(2));
+  }
+  return resolve(cwd, trimmed);
+}
+
+function guessTelegramUploadMimeType(path: string, action: "photo" | "document"): string {
+  if (action === "photo") {
+    return guessImageMimeTypeFromPath(path) ?? "application/octet-stream";
+  }
+
+  const extension = extname(path).toLowerCase();
+  switch (extension) {
+    case ".pdf":
+      return "application/pdf";
+    case ".txt":
+      return "text/plain";
+    case ".json":
+      return "application/json";
+    case ".csv":
+      return "text/csv";
+    case ".zip":
+      return "application/zip";
+    case ".tar":
+      return "application/x-tar";
+    case ".gz":
+      return "application/gzip";
+    case ".md":
+      return "text/markdown";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
 function isSupportedTelegramChannelAction(
   action: string,
 ): action is TelegramActionRequest["action"] {
-  return action === "send" || action === "sticker" || action === "edit" || action === "delete" || action === "react";
+  return action === "send"
+    || action === "sticker"
+    || action === "photo"
+    || action === "document"
+    || action === "edit"
+    || action === "delete"
+    || action === "react";
 }
 
 export function isTelegramPollingConflict(error: unknown): boolean {

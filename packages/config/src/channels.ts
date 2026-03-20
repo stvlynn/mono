@@ -20,6 +20,8 @@ export function createDefaultTelegramActionsConfig(): MonoTelegramActionsConfig 
   return {
     send: true,
     sticker: true,
+    photo: true,
+    document: true,
     edit: true,
     delete: true,
     react: true,

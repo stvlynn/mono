@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDefaultContextConfig, createDefaultMemoryConfig, createDefaultSettingsConfig } from "../packages/config/src/defaults.js";
 import { assemblePromptContext } from "../packages/agent-core/src/context-assembly.js";
 import type { ResolvedMonoConfig, UnifiedModel } from "../packages/shared/src/index.js";
+import { createTestUnifiedModel, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
 const tempPaths: string[] = [];
 
@@ -12,15 +13,7 @@ afterEach(async () => {
   await Promise.all(tempPaths.splice(0, tempPaths.length).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-const model: UnifiedModel = {
-  provider: "openai",
-  modelId: "gpt-4.1-mini",
-  family: "openai-compatible",
-  transport: "openai-compatible",
-  baseURL: "https://api.openai.com/v1",
-  supportsTools: true,
-  supportsReasoning: true
-};
+const model: UnifiedModel = createTestUnifiedModel();
 
 function createResolvedConfig(): ResolvedMonoConfig {
   return {
@@ -74,7 +67,7 @@ function createResolvedConfigWithBootstrapOverrides(
   };
 }
 
-describe("context assembly", () => {
+describeIfRealTestModel("context assembly", () => {
   it("builds layered sections and reports bootstrap file usage", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mono-context-assembly-"));
     tempPaths.push(cwd);

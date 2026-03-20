@@ -1,12 +1,16 @@
 import {
   type ApprovalPolicy,
   type ApprovalRequest,
+  type AutonomyIntent,
   type ChannelCapabilityContext,
   type ChannelCapabilityProvider,
   type RuntimeEvent,
   type ContextAssemblyReport,
   type ConversationMessage,
+  type FeedbackSignal,
+  type HeartbeatDecision,
   hasTaskInputContent,
+  type LearningState,
   type MemoryRecallPlan,
   type MemoryRecord,
   type MemorySearchMatch,
@@ -19,11 +23,14 @@ import {
   type ThreadSummary,
   type StructuredMemoryPackage,
   type SelfRuntimeRecord,
+  createId,
   readJsonFile,
   mergeTelegramAllowFrom,
   type SandboxMode,
   supportsImageAttachments,
   type TaskInput,
+  type TaskLease,
+  type TaskOrigin,
   type TaskResult,
   type TaskState,
   type TaskTodoRecord,
@@ -38,7 +45,7 @@ import {
 } from "@mono/shared";
 import { MonoConfigStore } from "@mono/config";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelRegistry, runConversation, type LoadedProfile } from "@mono/llm";
@@ -65,6 +72,7 @@ import {
 } from "@mono/memory";
 import { SessionManager } from "@mono/session";
 import {
+  createProtectedBashTool,
   createProtectedCodingTools,
   createChannelActionTool,
   createChannelStoreTool,
@@ -96,6 +104,24 @@ import {
   shouldCompressMessages,
   updateTaskAfterTurn
 } from "./task-runtime.js";
+import {
+  applyFeedbackToLearningState,
+  applyFeedbackToSelfRuntime,
+  buildAutonomyExtraContext,
+  buildFeedbackSignals,
+  buildHeartbeatSelection,
+  createAutonomyLease,
+  diagnoseTaskOutcome,
+  extractUserFeedbackSignals,
+} from "./autonomy-runtime.js";
+import {
+  buildHeartbeatReplyComparisonKey,
+  buildHeartbeatReplyRecord,
+  evaluateHeartbeatReply,
+  type HeartbeatReplyEvaluation
+} from "./heartbeat-response.js";
+import { HeartbeatWakeController, type HeartbeatWakeTrigger } from "./heartbeat-wake.js";
+import { guardMessagesBeforeSessionPersist } from "./session-tool-result-guard.js";
 import { createWriteTodosTool } from "./task-todo-tool.js";
 
 interface TaskRunContext {
@@ -120,8 +146,13 @@ interface TaskRunContext {
   recallAccumulator: RecallAccumulator;
   taskTodoRecord: TaskTodoRecord | null;
   taskTodosDirty: boolean;
+  allowedToolNames?: string[];
   sandboxMode: SandboxMode;
   approvalPolicy: ApprovalPolicy;
+  origin: TaskOrigin;
+  autonomyIntent?: AutonomyIntent;
+  lease?: TaskLease;
+  heartbeatReplyEvaluation?: HeartbeatReplyEvaluation;
 }
 
 export interface RunTaskOptions {
@@ -130,6 +161,9 @@ export interface RunTaskOptions {
   extraTaskContext?: string;
   sandboxMode?: SandboxMode;
   approvalPolicy?: ApprovalPolicy;
+  origin?: TaskOrigin;
+  autonomyIntent?: AutonomyIntent;
+  lease?: TaskLease;
 }
 
 export interface AgentOptions {
@@ -165,6 +199,10 @@ export interface AgentState {
   latestContextReport?: ContextAssemblyReport;
   currentTask?: TaskState;
   currentTodoRecord?: TaskTodoRecord;
+  latestHeartbeatDecision?: {
+    timestamp: number;
+    decision: string;
+  };
 }
 
 export interface ConfiguredModelProfile {
@@ -175,6 +213,36 @@ export interface ConfiguredModelProfile {
 interface TelegramAllowFromStoreFile {
   version?: number;
   allowFrom?: string[];
+}
+
+interface HeartbeatRuntimeState {
+  selfRuntime: SelfRuntimeRecord;
+  learningState: LearningState;
+  todos: TaskTodoRecord[];
+  recentFeedback: FeedbackSignal[];
+  recentIntents: AutonomyIntent[];
+}
+
+interface TransientTaskStateSnapshot {
+  session: SessionManager;
+  messages: ConversationMessage[];
+  sessionLoadedAt: number;
+  latestContextReport?: ContextAssemblyReport;
+  currentTask?: TaskState;
+  currentTodoRecord?: TaskTodoRecord;
+}
+
+interface HeartbeatTaskExecution {
+  result: TaskResult;
+  sessionId: string;
+  filePath: string;
+  isolatedSession: boolean;
+  heartbeatReplyEvaluation?: HeartbeatReplyEvaluation;
+}
+
+interface TaskRunExecution {
+  result: TaskResult;
+  heartbeatReplyEvaluation?: HeartbeatReplyEvaluation;
 }
 
 async function loadOpenVikingAdapter(): Promise<{
@@ -281,6 +349,10 @@ export class Agent {
   private activeRun?: { id: number; controller: AbortController };
   private nextRunId = 1;
   private readonly memoryCompactor = new DeterministicMemoryCompactor();
+  private lastAutonomyRunAt = 0;
+  private readonly heartbeatWake = new HeartbeatWakeController<{ intent?: AutonomyIntent }>({
+    onError: (error) => this.handleHeartbeatFailure(error),
+  });
 
   state!: AgentState;
 
@@ -344,6 +416,7 @@ export class Agent {
       ? (await taskTodoStore.get(this.state.currentTask.currentTodoMemoryId)) ?? undefined
       : undefined;
     this.initialized = true;
+    this.ensureHeartbeatLoop();
   }
 
   subscribe(listener: (event: RuntimeEvent) => void): () => void {
@@ -365,6 +438,11 @@ export class Agent {
   }
 
   async runTask(input: string | TaskInput, options: RunTaskOptions = {}): Promise<TaskResult> {
+    const execution = await this.runTaskDetailed(input, options);
+    return execution.result;
+  }
+
+  private async runTaskDetailed(input: string | TaskInput, options: RunTaskOptions = {}): Promise<TaskRunExecution> {
     await this.initialize();
     this.state.messages = await this.state.session.loadMessages();
     if (!hasTaskInputContent(input)) {
@@ -386,7 +464,10 @@ export class Agent {
         goal,
         model: runContext.model,
         existingMessages: this.state.messages,
-        maxTurns: this.maxTurns
+        maxTurns: this.maxTurns,
+        origin: runContext.origin,
+        parentIntentId: runContext.autonomyIntent?.id,
+        lease: runContext.lease
       });
       task = this.applyRunMode(task, runContext);
       const existingTodoRecord = await this.state.taskTodoStore.get(task.taskId);
@@ -398,16 +479,31 @@ export class Agent {
       await this.startTaskLifecycle(runContext.runId, runContext.session, task);
 
       let loopDetected = false;
+      let leaseExceeded = false;
 
       for (let attempt = 0; attempt < this.maxTurns; attempt += 1) {
         if (!this.isRunCurrent(runContext.runId)) {
-          return this.buildAbortedTaskResult(runContext.taskMessages);
+          return { result: this.buildAbortedTaskResult(runContext.taskMessages) };
         }
 
         await this.compressSessionIfNeeded(runContext);
         const newMessages = await this.runTaskTurn(runContext, task);
         if (!this.isRunCurrent(runContext.runId)) {
-          return this.buildAbortedTaskResult(runContext.taskMessages);
+          return { result: this.buildAbortedTaskResult(runContext.taskMessages) };
+        }
+
+        const leaseBudget = this.evaluateTaskLease(runContext, task);
+        if (leaseBudget.warning) {
+          this.emitIfCurrent(runContext.runId, { type: "budget-warning", task, message: leaseBudget.warning });
+        }
+        if (leaseBudget.exceeded) {
+          leaseExceeded = true;
+          this.emitIfCurrent(runContext.runId, {
+            type: "autonomy-blocked",
+            reason: leaseBudget.reason ?? "Autonomy lease exhausted.",
+            intent: runContext.autonomyIntent
+          });
+          break;
         }
 
         if (runContext.channelActionRequirement?.nativeActionRequired) {
@@ -468,18 +564,36 @@ export class Agent {
         task,
         runContext.taskMessages,
         loopDetected,
+        leaseExceeded,
         runContext.channelActionRequirement,
       );
-      await this.persistTaskMemory(runContext);
+      const diagnosis = diagnoseTaskOutcome(task, result, { loopDetected, leaseExceeded });
+      if (diagnosis) {
+        this.emitIfCurrent(runContext.runId, {
+          type: "self-reflection-generated",
+          summary: diagnosis.summary,
+          task
+        });
+      }
+      await this.persistTaskMemory(runContext, task, result, { loopDetected, leaseExceeded, diagnosis });
       task = await this.finishTask(runContext.runId, runContext.session, task, result);
       this.emitIfCurrent(runContext.runId, { type: "task-summary", result });
       this.emitIfCurrent(runContext.runId, { type: "run-end", messages: runContext.taskMessages });
-      return result;
+      if (runContext.origin === "user") {
+        this.scheduleHeartbeat(5_000, "nudge");
+      } else {
+        this.lastAutonomyRunAt = Date.now();
+        this.scheduleHeartbeat();
+      }
+      return {
+        result,
+        heartbeatReplyEvaluation: runContext.heartbeatReplyEvaluation,
+      };
     } catch (error) {
       if (runContext.controller.signal.aborted || this.isAbortError(error)) {
         this.markTaskAborted();
         this.emitIfCurrent(runContext.runId, { type: "run-aborted", reason: "user" });
-        return this.buildAbortedTaskResult([]);
+        return { result: this.buildAbortedTaskResult([]) };
       }
 
       const resolvedError = error instanceof Error ? error : new Error(String(error));
@@ -597,17 +711,27 @@ export class Agent {
 
   async inspectStructuredMemory(entityId?: string): Promise<{
     selfRuntime: SelfRuntimeRecord;
+    learningState: LearningState;
     conflicts: OtherConflictRecord[];
     pendingQueue: SalienceQueueRecord[];
+    autonomyQueue: AutonomyIntent[];
+    feedbackSignals: FeedbackSignal[];
+    heartbeatDecisions: HeartbeatDecision[];
+    heartbeatReplies: Awaited<ReturnType<FolderStructuredMemoryStore["listHeartbeatReplyRecords"]>>;
     memoryPackage: StructuredMemoryPackage;
   }> {
     await this.initialize();
     const resolvedEntityId = entityId ?? resolvePrimaryEntityId(this.state.config.memory.v2);
     const planner = new StructuredMemoryRetrievalPlanner(this.state.structuredMemoryStore, this.state.config.memory.v2);
-    const [selfRuntime, conflicts, pendingQueue, memoryPackage] = await Promise.all([
+    const [selfRuntime, learningState, conflicts, pendingQueue, autonomyQueue, feedbackSignals, heartbeatDecisions, heartbeatReplies, memoryPackage] = await Promise.all([
       this.state.structuredMemoryStore.getSelfRuntime(),
+      this.state.structuredMemoryStore.getLearningState(),
       this.state.structuredMemoryStore.listConflicts({ entityId: resolvedEntityId, limit: 10 }),
       this.state.structuredMemoryStore.listSalienceQueue({ entityId: resolvedEntityId, status: "pending", limit: 10 }),
+      this.state.structuredMemoryStore.listAutonomyIntents({ limit: 10 }),
+      this.state.structuredMemoryStore.listFeedbackSignals({ limit: 10 }),
+      this.state.structuredMemoryStore.listHeartbeatDecisions(10),
+      this.state.structuredMemoryStore.listHeartbeatReplyRecords({ limit: 10 }),
       planner.buildPackage({
         query: "",
         activeEntityId: resolvedEntityId
@@ -616,9 +740,55 @@ export class Agent {
 
     return {
       selfRuntime,
+      learningState,
       conflicts,
       pendingQueue,
+      autonomyQueue,
+      feedbackSignals,
+      heartbeatDecisions,
+      heartbeatReplies,
       memoryPackage
+    };
+  }
+
+  async countStructuredMemoryState(entityId?: string): Promise<{
+    pendingQueue: number;
+    autonomyQueue: number;
+    feedbackSignals: number;
+    heartbeatDecisions: number;
+    heartbeatReplies: number;
+    conflicts: number;
+  }> {
+    await this.initialize();
+    const resolvedEntityId = entityId ?? resolvePrimaryEntityId(this.state.config.memory.v2);
+    const [pendingQueue, autonomyQueue, feedbackSignals, heartbeatDecisions, heartbeatReplies, conflicts] = await Promise.all([
+      this.state.structuredMemoryStore.countSalienceQueue({ entityId: resolvedEntityId, status: "pending" }),
+      this.state.structuredMemoryStore.countAutonomyIntents(),
+      this.state.structuredMemoryStore.countFeedbackSignals(),
+      this.state.structuredMemoryStore.countHeartbeatDecisions(),
+      this.state.structuredMemoryStore.countHeartbeatReplyRecords(),
+      this.state.structuredMemoryStore.countConflicts({ entityId: resolvedEntityId }),
+    ]);
+
+    return {
+      pendingQueue,
+      autonomyQueue,
+      feedbackSignals,
+      heartbeatDecisions,
+      heartbeatReplies,
+      conflicts,
+    };
+  }
+
+  async runHeartbeatOnce(): Promise<{
+    decision: AgentState["latestHeartbeatDecision"];
+    triggeredIntent?: AutonomyIntent;
+  }> {
+    await this.initialize();
+    const outcome = await this.heartbeatWake.runNow("manual");
+    return {
+      decision: this.state.latestHeartbeatDecision,
+      triggeredIntent: outcome?.intent,
     };
   }
 
@@ -816,6 +986,16 @@ export class Agent {
     }
     if (this.isApprovalAutoApproved(approvalPolicy)) {
       return true;
+    }
+    if (!this.requestApprovalHandler) {
+      return false;
+    }
+    return this.requestApprovalHandler(request);
+  }
+
+  private async requestExplicitApproval(request: ApprovalRequest): Promise<boolean> {
+    if (this.activeRun?.controller.signal.aborted) {
+      return false;
     }
     if (!this.requestApprovalHandler) {
       return false;
@@ -1191,8 +1371,428 @@ export class Agent {
     return record;
   }
 
+  private ensureHeartbeatLoop(): void {
+    this.heartbeatWake.setHandler((trigger) => this.runHeartbeat(trigger));
+    this.scheduleHeartbeat();
+  }
+
+  private scheduleHeartbeat(delayMs = 30_000, trigger: HeartbeatWakeTrigger = "timer"): void {
+    if (!this.initialized) {
+      return;
+    }
+    this.heartbeatWake.requestWake({ trigger, delayMs });
+  }
+
+  private async runHeartbeat(trigger: HeartbeatWakeTrigger): Promise<{ intent?: AutonomyIntent } | undefined> {
+    if (!this.initialized) {
+      return undefined;
+    }
+
+    const now = Date.now();
+    this.emit({ type: "heartbeat-start", timestamp: now });
+
+    if (!this.state.config.memory.v2.enabled) {
+      return this.skipHeartbeat(now, "Structured memory is disabled.");
+    }
+    if (this.isRunning()) {
+      return this.skipHeartbeat(now, "A task is already running.", 1_000);
+    }
+
+    const heartbeatState = await this.loadHeartbeatRuntimeState();
+    const { selfRuntime } = heartbeatState;
+
+    if (!selfRuntime.autonomyPolicy.enabled) {
+      return this.skipHeartbeat(now, "Autonomy policy is disabled.", selfRuntime.autonomyPolicy.heartbeatIntervalMs);
+    }
+
+    const recentAutonomyCount = this.countRecentAutonomyRuns(heartbeatState.recentIntents, now);
+    if (recentAutonomyCount >= selfRuntime.autonomyPolicy.maxAutonomousTasksPerHour) {
+      return this.skipHeartbeat(now, "Autonomy hourly cap reached.", selfRuntime.autonomyPolicy.heartbeatIntervalMs, true);
+    }
+
+    if (trigger === "timer" && now - this.lastAutonomyRunAt < 15_000) {
+      return this.skipHeartbeat(now, "Recent autonomy run still in cooldown.", selfRuntime.autonomyPolicy.heartbeatIntervalMs, true);
+    }
+
+    const selection = buildHeartbeatSelection({
+      now,
+      selfRuntime: heartbeatState.selfRuntime,
+      learningState: heartbeatState.learningState,
+      todos: heartbeatState.todos,
+      recentFeedback: heartbeatState.recentFeedback,
+      currentTaskId: this.state.currentTask?.taskId,
+    });
+    const duplicateIntent = selection.selectedIntent
+      ? this.findMatchingOpenAutonomyIntent(selection.selectedIntent, heartbeatState.recentIntents)
+      : undefined;
+    if (duplicateIntent) {
+      return this.skipHeartbeat(
+        now,
+        `A matching unresolved autonomy intent already exists: ${duplicateIntent.goal}`,
+        selfRuntime.autonomyPolicy.heartbeatIntervalMs,
+        true
+      );
+    }
+    await this.persistHeartbeatSelection(selection.decision, now);
+    if (!selection.selectedIntent) {
+      this.scheduleHeartbeat(selfRuntime.autonomyPolicy.heartbeatIntervalMs);
+      return { intent: undefined };
+    }
+
+    return this.processSelectedHeartbeatIntent(selection.selectedIntent, now, selfRuntime.autonomyPolicy.heartbeatIntervalMs);
+  }
+
+  private async loadHeartbeatRuntimeState(): Promise<HeartbeatRuntimeState> {
+    const [selfRuntime, learningState, todos, recentFeedback, recentIntents] = await Promise.all([
+      this.state.structuredMemoryStore.getSelfRuntime(),
+      this.state.structuredMemoryStore.getLearningState(),
+      this.state.taskTodoStore.listBySession(this.state.session.sessionId),
+      this.state.structuredMemoryStore.listFeedbackSignals({ limit: 12 }),
+      this.state.structuredMemoryStore.listAutonomyIntents({ limit: 24 }),
+    ]);
+
+    return {
+      selfRuntime,
+      learningState,
+      todos,
+      recentFeedback,
+      recentIntents,
+    };
+  }
+
+  private countRecentAutonomyRuns(intents: AutonomyIntent[], now: number): number {
+    return intents.filter((item) =>
+      item.createdAt >= now - 60 * 60_000
+      && item.status !== "pending"
+    ).length;
+  }
+
+  private findMatchingOpenAutonomyIntent(
+    selectedIntent: AutonomyIntent,
+    recentIntents: AutonomyIntent[]
+  ): AutonomyIntent | undefined {
+    return recentIntents.find((intent) =>
+      intent.status !== "completed"
+      && intent.kind === selectedIntent.kind
+      && intent.sourceSignal === selectedIntent.sourceSignal
+      && intent.goal === selectedIntent.goal
+    );
+  }
+
+  private async skipHeartbeat(
+    timestamp: number,
+    reason: string,
+    nextDelayMs = 30_000,
+    updateRuntimeState = false
+  ): Promise<undefined> {
+    await this.recordHeartbeatDecision({
+      timestamp,
+      decision: "noop",
+      reasons: [reason],
+      candidates: [],
+    });
+    this.emit({ type: "heartbeat-skip", reason, timestamp });
+    if (updateRuntimeState) {
+      await this.state.structuredMemoryStore.upsertSelfRuntime({ lastHeartbeatAt: timestamp });
+    }
+    this.scheduleHeartbeat(nextDelayMs);
+    return undefined;
+  }
+
+  private async persistHeartbeatSelection(decision: HeartbeatDecision, timestamp: number): Promise<void> {
+    await this.recordHeartbeatDecision(decision);
+    this.emit({ type: "heartbeat-decision", decision });
+    await this.state.structuredMemoryStore.upsertSelfRuntime({ lastHeartbeatAt: timestamp });
+  }
+
+  private async processSelectedHeartbeatIntent(
+    intent: AutonomyIntent,
+    startedAt: number,
+    nextDelayMs: number
+  ): Promise<{ intent: AutonomyIntent }> {
+    const storedIntent = await this.persistHeartbeatIntent(intent);
+
+    if (storedIntent.recommendedAction === "request_user_confirmation") {
+      await this.blockHeartbeatIntent(storedIntent, "Autonomy policy requires confirmation for this intent.", nextDelayMs);
+      return { intent: storedIntent };
+    }
+    if (storedIntent.recommendedAction === "defer") {
+      await this.deferHeartbeatIntent(storedIntent, nextDelayMs);
+      return { intent: storedIntent };
+    }
+    if (storedIntent.riskLevel === "high") {
+      await this.blockHeartbeatIntent(storedIntent, "High-risk autonomy intent requires confirmation.", nextDelayMs);
+      return { intent: storedIntent };
+    }
+
+    await this.state.structuredMemoryStore.updateAutonomyIntent(storedIntent.id, { status: "accepted" });
+    try {
+      const isolatedSession = (await this.state.structuredMemoryStore.getSelfRuntime()).autonomyPolicy.isolatedSession;
+      const execution = await this.runAutonomousTask(storedIntent, startedAt, isolatedSession);
+      await this.handleHeartbeatExecutionOutcome(storedIntent, execution);
+      await this.state.structuredMemoryStore.updateAutonomyIntent(storedIntent.id, {
+        status: this.resolveCompletedIntentStatus(execution.result.status),
+      });
+    } catch (error) {
+      await this.state.structuredMemoryStore.updateAutonomyIntent(storedIntent.id, { status: "blocked" });
+      throw error;
+    } finally {
+      this.scheduleHeartbeat(nextDelayMs);
+    }
+
+    return { intent: storedIntent };
+  }
+
+  private async runAutonomousTask(
+    intent: AutonomyIntent,
+    startedAt: number,
+    isolatedSession: boolean
+  ): Promise<HeartbeatTaskExecution> {
+    const options: RunTaskOptions = {
+      origin: intent.recommendedAction === "resume_task" ? "resume" : "heartbeat",
+      autonomyIntent: intent,
+      lease: createAutonomyLease(startedAt),
+      extraTaskContext: buildAutonomyExtraContext(intent),
+    };
+    if (!isolatedSession) {
+      const execution = await this.runTaskDetailed(intent.goal, options);
+      return {
+        result: execution.result,
+        sessionId: this.state.session.sessionId,
+        filePath: this.state.session.filePath,
+        isolatedSession: false,
+        heartbeatReplyEvaluation: execution.heartbeatReplyEvaluation,
+      };
+    }
+
+    return this.withIsolatedHeartbeatSession(async (session) => ({
+      ...(await this.runTaskDetailed(intent.goal, options)),
+      sessionId: session.sessionId,
+      filePath: session.filePath,
+      isolatedSession: true,
+    }));
+  }
+
+  private async persistHeartbeatIntent(intent: AutonomyIntent): Promise<AutonomyIntent> {
+    const storedIntent = await this.state.structuredMemoryStore.appendAutonomyIntent(intent);
+    if (storedIntent.recommendedAction === "resume_task") {
+      this.emit({ type: "autonomy-task-resumed", intent: storedIntent });
+    } else {
+      this.emit({ type: "autonomy-task-enqueued", intent: storedIntent });
+    }
+    return storedIntent;
+  }
+
+  private async blockHeartbeatIntent(intent: AutonomyIntent, reason: string, nextDelayMs: number): Promise<void> {
+    await this.state.structuredMemoryStore.updateAutonomyIntent(intent.id, { status: "blocked" });
+    this.emit({ type: "autonomy-blocked", reason, intent });
+    this.scheduleHeartbeat(nextDelayMs);
+  }
+
+  private async deferHeartbeatIntent(intent: AutonomyIntent, nextDelayMs: number): Promise<void> {
+    await this.state.structuredMemoryStore.updateAutonomyIntent(intent.id, { status: "deferred" });
+    this.scheduleHeartbeat(nextDelayMs);
+  }
+
+  private resolveCompletedIntentStatus(status: TaskResult["status"]): AutonomyIntent["status"] {
+    if (status === "done") {
+      return "completed";
+    }
+    if (status === "blocked") {
+      return "blocked";
+    }
+    return "deferred";
+  }
+
+  private async withIsolatedHeartbeatSession<T>(operation: (session: SessionManager) => Promise<T>): Promise<T> {
+    const snapshot = this.captureTransientTaskState();
+    const isolatedSession = await this.createIsolatedHeartbeatSession();
+    this.state.session = isolatedSession;
+    this.state.messages = [];
+    this.state.sessionLoadedAt = Date.now();
+    this.state.latestContextReport = undefined;
+    this.state.currentTask = undefined;
+    this.state.currentTodoRecord = undefined;
+
+    try {
+      return await operation(isolatedSession);
+    } finally {
+      this.restoreTransientTaskState(snapshot);
+    }
+  }
+
+  private captureTransientTaskState(): TransientTaskStateSnapshot {
+    return {
+      session: this.state.session,
+      messages: [...this.state.messages],
+      sessionLoadedAt: this.state.sessionLoadedAt,
+      latestContextReport: this.state.latestContextReport,
+      currentTask: this.state.currentTask,
+      currentTodoRecord: this.state.currentTodoRecord,
+    };
+  }
+
+  private restoreTransientTaskState(snapshot: TransientTaskStateSnapshot): void {
+    this.state.session = snapshot.session;
+    this.state.messages = snapshot.messages;
+    this.state.sessionLoadedAt = snapshot.sessionLoadedAt;
+    this.state.latestContextReport = snapshot.latestContextReport;
+    this.state.currentTask = snapshot.currentTask;
+    this.state.currentTodoRecord = snapshot.currentTodoRecord;
+  }
+
+  private async createIsolatedHeartbeatSession(): Promise<SessionManager> {
+    const session = new SessionManager({
+      cwd: this.cwd,
+      sessionId: `heartbeat-${createId()}`,
+      sessionsDir: SessionManager.rootDirFromSessionFile(this.state.session.filePath),
+    });
+    await session.initialize(this.state.model);
+    return session;
+  }
+
+  private async handleHeartbeatExecutionOutcome(intent: AutonomyIntent, execution: HeartbeatTaskExecution): Promise<void> {
+    const evaluation = execution.heartbeatReplyEvaluation;
+    if (!evaluation) {
+      return;
+    }
+    if (execution.isolatedSession && evaluation.status !== "sent") {
+      await this.pruneIsolatedHeartbeatSession(execution.filePath);
+    }
+  }
+
+  private async loadPreviousHeartbeatReplyText(comparisonKey: string): Promise<string | undefined> {
+    const previousReplies = await this.state.structuredMemoryStore.listHeartbeatReplyRecords({
+      comparisonKey,
+      limit: 5,
+    });
+    return previousReplies.map((record) => record.normalizedText).find(Boolean);
+  }
+
+  private async pruneIsolatedHeartbeatSession(filePath: string): Promise<void> {
+    await rm(filePath, { force: true }).catch(() => undefined);
+  }
+
+  private async recordHeartbeatDecision(decision: HeartbeatDecision): Promise<void> {
+    this.state.latestHeartbeatDecision = {
+      timestamp: decision.timestamp,
+      decision: decision.decision,
+    };
+    if (!this.state.config.memory.v2.enabled) {
+      return;
+    }
+    await this.state.structuredMemoryStore.appendHeartbeatDecision(decision);
+  }
+
+  private handleHeartbeatFailure(error: unknown): void {
+    const resolvedError = error instanceof Error ? error : new Error(String(error));
+    this.emit({ type: "error", error: resolvedError });
+  }
+
+  private evaluateTaskLease(context: TaskRunContext, task: TaskState): {
+    warning?: string;
+    exceeded: boolean;
+    reason?: string;
+  } {
+    if (!task.lease) {
+      return { exceeded: false };
+    }
+
+    const elapsedMs = Date.now() - task.lease.startedAt;
+    const toolCalls = context.taskMessages.filter((message) => message.role === "tool").length;
+    if (elapsedMs > task.lease.maxWallTimeMs) {
+      return {
+        exceeded: true,
+        reason: "Autonomy lease exceeded wall-time budget.",
+      };
+    }
+    if (toolCalls > task.lease.maxToolCalls) {
+      return {
+        exceeded: true,
+        reason: "Autonomy lease exceeded tool budget.",
+      };
+    }
+    if (elapsedMs >= task.lease.maxWallTimeMs * 0.8) {
+      return {
+        exceeded: false,
+        warning: "Autonomy lease is nearing its wall-time budget.",
+      };
+    }
+    if (toolCalls >= Math.max(1, Math.floor(task.lease.maxToolCalls * 0.8))) {
+      return {
+        exceeded: false,
+        warning: "Autonomy lease is nearing its tool-call budget.",
+      };
+    }
+
+    return { exceeded: false };
+  }
+
+  private async integrateTaskFeedback(
+    entityId: string,
+    task: TaskState,
+    result: TaskResult,
+    options: {
+      loopDetected: boolean;
+      leaseExceeded: boolean;
+      diagnosis: ReturnType<typeof diagnoseTaskOutcome>;
+    },
+    context: TaskRunContext
+  ): Promise<void> {
+    const now = Date.now();
+    const explicitUserFeedback = context.origin === "user"
+      ? extractUserFeedbackSignals(userContentToPlainText(context.userMessage.content), now)
+      : [];
+    const signals = [
+      ...explicitUserFeedback,
+      ...buildFeedbackSignals(task, result, {
+      diagnosis: options.diagnosis,
+      loopDetected: options.loopDetected,
+      leaseExceeded: options.leaseExceeded,
+      now,
+      }),
+    ];
+    const [currentRuntime, currentLearningState] = await Promise.all([
+      this.state.structuredMemoryStore.getSelfRuntime(),
+      this.state.structuredMemoryStore.getLearningState(),
+    ]);
+
+    const nextRuntime = applyFeedbackToSelfRuntime(currentRuntime, signals, options.diagnosis, now);
+    const nextLearningState = applyFeedbackToLearningState(
+      currentLearningState,
+      signals,
+      task,
+      options.diagnosis,
+      now
+    );
+
+    await Promise.all([
+      this.state.structuredMemoryStore.upsertSelfRuntime(nextRuntime),
+      this.state.structuredMemoryStore.upsertLearningState(nextLearningState),
+      ...signals.map((signal) => this.state.structuredMemoryStore.appendFeedbackSignal(signal)),
+      this.state.structuredMemoryStore.appendEpisodicEvent({
+        createdAt: now,
+        origin: "feedback",
+        entityId,
+        sessionId: context.session.sessionId,
+        branchHeadId: context.session.getHeadId(),
+        queryText: task.goal,
+        summary: `Integrated ${signals.length} feedback signal(s) for ${task.goal}`,
+        messages: signals.map((signal) => signal.summary).slice(0, 4),
+        salience: signals.some((item) => item.valence === "negative") ? 0.85 : 0.45,
+        extractedPreferenceKeys: [],
+      }),
+    ]);
+
+    if (signals.length > 0) {
+      this.emitIfCurrent(context.runId, { type: "feedback-integrated", signals });
+    }
+  }
+
   private createTaskRunContext(input: string | TaskInput, options: RunTaskOptions): TaskRunContext {
     const run = this.startRun();
+    const normalizedInput = typeof input === "string" ? { text: input } : input;
+    const userMessage = taskInputToUserMessage(normalizedInput);
     return {
       runId: run.id,
       controller: run.controller,
@@ -1200,24 +1800,36 @@ export class Agent {
       model: this.state.model,
       interactionMode: options.interactionMode ?? "default",
       channel: options.channel,
-      input: typeof input === "string" ? { text: input } : input,
+      input: normalizedInput,
       extraTaskContext: options.extraTaskContext,
       channelContext: null,
       channelActionRequirement: undefined,
       channelActionFeedback: undefined,
-      userMessage: taskInputToUserMessage(input),
+      userMessage: {
+        ...userMessage,
+        origin: options.origin ?? "user",
+        parentIntentId: options.autonomyIntent?.id,
+      },
       taskMessages: [],
       recallAccumulator: createRecallAccumulator(),
       taskTodoRecord: null,
       taskTodosDirty: false,
+      allowedToolNames: undefined,
       sandboxMode: this.resolveSandboxMode(normalizeSandboxMode(options.sandboxMode)),
       approvalPolicy: this.resolveApprovalPolicy(normalizeApprovalPolicy(options.approvalPolicy)),
+      origin: options.origin ?? "user",
+      autonomyIntent: options.autonomyIntent,
+      lease: options.lease,
     };
   }
 
   private async beginTaskRun(context: TaskRunContext): Promise<void> {
     this.state.messages.push(context.userMessage);
-    await context.session.appendMessage(context.userMessage);
+    if (context.origin === "user") {
+      await context.session.appendMessage(context.userMessage);
+    } else {
+      await context.session.appendAutonomyTrigger(context.userMessage);
+    }
     this.emitIfCurrent(context.runId, { type: "run-start", input: context.userMessage });
     this.emitIfCurrent(context.runId, { type: "message", message: context.userMessage });
   }
@@ -1355,7 +1967,7 @@ export class Agent {
       messages: [...this.state.messages],
       tools,
       thinkingLevel: this.state.thinkingLevel,
-      maxSteps: this.maxSteps,
+      maxSteps: task.lease?.maxSteps ?? this.maxSteps,
       emit: (event) => this.emitIfCurrent(context.runId, event),
       signal: context.controller.signal
     });
@@ -1429,6 +2041,7 @@ export class Agent {
       "Channel Delivery Notes:",
       "- Write a normal user-facing reply.",
       "- Use the channel_action tool for platform-native sends, edits, deletes, reactions, or native media actions when a direct channel action is needed.",
+      "- On Telegram, channel_action(action=\"photo\"|\"document\") can resend a Telegram file with payload.fileId or upload a local file with payload.path / payload.filePath.",
       "- Use the channel_store tool when the user wants to save a reusable channel-native source for future runs.",
       "- The runtime may split long answers into multiple platform messages automatically when needed.",
       `- Available channel actions: ${context.actions.join(", ") || "<none>"}.`,
@@ -1526,9 +2139,13 @@ export class Agent {
       `Phase: ${task.phase}`,
       `Attempts: ${task.attempts}`,
       verificationLine,
+      `Origin: ${task.origin ?? "user"}`,
+      task.parentIntentId ? `AutonomyIntent: ${task.parentIntentId}` : "",
+      task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
       "Mode: channel_chat",
       "This is a live channel chat turn.",
       "Do not plan engineering work or use write_todos.",
+      "If bash is available in this chat, use it only for concrete workspace evidence or shell execution.",
       "Respond in-channel and prefer channel_action for required native actions.",
       "</TaskContext>",
     ].join("\n");
@@ -1536,22 +2153,23 @@ export class Agent {
 
   private async createToolsForRun(context: TaskRunContext, task: TaskState) {
     const policy = await this.createPermissionPolicy(context.channel, context.approvalPolicy, context.sandboxMode);
-    const wrappedToolOptions = {
+    const toolPermissionOptions = {
       sessionId: context.session.sessionId,
       channel: context.channel,
       requestApproval: (request: ApprovalRequest) => this.requestApproval(request, context.approvalPolicy),
+      requestInstallApproval: (request: ApprovalRequest) => this.requestExplicitApproval(request),
       emit: (event: { type: "approval-request"; request: ApprovalRequest } | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }) =>
         this.emitIfCurrent(context.runId, event),
+    } as const;
+    const wrappedToolOptions = {
+      ...toolPermissionOptions,
       policy,
       cwd: this.cwd,
     } as const;
     const protectedTools = context.interactionMode === "channel_chat"
-      ? []
+      ? this.buildChannelChatProtectedTools(policy, toolPermissionOptions, context.channel)
       : createProtectedCodingTools(this.cwd, {
-        sessionId: context.session.sessionId,
-        channel: context.channel,
-        requestApproval: (request) => this.requestApproval(request, context.approvalPolicy),
-        emit: (event) => this.emitIfCurrent(context.runId, event),
+        ...toolPermissionOptions,
         policy,
       });
     const writeTodosTool = context.interactionMode === "channel_chat"
@@ -1579,7 +2197,10 @@ export class Agent {
               goal: task.goal,
               phase: this.state.currentTask?.phase ?? task.phase,
               attempts: this.state.currentTask?.attempts ?? task.attempts,
-              verification: this.state.currentTask?.verification ?? task.verification
+              verification: this.state.currentTask?.verification ?? task.verification,
+              origin: this.state.currentTask?.origin ?? task.origin,
+              parentIntentId: this.state.currentTask?.parentIntentId ?? task.parentIntentId,
+              lease: this.state.currentTask?.lease ?? task.lease
             });
             this.emitIfCurrent(context.runId, { type: "task-todos-updated", record });
           } else {
@@ -1607,12 +2228,34 @@ export class Agent {
           this.channelCapabilityProvider!.executeStore(request, callContext),
       }), wrappedToolOptions)
       : null;
-    return [
+    const tools = [
       ...(writeTodosTool ? [writeTodosTool] : []),
       ...(channelActionTool ? [channelActionTool] : []),
       ...(channelStoreTool ? [channelStoreTool] : []),
       ...protectedTools,
     ];
+    context.allowedToolNames = tools.map((toolDef) => toolDef.name);
+    return tools;
+  }
+
+  private buildChannelChatProtectedTools(
+    policy: DefaultPermissionPolicy,
+    toolPermissionOptions: {
+      sessionId: string;
+      channel?: ToolExecutionChannel;
+      requestApproval: (request: ApprovalRequest) => Promise<boolean>;
+      emit: (event: { type: "approval-request"; request: ApprovalRequest } | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }) => void;
+    },
+    channel: ToolExecutionChannel | undefined,
+  ) {
+    if (!this.canExposeChannelChatBash(policy, channel)) {
+      return [];
+    }
+
+    return [createProtectedBashTool(this.cwd, {
+      ...toolPermissionOptions,
+      policy,
+    })];
   }
 
   private async createPermissionPolicy(
@@ -1651,6 +2294,13 @@ export class Agent {
     });
   }
 
+  private canExposeChannelChatBash(
+    policy: DefaultPermissionPolicy,
+    channel: ToolExecutionChannel | undefined,
+  ): boolean {
+    return channel?.platform === "telegram" && policy.isAllowlistedChannel(channel);
+  }
+
   private async loadTelegramImplicitApprovalChannels(): Promise<ToolExecutionChannel[]> {
     const storeAllowFrom = await this.readTelegramAllowFromStore();
     return mergeTelegramAllowFrom(this.state.config.channels.telegram, storeAllowFrom).map((senderId) => ({
@@ -1669,7 +2319,12 @@ export class Agent {
   }
 
   private async appendTurnMessages(context: TaskRunContext, newMessages: ConversationMessage[]): Promise<void> {
-    for (const message of newMessages) {
+    const sanitizedMessages = guardMessagesBeforeSessionPersist({
+      model: context.model,
+      messages: newMessages,
+      allowedToolNames: context.allowedToolNames,
+    });
+    for (const message of sanitizedMessages) {
       if (!this.isRunCurrent(context.runId)) {
         return;
       }
@@ -1684,6 +2339,7 @@ export class Agent {
     task: TaskState,
     messages: ConversationMessage[],
     loopDetected: boolean,
+    leaseExceeded: boolean,
     channelActionRequirement?: {
       nativeActionRequired: boolean;
       action?: string;
@@ -1697,13 +2353,15 @@ export class Agent {
 
     const status = !nativeActionSatisfied
       ? "incomplete"
+      : leaseExceeded
+        ? "blocked"
       : loopDetected
-      ? "blocked"
-      : task.verification.mode === "none" || task.verification.passed
-        ? "done"
-        : task.attempts >= this.maxTurns
-          ? "incomplete"
-          : "done";
+        ? "blocked"
+        : task.verification.mode === "none" || task.verification.passed
+          ? "done"
+          : task.attempts >= this.maxTurns
+            ? "incomplete"
+            : "done";
 
     return {
       taskId: task.taskId,
@@ -1726,13 +2384,39 @@ export class Agent {
     };
   }
 
-  private async persistTaskMemory(context: TaskRunContext): Promise<void> {
-    if (context.taskMessages.length === 0) {
-      return;
+  private async persistTaskMemory(
+    context: TaskRunContext,
+    task: TaskState,
+    result: TaskResult,
+    options: {
+      loopDetected: boolean;
+      leaseExceeded: boolean;
+      diagnosis: ReturnType<typeof diagnoseTaskOutcome>;
+    }
+  ): Promise<void> {
+    if (context.origin !== "user" && this.state.config.memory.v2.enabled) {
+      const comparisonKey = context.autonomyIntent
+        ? buildHeartbeatReplyComparisonKey(context.autonomyIntent)
+        : `${context.origin}:${task.goal}`;
+      const previousNormalizedText = await this.loadPreviousHeartbeatReplyText(comparisonKey);
+      const evaluation = evaluateHeartbeatReply({
+        messages: result.messages,
+        previousNormalizedText,
+      });
+      context.heartbeatReplyEvaluation = evaluation;
+      await this.state.structuredMemoryStore.appendHeartbeatReplyRecord(buildHeartbeatReplyRecord({
+        sessionId: context.session.sessionId,
+        intentId: context.autonomyIntent?.id,
+        comparisonKey,
+        evaluation,
+      }));
+      if (evaluation.status !== "sent") {
+        return;
+      }
     }
 
     let memoryRecord: MemoryRecord | null = null;
-    if (this.state.config.memory.enabled) {
+    if (context.taskMessages.length > 0 && this.state.config.memory.enabled) {
       memoryRecord = await this.compactAndPersistTurn({
         userMessage: context.userMessage,
         messages: context.taskMessages,
@@ -1750,50 +2434,60 @@ export class Agent {
     }
 
     const primaryEntityId = resolvePrimaryEntityId(this.state.config.memory.v2);
-    const structuredTurn = await persistStructuredMemoryTurn({
-      config: this.state.config.memory.v2,
-      store: this.state.structuredMemoryStore,
-      entityId: primaryEntityId,
-      userMessage: userContentToPlainText(context.userMessage.content),
-      assistantMessages: context.taskMessages,
-      sessionId: context.session.sessionId,
-      branchHeadId: context.session.getHeadId()
-    });
-    const structuredResult = await runStructuredMemoryConsolidation({
-      config: this.state.config.memory.v2,
-      store: this.state.structuredMemoryStore,
-      entityId: primaryEntityId
-    });
-    await this.syncStructuredMemoryBackends([
-      {
-        id: structuredTurn.event.id,
-        scope: "episodic",
-        title: "episodic event",
-        summary: structuredTurn.event.summary,
-        detailLines: structuredTurn.event.messages
-      },
-      ...structuredResult.preferences.items.slice(0, 3).map((item) => ({
-        id: `pref-${primaryEntityId}-${item.key}`,
-        scope: "other" as const,
-        title: item.key,
-        summary: item.summary,
-        detailLines: item.evidenceIds
-      })),
-      ...structuredResult.inferences.slice(0, 2).map((item) => ({
-        id: item.id,
-        scope: "other" as const,
-        title: item.trait,
-        summary: item.summary,
-        detailLines: item.basedOn
-      })),
-      ...structuredResult.conflicts.slice(0, 2).map((item) => ({
-        id: item.id,
-        scope: "other" as const,
-        title: `conflict:${item.field}`,
-        summary: item.reason,
-        detailLines: item.evidenceIds
-      }))
-    ]);
+    if (context.taskMessages.length > 0) {
+      const structuredTurn = await persistStructuredMemoryTurn({
+        config: this.state.config.memory.v2,
+        store: this.state.structuredMemoryStore,
+        entityId: primaryEntityId,
+        userMessage: userContentToPlainText(context.userMessage.content),
+        assistantMessages: context.taskMessages,
+        origin:
+          context.origin === "user"
+            ? "user_task"
+            : context.autonomyIntent?.kind === "self_reflection"
+              ? "self_reflection"
+              : "heartbeat",
+        sessionId: context.session.sessionId,
+        branchHeadId: context.session.getHeadId()
+      });
+      const structuredResult = await runStructuredMemoryConsolidation({
+        config: this.state.config.memory.v2,
+        store: this.state.structuredMemoryStore,
+        entityId: primaryEntityId
+      });
+      await this.syncStructuredMemoryBackends([
+        {
+          id: structuredTurn.event.id,
+          scope: "episodic",
+          title: "episodic event",
+          summary: structuredTurn.event.summary,
+          detailLines: structuredTurn.event.messages
+        },
+        ...structuredResult.preferences.items.slice(0, 3).map((item) => ({
+          id: `pref-${primaryEntityId}-${item.key}`,
+          scope: "other" as const,
+          title: item.key,
+          summary: item.summary,
+          detailLines: item.evidenceIds
+        })),
+        ...structuredResult.inferences.slice(0, 2).map((item) => ({
+          id: item.id,
+          scope: "other" as const,
+          title: item.trait,
+          summary: item.summary,
+          detailLines: item.basedOn
+        })),
+        ...structuredResult.conflicts.slice(0, 2).map((item) => ({
+          id: item.id,
+          scope: "other" as const,
+          title: `conflict:${item.field}`,
+          summary: item.reason,
+          detailLines: item.evidenceIds
+        }))
+      ]);
+    }
+
+    await this.integrateTaskFeedback(primaryEntityId, task, result, options, context);
   }
 
   private async finishTask(runId: number, session: SessionManager, task: TaskState, result: TaskResult): Promise<TaskState> {
@@ -1847,7 +2541,10 @@ export class Agent {
       goal: task.goal,
       phase: task.phase,
       attempts: task.attempts,
-      verification: task.verification
+      verification: task.verification,
+      origin: task.origin,
+      parentIntentId: task.parentIntentId,
+      lease: task.lease
     });
   }
 
@@ -1879,6 +2576,9 @@ export class Agent {
           phase: TaskState["phase"];
           attempts: number;
           verification: TaskState["verification"];
+          origin?: TaskOrigin;
+          parentIntentId?: string;
+          lease?: TaskLease;
         };
         return {
           taskId: payload.taskId,
@@ -1886,7 +2586,10 @@ export class Agent {
           phase: payload.phase,
           attempts: payload.attempts,
           verification: payload.verification,
-          currentTodoMemoryId: payload.todoMemoryId
+          currentTodoMemoryId: payload.todoMemoryId,
+          origin: payload.origin,
+          parentIntentId: payload.parentIntentId,
+          lease: payload.lease
         };
       }
       if (entry.entryType === "task_state") {
@@ -1897,7 +2600,10 @@ export class Agent {
           phase: legacy.phase,
           attempts: legacy.attempts,
           verification: legacy.verification,
-          currentTodoMemoryId: legacy.currentTodoMemoryId
+          currentTodoMemoryId: legacy.currentTodoMemoryId,
+          origin: legacy.origin,
+          parentIntentId: legacy.parentIntentId,
+          lease: legacy.lease
         };
         if (legacy.todos && legacy.todos.length > 0) {
           const existing = await this.state.taskTodoStore.get(legacy.taskId);

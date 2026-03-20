@@ -33,10 +33,29 @@ export interface TelegramStickerInputMetadata {
   setName?: string;
 }
 
+export interface TelegramPhotoInputMetadata {
+  fileId?: string;
+  fileUniqueId?: string;
+  mimeType?: string;
+  messageId?: number;
+  caption?: string;
+}
+
+export interface TelegramDocumentInputMetadata {
+  fileId?: string;
+  fileUniqueId?: string;
+  mimeType?: string;
+  fileName?: string;
+  messageId?: number;
+  caption?: string;
+}
+
 export interface TaskInputPlatformMetadata {
   telegram?: {
     chatId?: string;
     sticker?: TelegramStickerInputMetadata;
+    photo?: TelegramPhotoInputMetadata;
+    document?: TelegramDocumentInputMetadata;
   };
 }
 
@@ -61,6 +80,8 @@ export interface UserMessage {
   role: "user";
   content: string | UserPart[];
   timestamp: number;
+  origin?: TaskOrigin;
+  parentIntentId?: string;
   metadata?: TaskInputPlatformMetadata;
 }
 
@@ -153,6 +174,8 @@ export interface MonoTelegramApprovalConfig {
 export interface MonoTelegramActionsConfig {
   send: boolean;
   sticker: boolean;
+  photo: boolean;
+  document: boolean;
   edit: boolean;
   delete: boolean;
   react: boolean;
@@ -282,6 +305,47 @@ export type InferenceStatus = "hypothesis" | "reviewed" | "stable";
 export type PreferenceStatus = "observation" | "pattern" | "stable";
 export type ConflictStatus = "unresolved" | "monitoring" | "resolved";
 export type SalienceQueueStatus = "pending" | "processed";
+export type TaskOrigin = "user" | "heartbeat" | "resume";
+export type AutonomyIntentKind = "resume_task" | "investigate_gap" | "self_reflection";
+export type AutonomySourceSignal = "stalled_task" | "open_question" | "feedback_pattern";
+export type AutonomyIntentStatus = "pending" | "accepted" | "completed" | "deferred" | "blocked";
+export type AutonomyRiskLevel = "low" | "medium" | "high";
+export type AutonomyDecisionAction = "noop" | "enqueue_task" | "resume_task" | "request_user_confirmation" | "defer";
+export type FeedbackSignalSource = "user" | "task" | "verify" | "heartbeat";
+export type FeedbackSignalKind =
+  | "task_completed"
+  | "task_blocked"
+  | "task_incomplete"
+  | "verification_passed"
+  | "verification_failed"
+  | "loop_detected"
+  | "budget_warning"
+  | "budget_exhausted"
+  | "correction"
+  | "rejection"
+  | "acceptance";
+export type FeedbackSignalValence = "positive" | "negative" | "neutral";
+
+export interface TaskLease {
+  startedAt: number;
+  maxWallTimeMs: number;
+  maxToolCalls: number;
+  maxSteps: number;
+}
+
+export interface RuntimeAutonomyPolicy {
+  enabled: boolean;
+  heartbeatIntervalMs: number;
+  maxAutonomousTasksPerHour: number;
+  allowBroadExecution: boolean;
+  isolatedSession: boolean;
+}
+
+export interface RuntimeCooldownRecord {
+  key: string;
+  until: number;
+  reason: string;
+}
 
 export interface MemoryEvidenceRecord {
   id: string;
@@ -357,7 +421,14 @@ export interface SelfRuntimeRecord {
   activeProjects: string[];
   currentTensions: string[];
   taskHints: string[];
+  openQuestions: string[];
+  currentHypotheses: string[];
+  frictionPatterns: string[];
+  autonomyPolicy: RuntimeAutonomyPolicy;
+  cooldowns: RuntimeCooldownRecord[];
   lastReflectionAt?: number;
+  lastHeartbeatAt?: number;
+  lastFeedbackAt?: number;
 }
 
 export interface NarrativeUpdateRecord {
@@ -435,11 +506,16 @@ export interface ProjectMemoryProfileRecord {
   workspaceSummary: string;
   durableFacts: string[];
   collaborationNorms: string[];
+  maintenanceFocus: string[];
+  knownRiskZones: string[];
+  qualityBar?: string;
+  preferredInterventionOrder: string[];
 }
 
 export interface EpisodicEventRecord {
   id: string;
   createdAt: number;
+  origin: "user_task" | "heartbeat" | "self_reflection" | "feedback";
   entityId: string;
   sessionId?: string;
   branchHeadId?: string;
@@ -471,6 +547,76 @@ export interface SalienceQueueRecord {
   status: SalienceQueueStatus;
   processedAt?: number;
   observation?: PreferenceObservationRecord;
+}
+
+export interface AutonomyIntent {
+  id: string;
+  createdAt: number;
+  kind: AutonomyIntentKind;
+  sourceSignal: AutonomySourceSignal;
+  priority: number;
+  riskLevel: AutonomyRiskLevel;
+  recommendedAction: AutonomyDecisionAction;
+  status: AutonomyIntentStatus;
+  goal: string;
+  taskId?: string;
+  todoMemoryId?: string;
+  evidence: string[];
+}
+
+export interface HeartbeatDecision {
+  timestamp: number;
+  decision: AutonomyDecisionAction;
+  reasons: string[];
+  candidates: Array<{
+    intentId: string;
+    kind: AutonomyIntentKind;
+    priority: number;
+    goal: string;
+    riskLevel: AutonomyRiskLevel;
+  }>;
+  selectedIntentId?: string;
+}
+
+export type HeartbeatReplyStatus = "sent" | "ack" | "duplicate" | "suppressed";
+
+export interface HeartbeatReplyRecord {
+  id: string;
+  createdAt: number;
+  sessionId: string;
+  intentId?: string;
+  comparisonKey: string;
+  status: HeartbeatReplyStatus;
+  rawText: string;
+  normalizedText: string;
+  reason: string;
+}
+
+export interface FeedbackSignal {
+  id: string;
+  createdAt: number;
+  source: FeedbackSignalSource;
+  kind: FeedbackSignalKind;
+  target: string;
+  valence: FeedbackSignalValence;
+  strength: number;
+  summary: string;
+  metadata?: Record<string, string>;
+}
+
+export interface LearningStrategyStat {
+  strategy: string;
+  successCount: number;
+  failureCount: number;
+  lastAppliedAt?: number;
+}
+
+export interface LearningState {
+  updatedAt: number;
+  strategyStats: LearningStrategyStat[];
+  failurePatterns: string[];
+  userPreferenceBias: Record<string, number>;
+  cooldowns: RuntimeCooldownRecord[];
 }
 
 export interface StructuredMemoryPackageEntry {
@@ -563,6 +709,9 @@ export interface TaskState {
   attempts: number;
   verification: VerificationState;
   currentTodoMemoryId?: string;
+  origin?: TaskOrigin;
+  parentIntentId?: string;
+  lease?: TaskLease;
 }
 
 export interface TaskTodoRecord {
@@ -850,7 +999,7 @@ export interface ChannelCapabilityProvider {
   executeStore(request: ChannelStoreRequest, context: { channel: ToolExecutionChannel }): Promise<ChannelStoreResult>;
 }
 
-export type TelegramActionName = "send" | "sticker" | "edit" | "delete" | "react";
+export type TelegramActionName = "send" | "sticker" | "photo" | "document" | "edit" | "delete" | "react";
 export type TelegramActionTextFormat = "plain" | "markdown";
 
 export interface TelegramActionRequest {
@@ -862,6 +1011,9 @@ export interface TelegramActionRequest {
   text?: string;
   format?: TelegramActionTextFormat;
   fileId?: string;
+  path?: string;
+  filename?: string;
+  mimeType?: string;
   emoji?: string;
   remove?: boolean;
 }
@@ -1018,6 +1170,7 @@ export interface MemoryRecallPlan {
 export type SessionEntryType =
   | "metadata"
   | "user"
+  | "autonomy_trigger"
   | "assistant"
   | "tool"
   | "branch"
@@ -1038,8 +1191,20 @@ export interface SessionEntryBase<TType extends SessionEntryType, TPayload> {
   payload: TPayload;
 }
 
-export type MetadataEntry = SessionEntryBase<"metadata", { cwd: string; model: string; provider: string }>;
+export type MetadataEntry = SessionEntryBase<
+  "metadata",
+  {
+    cwd: string;
+    model: string;
+    provider: string;
+    family?: UnifiedModel["family"];
+    transport?: UnifiedModel["transport"];
+    runtimeProviderKey?: UnifiedModel["runtimeProviderKey"];
+    baseURL?: string;
+  }
+>;
 export type UserEntry = SessionEntryBase<"user", UserMessage>;
+export type AutonomyTriggerEntry = SessionEntryBase<"autonomy_trigger", UserMessage>;
 export type AssistantEntry = SessionEntryBase<"assistant", AssistantMessage>;
 export type ToolEntry = SessionEntryBase<"tool", ToolResultMessage>;
 export type BranchEntry = SessionEntryBase<"branch", { name?: string }>;
@@ -1055,6 +1220,9 @@ export type TaskPointerEntry = SessionEntryBase<
     phase: TaskPhase;
     attempts: number;
     verification: VerificationState;
+    origin?: TaskOrigin;
+    parentIntentId?: string;
+    lease?: TaskLease;
   }
 >;
 export type TaskSummaryEntry = SessionEntryBase<
@@ -1083,6 +1251,7 @@ export type MemoryRecordEntry = SessionEntryBase<"memory_record", { memoryId: st
 export type SessionEntry =
   | MetadataEntry
   | UserEntry
+  | AutonomyTriggerEntry
   | AssistantEntry
   | ToolEntry
   | BranchEntry
@@ -1097,6 +1266,15 @@ export type SessionEntry =
 
 export type RuntimeEvent =
   | { type: "run-start"; input: UserMessage }
+  | { type: "heartbeat-start"; timestamp: number }
+  | { type: "heartbeat-skip"; reason: string; timestamp: number }
+  | { type: "heartbeat-decision"; decision: HeartbeatDecision }
+  | { type: "autonomy-task-enqueued"; intent: AutonomyIntent }
+  | { type: "autonomy-task-resumed"; intent: AutonomyIntent }
+  | { type: "self-reflection-generated"; summary: string; task?: TaskState }
+  | { type: "feedback-integrated"; signals: FeedbackSignal[] }
+  | { type: "budget-warning"; task: TaskState; message: string }
+  | { type: "autonomy-blocked"; reason: string; intent?: AutonomyIntent }
   | { type: "task-start"; task: TaskState }
   | { type: "task-update"; task: TaskState }
   | { type: "task-phase-change"; task: TaskState }

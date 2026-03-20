@@ -76,7 +76,7 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
     return this.commandDenylist.some((entry) => command.includes(entry));
   }
 
-  private isAllowlistedChannel(channel: ToolExecutionChannel | undefined): boolean {
+  isAllowlistedChannel(channel: ToolExecutionChannel | undefined): boolean {
     if (!channel) {
       return false;
     }
@@ -91,13 +91,10 @@ export class DefaultPermissionPolicy implements PermissionPolicy {
   private evaluateBashRequest(request: PermissionRequest & { toolName: "bash"; input: object }): PermissionDecision {
     const command = getNormalizedBashCommand(request.input);
     if (matchesDestructiveCommand(command)) {
-      return denyDecision("Command matches destructive denylist");
+      return this.applyApprovalPolicy(askDecision("Command matches destructive denylist"));
     }
     if (this.matchesConfiguredCommandDenylist(command)) {
-      return denyDecision("Command matches configured denylist");
-    }
-    if (!this.isAllowlistedChannel(request.channel)) {
-      return this.applyApprovalPolicy(askDecision("bash commands require confirmation by default"));
+      return this.applyApprovalPolicy(askDecision("Command matches configured denylist"));
     }
 
     return this.applyApprovalPolicy(this.evaluateSensitiveBashCommand(command) ?? allowDecision());

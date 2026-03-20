@@ -19,6 +19,14 @@ export interface BashToolDetails {
   exitCode: number | null;
   fullOutputPath?: string;
   truncated: boolean;
+  autoRepair?: {
+    attempted: boolean;
+    packageManager?: "apt-get";
+    missingCommands?: string[];
+    installedPackages?: string[];
+    retried: boolean;
+    succeeded: boolean;
+  };
 }
 
 export function createBashTool(cwd: string): AgentTool<BashInput, BashToolDetails> {

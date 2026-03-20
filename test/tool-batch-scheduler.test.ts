@@ -2,15 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentTool, RuntimeEvent, ToolResultPart, UnifiedModel } from "../packages/shared/src/index.js";
 import type { LlmRunOptions } from "../packages/llm/src/adapters/types.js";
 import { ToolBatchScheduler } from "../packages/llm/src/adapters/tool-batch-scheduler.js";
+import { createTestUnifiedModel, describeIfRealTestModel } from "./helpers/test-model-env.js";
 
-const model: UnifiedModel = {
-  provider: "openai",
-  modelId: "gpt-4.1-mini",
-  family: "openai-compatible",
-  baseURL: "https://api.openai.com/v1",
-  supportsTools: true,
-  supportsReasoning: true
-};
+const model: UnifiedModel = createTestUnifiedModel();
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -50,7 +44,7 @@ function createScheduler() {
   };
 }
 
-describe("ToolBatchScheduler", () => {
+describeIfRealTestModel("ToolBatchScheduler", () => {
   it("runs readonly tools in parallel batches", async () => {
     const { scheduler, toolResultMap } = createScheduler();
     const first = createDeferred<void>();

@@ -14,6 +14,7 @@ Document the built-in coding tools and permission wrapping.
 - `bash`
 
 `createProtectedCodingTools(...)` wraps them in permission checks.
+`createProtectedBashTool(...)` wraps only `bash` in the same permission checks.
 
 ## Important Tool Contracts
 

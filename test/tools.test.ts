@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createBashTool, createEditTool, DefaultPermissionPolicy } from "../packages/tools/src/index.js";
 
 describe("tools", () => {
-  it("denies destructive bash commands", () => {
+  it("requires approval for destructive bash commands", () => {
     const policy = new DefaultPermissionPolicy();
     const decision = policy.evaluate({
       toolName: "bash",
@@ -14,7 +14,7 @@ describe("tools", () => {
       sessionId: "session"
     });
 
-    expect(decision.type).toBe("deny");
+    expect(decision.type).toBe("ask");
   });
 
   it("edits a file with an exact match", async () => {

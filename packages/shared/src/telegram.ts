@@ -98,6 +98,8 @@ export function normalizeTelegramActionsConfig(
   return {
     send: actions?.send ?? true,
     sticker: actions?.sticker ?? true,
+    photo: actions?.photo ?? true,
+    document: actions?.document ?? true,
     edit: actions?.edit ?? true,
     delete: actions?.delete ?? true,
     react: actions?.react ?? true,

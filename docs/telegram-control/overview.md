@@ -81,6 +81,8 @@ The resolved config shape is:
 - `groups`
 - `actions.send`
 - `actions.sticker`
+- `actions.photo`
+- `actions.document`
 - `actions.edit`
 - `actions.delete`
 - `actions.react`
@@ -142,13 +144,16 @@ Approval behavior:
 Agent tool behavior:
 
 - Telegram DM runs can expose the generic `channel_action` tool for explicit `send` / `sticker` / `edit` / `delete` / `react` actions
+- Telegram DM runs can expose `channel_action(photo|document)` to send back the current Telegram photo or document by `fileId`
+- `channel_action(photo|document)` can also upload a local file path through Telegram Bot API multipart transfer, in addition to reusing an existing Telegram `fileId`
 - Telegram DM runs can expose the generic `channel_store` tool for listing, searching, or persisting reusable sticker sources
 - Telegram chat handoff runs in a dedicated `channel_chat` interaction mode rather than the normal coding-task mode
-- `channel_chat` turns do not expose coding tools or `write_todos`; they reply in-channel and use `channel_action` / `channel_store` when needed
+- `channel_chat` turns do not expose `write_todos` or the full coding toolset; allowlisted Telegram chats can expose protected `bash`, and all other native replies still go through `channel_action` / `channel_store`
 - Telegram chat handoff now runs through short-lived handoff agent instances instead of borrowing the main TUI agent run slot
 - those handoff agents still switch into the current shared session rather than creating per-chat sessions
 - handoff session switches use `preserveCurrentModel` so an older shared-session metadata header cannot override the active Telegram profile/model
 - current-turn sticker metadata is injected as structured context from `TaskInput.metadata.telegram`, including `chatId`, `fileId`, `fileUniqueId`, `emoji`, and `setName`
+- current-turn Telegram photos and documents now keep native metadata in `TaskInput.metadata.telegram`, including `fileId`, `messageId`, `mimeType`, optional caption, and document `fileName`
 - recent-history sticker recovery is scoped to the active Telegram chat id, so stickers do not bleed across chats handled by the same TUI process
 - Telegram runtime keeps a global sticker search cache under `~/.mono/state/telegram/sticker-cache.json`, keyed by `fileId` / `fileUniqueId` / `setName`
 - `channel_store(resource="sticker_source", action="search", ...)` can search that cache and return other stickers from the same set before `channel_action(sticker)` sends one
