@@ -27,6 +27,7 @@ Heartbeat curiosity probes also reuse the same runtime entrypoint with a dedicat
 - read-only sandbox and a tighter autonomy lease
 - `verification=none`
 - only `read` and protected `bash`; no `write_todos`, `write`, or `edit`
+- curiosity probes are framed as lightweight background exploration, not repo-only scanning
 
 ## Task Shell
 
@@ -105,6 +106,7 @@ Current behavior:
 - it reads structured runtime state, learning state, recent feedback, and task todo records
 - it can enqueue or resume a task by calling back into `Agent.runTask()`
 - low-risk idle probes can now enqueue a `curiosity_probe` task from recent session/runtime context when no stalled-task or explicit gap candidate is available
+- repeated low-value heartbeat work is suppressed through topic-level repetition / boredom tracking instead of content-specific hardcoded filters
 - autonomous tasks are marked in `TaskState.origin`
 - autonomous tasks receive a bounded `lease` so they do not run indefinitely
 - recent user feedback can suppress or down-rank autonomous work through learning-state bias

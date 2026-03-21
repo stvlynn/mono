@@ -165,6 +165,7 @@ export type MonoTelegramDmPolicy = "pairing" | "allowlist" | "open" | "disabled"
 export type MonoSensitiveActionMode = "allow_all" | "blacklist" | "strict";
 export type MonoSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type MonoApprovalPolicy = "on-request" | "never" | "auto-approve";
+export type MonoAlternateBufferMode = boolean | "auto";
 
 export type SandboxMode = MonoSandboxMode;
 export type ApprovalPolicy = MonoApprovalPolicy;
@@ -219,12 +220,46 @@ export interface MonoChannelsConfig {
   telegram: MonoTelegramConfig;
 }
 
+export interface MonoSafetySettingsConfig {
+  approvalMode: "default" | "always-ask" | "auto-approve-safe";
+  approvalPolicy: MonoApprovalPolicy;
+  sandboxMode: MonoSandboxMode;
+  sensitiveActionMode: MonoSensitiveActionMode;
+}
+
+export interface MonoAutonomySettingsConfig {
+  enabled: boolean;
+  heartbeatIntervalMs: number;
+  maxAutonomousTasksPerHour: number;
+  allowBroadExecution: boolean;
+  isolatedSession: boolean;
+}
+
+export interface MonoAppearanceSettingsConfig {
+  theme: string;
+}
+
+export interface MonoTuiSettingsConfig {
+  cleanUiDetailsVisible: boolean;
+  footerVisible: boolean;
+  alternateBuffer: MonoAlternateBufferMode;
+  shortcutsHint: boolean;
+  assistantMarkdownEnabled: boolean;
+  thinkingVisible: boolean;
+  toolDetailsVisible: boolean;
+}
+
 export interface MonoSettingsConfig {
   approvalMode: "default" | "always-ask" | "auto-approve-safe";
   approvalPolicy: MonoApprovalPolicy;
   sandboxMode: MonoSandboxMode;
   theme: string;
   sensitiveActionMode: MonoSensitiveActionMode;
+  maxAutonomousTasksPerHour: number;
+  safety: MonoSafetySettingsConfig;
+  autonomy: MonoAutonomySettingsConfig;
+  appearance: MonoAppearanceSettingsConfig;
+  tui: MonoTuiSettingsConfig;
 }
 
 export interface MonoMemoryConfig {
@@ -595,6 +630,16 @@ export interface HeartbeatReplyRecord {
   reason: string;
 }
 
+export interface AutonomyTopicStat {
+  key: string;
+  summary: string;
+  repetitionCount: number;
+  boredomScore: number;
+  lastTouchedAt: number;
+  lastIntentKind?: AutonomyIntentKind;
+  lastOutcome?: "novel" | "repeated" | "suppressed" | "blocked";
+}
+
 export interface FeedbackSignal {
   id: string;
   createdAt: number;
@@ -620,6 +665,7 @@ export interface LearningState {
   failurePatterns: string[];
   userPreferenceBias: Record<string, number>;
   cooldowns: RuntimeCooldownRecord[];
+  autonomyTopicStats?: AutonomyTopicStat[];
 }
 
 export interface StructuredMemoryPackageEntry {

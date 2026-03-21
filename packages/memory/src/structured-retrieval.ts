@@ -1,5 +1,7 @@
 import type {
+  AutonomyIntent,
   EpisodicEventRecord,
+  HeartbeatReplyRecord,
   MemoryEvidenceRecord,
   MonoMemoryV2Config,
   OtherConflictRecord,
@@ -25,6 +27,7 @@ export class StructuredMemoryRetrievalPlanner {
 
   async buildPackage(options: StructuredMemoryRetrievalOptions): Promise<StructuredMemoryPackage> {
     const query = options.query.trim();
+    const includeAutonomousWork = shouldRecallAutonomousWork(query);
     const [selfIdentity, selfRuntime, projectProfile, otherProfile, otherPreferences, otherInferences, relationshipState, conflicts, episodic] =
       await Promise.all([
         this.store.getSelfIdentity(),
@@ -37,6 +40,12 @@ export class StructuredMemoryRetrievalPlanner {
         this.store.listConflicts({ entityId: options.activeEntityId, limit: 3, status: "unresolved" }),
         this.store.listRecentEpisodic({ entityId: options.activeEntityId, limit: 8 })
       ]);
+    const [recentAutonomyIntents, recentHeartbeatReplies] = includeAutonomousWork
+      ? await Promise.all([
+          this.store.listAutonomyIntents({ limit: 12 }),
+          this.store.listHeartbeatReplyRecords({ limit: 12 }),
+        ])
+      : [[], []] satisfies [AutonomyIntent[], HeartbeatReplyRecord[]];
 
     const selfGrounded: StructuredMemoryPackageEntry[] = [];
     const otherGrounded: StructuredMemoryPackageEntry[] = [];
@@ -159,6 +168,11 @@ export class StructuredMemoryRetrievalPlanner {
       });
     }
 
+    const autonomousWorkEntry = buildRecentAutonomousWorkEntry(recentAutonomyIntents, recentHeartbeatReplies, query);
+    if (autonomousWorkEntry) {
+      taskGroundedHints.push(autonomousWorkEntry);
+    }
+
     const evidenceIds = [
       ...new Set([
         ...selfGrounded.flatMap((item) => item.evidenceIds ?? []),
@@ -238,6 +252,95 @@ function baseMatchScore(text: string, tokens: string[]): number {
   }
   const haystack = text.toLowerCase();
   return tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+}
+
+function shouldRecallAutonomousWork(query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /\b(heartbeat|autonomy|autonomous|background|behind the scenes|recent work|what were you doing|what have you been doing)\b/iu.test(normalized)
+    || /(心跳|后台|后台任务|自动任务|自主任务|最近.*做了什么|刚刚.*干嘛|刚才.*干嘛|你在忙什么|你最近在做什么)/u.test(query);
+}
+
+function buildRecentAutonomousWorkEntry(
+  intents: AutonomyIntent[],
+  replies: HeartbeatReplyRecord[],
+  query: string,
+): StructuredMemoryPackageEntry | null {
+  if (intents.length === 0 && replies.length === 0) {
+    return null;
+  }
+
+  const rankedIntents = rankAutonomyIntents(intents, replies, query).slice(0, 3);
+  if (rankedIntents.length === 0) {
+    return null;
+  }
+
+  const replyByIntentId = new Map(
+    replies
+      .filter((item) => item.intentId)
+      .map((item) => [item.intentId!, item] as const),
+  );
+  const summaryLines = rankedIntents.map((intent) => {
+    const reply = replyByIntentId.get(intent.id);
+    const outcome = reply
+      ? ` Outcome: ${reply.status}${reply.reason ? ` (${reply.reason})` : ""}${reply.normalizedText ? ` — ${summarizeText(reply.normalizedText, 100)}` : ""}.`
+      : "";
+    return `[${intent.kind}/${intent.status}] ${summarizeText(intent.goal, 140)}.${outcome}`;
+  });
+
+  return {
+    scope: "self",
+    title: "Recent Autonomous Work",
+    summary: compactLines(summaryLines),
+    sourceIds: rankedIntents.map((item) => item.id),
+  };
+}
+
+function rankAutonomyIntents(
+  intents: AutonomyIntent[],
+  replies: HeartbeatReplyRecord[],
+  query: string,
+): AutonomyIntent[] {
+  const tokens = tokenize(query);
+  const replyByIntentId = new Map(
+    replies
+      .filter((item) => item.intentId)
+      .map((item) => [item.intentId!, item] as const),
+  );
+
+  return [...intents].sort((left, right) =>
+    autonomyIntentScore(right, tokens, replyByIntentId) - autonomyIntentScore(left, tokens, replyByIntentId)
+      || right.createdAt - left.createdAt
+  );
+}
+
+function autonomyIntentScore(
+  intent: AutonomyIntent,
+  tokens: string[],
+  replyByIntentId: Map<string, HeartbeatReplyRecord>,
+): number {
+  const reply = replyByIntentId.get(intent.id);
+  const recencyBonus = Math.max(0, 1 - ((Date.now() - intent.createdAt) / (2 * 60 * 60_000)));
+  return baseMatchScore(
+    [
+      intent.goal,
+      intent.evidence.join(" "),
+      reply?.normalizedText ?? "",
+      reply?.reason ?? "",
+    ].join(" "),
+    tokens,
+  ) + recencyBonus;
+}
+
+function summarizeText(text: string, limit: number): string {
+  const normalized = text.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit - 1)}…`;
 }
 
 function renderKnownFacts(value: Record<string, string>): string {

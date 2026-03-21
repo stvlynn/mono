@@ -75,6 +75,48 @@ describe("structured memory", () => {
     expect(rendered).toContain("prefers_directness");
   });
 
+  it("recalls recent autonomous work only for broad background-status queries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mono-structured-autonomy-recall-"));
+    const store = new FolderStructuredMemoryStore(root);
+    await store.ensureLayout();
+
+    await store.appendAutonomyIntent({
+      createdAt: Date.now() - 5_000,
+      kind: "curiosity_probe",
+      sourceSignal: "novelty_signal",
+      priority: 0.58,
+      riskLevel: "low",
+      recommendedAction: "enqueue_task",
+      status: "completed",
+      goal: "Explore one background question suggested by runtime seed: sticker webp handling. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.",
+      evidence: ["Seed: <media:sticker> [image:image/webp]"],
+    });
+    const intent = (await store.listAutonomyIntents({ limit: 1 }))[0]!;
+    await store.appendHeartbeatReplyRecord({
+      createdAt: Date.now() - 4_000,
+      sessionId: "heartbeat-1",
+      intentId: intent.id,
+      comparisonKey: "curiosity_probe:sticker_webp_handling",
+      status: "suppressed",
+      rawText: "",
+      normalizedText: "",
+      reason: "empty-reply",
+    });
+
+    const planner = new StructuredMemoryRetrievalPlanner(store, createDefaultMemoryV2Config());
+    const backgroundPackage = await planner.buildPackage({
+      query: "你刚刚在后台做什么",
+      activeEntityId: "primary-user",
+    });
+    const normalPackage = await planner.buildPackage({
+      query: "direct concise summary",
+      activeEntityId: "primary-user",
+    });
+
+    expect(backgroundPackage.taskGroundedHints.some((entry) => entry.title === "Recent Autonomous Work")).toBe(true);
+    expect(normalPackage.taskGroundedHints.some((entry) => entry.title === "Recent Autonomous Work")).toBe(false);
+  });
+
   it("normalizes legacy self runtime and project profile records that are missing newer fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "mono-structured-legacy-"));
     const store = new FolderStructuredMemoryStore(root);

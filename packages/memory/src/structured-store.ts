@@ -145,7 +145,8 @@ export class FolderStructuredMemoryStore {
       strategyStats: patch.strategyStats ?? current.strategyStats,
       failurePatterns: patch.failurePatterns ?? current.failurePatterns,
       userPreferenceBias: patch.userPreferenceBias ?? current.userPreferenceBias,
-      cooldowns: patch.cooldowns ?? current.cooldowns
+      cooldowns: patch.cooldowns ?? current.cooldowns,
+      autonomyTopicStats: patch.autonomyTopicStats ?? current.autonomyTopicStats,
     };
     await writeJsonFile(this.learningStatePath(), next);
     return next;
@@ -667,7 +668,8 @@ function defaultLearningState(): LearningState {
     strategyStats: [],
     failurePatterns: [],
     userPreferenceBias: {},
-    cooldowns: []
+    cooldowns: [],
+    autonomyTopicStats: [],
   };
 }
 
@@ -680,6 +682,7 @@ function normalizeLearningState(record: LearningState): LearningState {
     failurePatterns: record.failurePatterns ?? defaults.failurePatterns,
     userPreferenceBias: record.userPreferenceBias ?? defaults.userPreferenceBias,
     cooldowns: record.cooldowns ?? defaults.cooldowns,
+    autonomyTopicStats: record.autonomyTopicStats ?? defaults.autonomyTopicStats,
   };
 }
 

@@ -102,7 +102,7 @@ export function buildTaskTurnPlan(
       prompt: [
         "You are in curiosity exploration mode.",
         `Goal: ${task.goal}`,
-        "Investigate one small repo question suggested by recent runtime context.",
+        "Investigate one small background question suggested by recent runtime context.",
         "Use read or bash only for concrete evidence.",
         "Choose one most-likely file or one read-only shell command first.",
         "Use at most two tool calls.",

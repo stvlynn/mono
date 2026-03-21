@@ -412,7 +412,7 @@ describeIfRealTestModel("task runtime", () => {
   it("uses a curiosity turn plan that avoids todo planning and requires reply tags", () => {
     const task = advanceTaskPhase(
       createTaskState({
-        goal: "Explore one repo question suggested by recent runtime context.",
+        goal: "Explore one background question suggested by recent runtime context.",
         model,
         existingMessages: []
       }),
@@ -423,6 +423,7 @@ describeIfRealTestModel("task runtime", () => {
 
     expect(plan.phase).toBe("execute");
     expect(plan.prompt).toContain("You are in curiosity exploration mode.");
+    expect(plan.prompt).toContain("Investigate one small background question suggested by recent runtime context.");
     expect(plan.prompt).toContain("Do not create todo plans or edit files.");
     expect(plan.prompt).toContain("[final-reply]...[/final-reply]");
     expect(plan.prompt).toContain("[curiosity-question: ...]");

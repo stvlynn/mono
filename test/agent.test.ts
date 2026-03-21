@@ -6,7 +6,12 @@ import { createTaskTodoRecord } from "../packages/agent-core/src/memory-runtime.
 import type { MemoryRecord, TaskResult } from "../packages/shared/src/index.js";
 import { createTestProfileConfig, describeIfRealTestModel, getTestModelSelectionString } from "./helpers/test-model-env.js";
 
-async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: boolean; memory?: Record<string, unknown>; channels?: Record<string, unknown> }): Promise<string> {
+async function createAgentConfig(rootDir: string, options?: {
+  memoryEnabled?: boolean;
+  memory?: Record<string, unknown>;
+  channels?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+}): Promise<string> {
   const configDir = join(rootDir, ".mono");
   const testProfile = createTestProfileConfig();
   await mkdir(configDir, { recursive: true });
@@ -31,6 +36,7 @@ async function createAgentConfig(rootDir: string, options?: { memoryEnabled?: bo
           keywordSearchLimit: 6,
           ...options?.memory
         },
+        settings: options?.settings,
         channels: options?.channels
       }
     }),
@@ -306,6 +312,37 @@ describeIfRealTestModel("Agent", () => {
     expect(heartbeat.triggeredIntent).toBeUndefined();
     expect(structured.heartbeatDecisions.length).toBeGreaterThan(0);
     expect(structured.heartbeatDecisions[0]?.decision).toBe("noop");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
+  it("syncs the heartbeat hourly cap from resolved settings into self runtime", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-heartbeat-settings-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir, {
+      settings: {
+        autonomy: {
+          enabled: true,
+          heartbeatIntervalMs: 45_000,
+          maxAutonomousTasksPerHour: 2,
+          allowBroadExecution: false,
+          isolatedSession: false,
+        },
+      },
+    });
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const structured = await agent.inspectStructuredMemory();
+    expect(structured.selfRuntime.autonomyPolicy).toMatchObject({
+      heartbeatIntervalMs: 45_000,
+      maxAutonomousTasksPerHour: 2,
+      allowBroadExecution: false,
+      isolatedSession: false,
+    });
 
     delete process.env.MONO_CONFIG_DIR;
   });
@@ -1332,7 +1369,7 @@ describeIfRealTestModel("Agent", () => {
         interactionMode: "default" | "channel_chat" | "curiosity",
       ) => string;
     }).buildTaskContextForRun({
-      goal: "Explore one repo question suggested by recent runtime context.",
+      goal: "Explore one background question suggested by recent runtime context.",
       phase: "execute",
       attempts: 0,
       verification: {
@@ -1341,6 +1378,7 @@ describeIfRealTestModel("Agent", () => {
     }, null, "curiosity");
 
     expect(contextText).toContain("Mode: curiosity");
+    expect(contextText).toContain("Scan the available background context lightly and gather only read-only evidence.");
     expect(contextText).toContain("Do not edit files or use write_todos.");
     expect(contextText).toContain("[curiosity-question: ...]");
   });

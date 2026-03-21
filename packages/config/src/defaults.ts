@@ -147,7 +147,33 @@ export function createDefaultSettingsConfig(): MonoSettingsConfig {
     approvalPolicy: "on-request",
     sandboxMode: "danger-full-access",
     theme: "system",
-    sensitiveActionMode: "blacklist"
+    sensitiveActionMode: "blacklist",
+    maxAutonomousTasksPerHour: 6,
+    safety: {
+      approvalMode: "default",
+      approvalPolicy: "on-request",
+      sandboxMode: "danger-full-access",
+      sensitiveActionMode: "blacklist",
+    },
+    autonomy: {
+      enabled: true,
+      heartbeatIntervalMs: 30_000,
+      maxAutonomousTasksPerHour: 6,
+      allowBroadExecution: true,
+      isolatedSession: true,
+    },
+    appearance: {
+      theme: "system",
+    },
+    tui: {
+      cleanUiDetailsVisible: true,
+      footerVisible: true,
+      alternateBuffer: "auto",
+      shortcutsHint: true,
+      assistantMarkdownEnabled: true,
+      thinkingVisible: true,
+      toolDetailsVisible: true,
+    },
   };
 }
 

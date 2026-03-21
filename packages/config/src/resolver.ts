@@ -175,15 +175,66 @@ function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChan
 
 function resolveSettingsConfig(globalConfig: MonoGlobalConfig): MonoSettingsConfig {
   const defaults = createDefaultSettingsConfig();
-  const resolved = {
-    ...defaults,
-    ...(globalConfig.mono.settings ?? {})
+  const configured = globalConfig.mono.settings ?? {};
+  const approvalMode = configured.safety?.approvalMode ?? configured.approvalMode ?? defaults.approvalMode;
+  const approvalPolicy = configured.safety?.approvalPolicy ?? configured.approvalPolicy ?? defaults.approvalPolicy;
+  const sandboxMode = configured.safety?.sandboxMode ?? configured.sandboxMode ?? defaults.sandboxMode;
+  const sensitiveActionMode = configured.safety?.sensitiveActionMode ?? configured.sensitiveActionMode ?? defaults.sensitiveActionMode;
+  const theme = configured.appearance?.theme ?? configured.theme ?? defaults.theme;
+  const maxAutonomousTasksPerHour =
+    configured.autonomy?.maxAutonomousTasksPerHour
+    ?? configured.maxAutonomousTasksPerHour
+    ?? defaults.maxAutonomousTasksPerHour;
+  const autonomy = {
+    ...defaults.autonomy,
+    ...(configured.autonomy ?? {}),
+    maxAutonomousTasksPerHour,
+  };
+  const tui = {
+    ...defaults.tui,
+    ...(configured.tui ?? {}),
   };
   return {
-    ...resolved,
-    approvalPolicy: requireConfiguredApprovalPolicy(resolved.approvalPolicy),
-    sandboxMode: requireConfiguredSandboxMode(resolved.sandboxMode),
+    approvalMode: requireConfiguredApprovalMode(approvalMode),
+    approvalPolicy: requireConfiguredApprovalPolicy(approvalPolicy),
+    sandboxMode: requireConfiguredSandboxMode(sandboxMode),
+    theme,
+    sensitiveActionMode: requireConfiguredSensitiveActionMode(sensitiveActionMode),
+    maxAutonomousTasksPerHour: requireConfiguredMaxAutonomousTasksPerHour(maxAutonomousTasksPerHour),
+    safety: {
+      approvalMode: requireConfiguredApprovalMode(approvalMode),
+      approvalPolicy: requireConfiguredApprovalPolicy(approvalPolicy),
+      sandboxMode: requireConfiguredSandboxMode(sandboxMode),
+      sensitiveActionMode: requireConfiguredSensitiveActionMode(sensitiveActionMode),
+    },
+    autonomy: {
+      enabled: requireBooleanSetting("mono.settings.autonomy.enabled", autonomy.enabled),
+      heartbeatIntervalMs: requirePositiveIntegerSetting("mono.settings.autonomy.heartbeatIntervalMs", autonomy.heartbeatIntervalMs),
+      maxAutonomousTasksPerHour: requireConfiguredMaxAutonomousTasksPerHour(maxAutonomousTasksPerHour),
+      allowBroadExecution: requireBooleanSetting("mono.settings.autonomy.allowBroadExecution", autonomy.allowBroadExecution),
+      isolatedSession: requireBooleanSetting("mono.settings.autonomy.isolatedSession", autonomy.isolatedSession),
+    },
+    appearance: {
+      theme,
+    },
+    tui: {
+      cleanUiDetailsVisible: requireBooleanSetting("mono.settings.tui.cleanUiDetailsVisible", tui.cleanUiDetailsVisible),
+      footerVisible: requireBooleanSetting("mono.settings.tui.footerVisible", tui.footerVisible),
+      alternateBuffer: requireConfiguredAlternateBufferMode(tui.alternateBuffer),
+      shortcutsHint: requireBooleanSetting("mono.settings.tui.shortcutsHint", tui.shortcutsHint),
+      assistantMarkdownEnabled: requireBooleanSetting("mono.settings.tui.assistantMarkdownEnabled", tui.assistantMarkdownEnabled),
+      thinkingVisible: requireBooleanSetting("mono.settings.tui.thinkingVisible", tui.thinkingVisible),
+      toolDetailsVisible: requireBooleanSetting("mono.settings.tui.toolDetailsVisible", tui.toolDetailsVisible),
+    },
   };
+}
+
+function requireConfiguredApprovalMode(value: string): MonoSettingsConfig["approvalMode"] {
+  if (value === "default" || value === "always-ask" || value === "auto-approve-safe") {
+    return value;
+  }
+
+  throw new Error(`Invalid mono.settings.approvalMode: ${value}`);
 }
 
 function requireConfiguredApprovalPolicy(value: string): MonoSettingsConfig["approvalPolicy"] {
@@ -204,6 +255,46 @@ function requireConfiguredSandboxMode(value: string): MonoSettingsConfig["sandbo
   }
 
   throw new Error(`Invalid mono.settings.sandboxMode: ${value}`);
+}
+
+function requireConfiguredMaxAutonomousTasksPerHour(value: number): number {
+  if (Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  throw new Error(`Invalid mono.settings.maxAutonomousTasksPerHour: ${String(value)}`);
+}
+
+function requireConfiguredSensitiveActionMode(value: string): MonoSettingsConfig["sensitiveActionMode"] {
+  if (value === "allow_all" || value === "blacklist" || value === "strict") {
+    return value;
+  }
+
+  throw new Error(`Invalid mono.settings.sensitiveActionMode: ${value}`);
+}
+
+function requireConfiguredAlternateBufferMode(value: unknown): MonoSettingsConfig["tui"]["alternateBuffer"] {
+  if (value === true || value === false || value === "auto") {
+    return value;
+  }
+
+  throw new Error(`Invalid mono.settings.tui.alternateBuffer: ${String(value)}`);
+}
+
+function requireBooleanSetting(path: string, value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  throw new Error(`Invalid ${path}: ${String(value)}`);
+}
+
+function requirePositiveIntegerSetting(path: string, value: unknown): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  throw new Error(`Invalid ${path}: ${String(value)}`);
 }
 
 export async function getMonoConfigSummary(cwd = process.cwd()): Promise<MonoConfigSummary> {

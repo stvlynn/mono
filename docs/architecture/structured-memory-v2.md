@@ -131,6 +131,7 @@ The planner currently ranks and groups:
 - preferences by query token overlap plus confidence
 - inferences by query overlap, confidence, and status bonus
 - episodic events by query overlap plus salience
+- recent autonomous work only when the query asks about background / recent heartbeat activity
 - summaries into `selfGrounded`, `otherGrounded`, and `taskGroundedHints`
 
 ## Rendering and Prompt Injection

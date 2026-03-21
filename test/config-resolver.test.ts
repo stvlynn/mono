@@ -48,6 +48,9 @@ describeIfRealTestModel("config resolver", () => {
     expect(defaultResolved.settings.sensitiveActionMode).toBe("blacklist");
     expect(defaultResolved.settings.approvalPolicy).toBe("on-request");
     expect(defaultResolved.settings.sandboxMode).toBe("danger-full-access");
+    expect(defaultResolved.settings.maxAutonomousTasksPerHour).toBe(6);
+    expect(defaultResolved.settings.autonomy.heartbeatIntervalMs).toBe(30_000);
+    expect(defaultResolved.settings.tui.assistantMarkdownEnabled).toBe(true);
 
     await writeJsonFile(join(configDir, "config.json"), {
       version: 1,
@@ -57,9 +60,30 @@ describeIfRealTestModel("config resolver", () => {
           default: testProfile
         },
         settings: {
-          sensitiveActionMode: "strict",
-          approvalPolicy: "never",
-          sandboxMode: "read-only"
+          safety: {
+            sensitiveActionMode: "strict",
+            approvalPolicy: "never",
+            sandboxMode: "read-only",
+          },
+          autonomy: {
+            maxAutonomousTasksPerHour: 3,
+            heartbeatIntervalMs: 45_000,
+            allowBroadExecution: false,
+            isolatedSession: false,
+            enabled: true,
+          },
+          appearance: {
+            theme: "light",
+          },
+          tui: {
+            assistantMarkdownEnabled: false,
+            thinkingVisible: false,
+            alternateBuffer: "auto",
+            toolDetailsVisible: false,
+            footerVisible: false,
+            shortcutsHint: false,
+            cleanUiDetailsVisible: false,
+          },
         }
       },
       projects: {}
@@ -69,6 +93,13 @@ describeIfRealTestModel("config resolver", () => {
     expect(strictResolved.settings.sensitiveActionMode).toBe("strict");
     expect(strictResolved.settings.approvalPolicy).toBe("never");
     expect(strictResolved.settings.sandboxMode).toBe("read-only");
+    expect(strictResolved.settings.maxAutonomousTasksPerHour).toBe(3);
+    expect(strictResolved.settings.autonomy.heartbeatIntervalMs).toBe(45_000);
+    expect(strictResolved.settings.autonomy.allowBroadExecution).toBe(false);
+    expect(strictResolved.settings.autonomy.isolatedSession).toBe(false);
+    expect(strictResolved.settings.theme).toBe("light");
+    expect(strictResolved.settings.tui.assistantMarkdownEnabled).toBe(false);
+    expect(strictResolved.settings.tui.toolDetailsVisible).toBe(false);
   });
 
   it("rejects invalid or unsupported safety settings from config", async () => {
@@ -121,6 +152,43 @@ describeIfRealTestModel("config resolver", () => {
       }
     });
     await expect(resolveMonoConfig({ cwd })).rejects.toThrow("mono.settings.sandboxMode=workspace-write is not implemented yet.");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      ...baseConfig,
+      mono: {
+        ...baseConfig.mono,
+        settings: {
+          maxAutonomousTasksPerHour: 0 as never,
+        }
+      }
+    });
+    await expect(resolveMonoConfig({ cwd })).rejects.toThrow("Invalid mono.settings.maxAutonomousTasksPerHour: 0");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      ...baseConfig,
+      mono: {
+        ...baseConfig.mono,
+        settings: {
+          autonomy: {
+            heartbeatIntervalMs: 0 as never,
+          },
+        }
+      }
+    });
+    await expect(resolveMonoConfig({ cwd })).rejects.toThrow("Invalid mono.settings.autonomy.heartbeatIntervalMs: 0");
+
+    await writeJsonFile(join(configDir, "config.json"), {
+      ...baseConfig,
+      mono: {
+        ...baseConfig.mono,
+        settings: {
+          tui: {
+            alternateBuffer: "sometimes" as never,
+          },
+        }
+      }
+    });
+    await expect(resolveMonoConfig({ cwd })).rejects.toThrow("Invalid mono.settings.tui.alternateBuffer: sometimes");
   });
 
   it("resolves default context settings and applies project overrides", async () => {

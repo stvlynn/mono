@@ -1,6 +1,7 @@
 import {
   createId,
   type AutonomyIntent,
+  type AutonomyTopicStat,
   type FeedbackSignal,
   type HeartbeatDecision,
   type LearningState,
@@ -19,6 +20,7 @@ export interface HeartbeatInputs {
   todos: TaskTodoRecord[];
   recentFeedback: FeedbackSignal[];
   recentSessionTexts: string[];
+  recentIntents?: AutonomyIntent[];
   currentTaskId?: string;
 }
 
@@ -47,9 +49,22 @@ const STALLED_TODO_AGE_MS = 30_000;
 const MAX_CURRENT_GOALS = 6;
 const MAX_FAILURE_PATTERNS = 8;
 const MAX_COOLDOWNS = 8;
+const MAX_AUTONOMY_TOPIC_STATS = 24;
 const AUTONOMY_COOLDOWN_MS = 5 * 60_000;
 export const CURIOSITY_COOLDOWN_KEY = "curiosity:global";
 export const CURIOSITY_COOLDOWN_MS = 15 * 60_000;
+const AUTONOMY_TOPIC_REPEAT_WINDOW_MS = 2 * 60 * 60_000;
+const AUTONOMY_TOPIC_DECAY_MS = 6 * 60 * 60_000;
+const AUTONOMY_TOPIC_SUPPRESSION_THRESHOLD = 0.9;
+const AUTONOMY_TOPIC_MAX_BOREDOM = 1.4;
+const AUTONOMY_TOPIC_STOPWORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "what", "why", "how", "does", "should", "within", "from",
+  "into", "recent", "current", "question", "questions", "seed", "suggested", "suggest", "runtime", "context",
+  "repo", "scan", "lightly", "identify", "concrete", "information", "record", "evidence", "stop", "explore",
+  "investigate", "resolve", "review", "repeated", "failures", "background", "task", "tasks",
+  "如何", "为什么", "什么", "问题", "探索", "调查", "解决", "记录", "证据", "假设", "最近", "当前",
+  "运行时", "上下文", "任务", "后台", "重复", "失败", "应该",
+]);
 
 export function createAutonomyLease(now = Date.now()): TaskLease {
   return {
@@ -78,47 +93,117 @@ export function buildHeartbeatSelection(input: HeartbeatInputs): HeartbeatSelect
   const todoCandidates = buildTodoCandidates(input);
   const openQuestionCandidates = buildOpenQuestionCandidates(input);
   const feedbackCandidates = buildFeedbackReflectionCandidate(input);
-  const curiosityCandidates = buildCuriosityCandidates(input, {
-    todoCandidates,
-    openQuestionCandidates,
-    feedbackCandidates,
-  });
-  const candidates = applyAutonomyBias([
+  const primaryCandidates = filterDuplicateAutonomyCandidates(
+    applyAutonomyBias([
     ...todoCandidates,
     ...openQuestionCandidates,
     ...feedbackCandidates,
-    ...curiosityCandidates,
-  ], autonomyBias)
+  ], autonomyBias),
+    input.recentIntents ?? [],
+    input.now,
+  )
+    .sort((left, right) => right.priority - left.priority || left.goal.localeCompare(right.goal));
+  const selectedPrimaryIntent = primaryCandidates[0];
+
+  if (selectedPrimaryIntent && selectedPrimaryIntent.priority >= AUTONOMY_PRIORITY_THRESHOLD) {
+    if (!input.selfRuntime.autonomyPolicy.allowBroadExecution && selectedPrimaryIntent.riskLevel !== "low") {
+      return createConfirmationHeartbeatSelection(input.now, selectedPrimaryIntent, primaryCandidates);
+    }
+
+    return {
+      selectedIntent: selectedPrimaryIntent,
+      decision: {
+        timestamp: input.now,
+        decision: selectedPrimaryIntent.recommendedAction,
+        reasons: [
+          `Selected ${selectedPrimaryIntent.kind} with priority ${selectedPrimaryIntent.priority.toFixed(2)}.`,
+          `Risk level is ${selectedPrimaryIntent.riskLevel}.`,
+        ],
+        selectedIntentId: selectedPrimaryIntent.id,
+        candidates: primaryCandidates.map(toDecisionCandidate),
+      },
+    };
+  }
+
+  const curiosityCandidates = filterDuplicateAutonomyCandidates(
+    applyAutonomyBias(buildCuriosityCandidates(input, {
+    todoCandidates,
+    openQuestionCandidates,
+    feedbackCandidates,
+  }), autonomyBias),
+    input.recentIntents ?? [],
+    input.now,
+  )
+    .sort((left, right) => right.priority - left.priority || left.goal.localeCompare(right.goal));
+  const candidates = [...primaryCandidates, ...curiosityCandidates]
     .sort((left, right) => right.priority - left.priority || left.goal.localeCompare(right.goal));
 
-  const selectedIntent = candidates[0];
-  if (!selectedIntent || selectedIntent.priority < AUTONOMY_PRIORITY_THRESHOLD) {
+  const fallbackIntent = selectedPrimaryIntent
+    ? candidates.find((candidate) =>
+        candidate.id !== selectedPrimaryIntent.id
+        && !autonomyTextsShareTopic(candidate.goal, selectedPrimaryIntent.goal)
+      )
+    : candidates[0];
+
+  if (fallbackIntent) {
+    return {
+      selectedIntent: fallbackIntent,
+      decision: {
+        timestamp: input.now,
+        decision: fallbackIntent.recommendedAction,
+        reasons: [
+          selectedPrimaryIntent
+            ? `Primary candidate priority ${selectedPrimaryIntent.priority.toFixed(2)} is below threshold; selecting a different-topic fallback instead.`
+            : "No primary autonomy candidate was eligible; selecting fallback work instead.",
+          `Selected ${fallbackIntent.kind} with priority ${fallbackIntent.priority.toFixed(2)}.`,
+        ],
+        selectedIntentId: fallbackIntent.id,
+        candidates: candidates.map(toDecisionCandidate),
+      },
+    };
+  }
+
+  if (!selectedPrimaryIntent) {
     return createNoopHeartbeatSelection(
       input.now,
-      candidates.length === 0
-        ? "No autonomy candidates were eligible."
-        : `Top candidate priority ${selectedIntent?.priority.toFixed(2) ?? "0.00"} is below threshold.`,
+      "No autonomy candidates were eligible.",
       candidates,
     );
   }
 
-  if (!input.selfRuntime.autonomyPolicy.allowBroadExecution && selectedIntent.riskLevel !== "low") {
-    return createConfirmationHeartbeatSelection(input.now, selectedIntent, candidates);
+  return createNoopHeartbeatSelection(
+    input.now,
+    `Top candidate priority ${selectedPrimaryIntent.priority.toFixed(2)} is below threshold and no different-topic fallback was eligible.`,
+    candidates,
+  );
+}
+
+export function autonomyTextsShareTopic(left: string, right: string): boolean {
+  const leftTerms = extractAutonomyTopicTerms(left);
+  const rightTerms = extractAutonomyTopicTerms(right);
+  if (leftTerms.length === 0 || rightTerms.length === 0) {
+    return false;
   }
 
-  return {
-    selectedIntent,
-    decision: {
-      timestamp: input.now,
-      decision: selectedIntent.recommendedAction,
-      reasons: [
-        `Selected ${selectedIntent.kind} with priority ${selectedIntent.priority.toFixed(2)}.`,
-        `Risk level is ${selectedIntent.riskLevel}.`,
-      ],
-      selectedIntentId: selectedIntent.id,
-      candidates: candidates.map(toDecisionCandidate),
-    },
-  };
+  const leftSet = new Set(leftTerms);
+  const sharedCount = rightTerms.filter((term) => leftSet.has(term)).length;
+  if (sharedCount >= 2) {
+    return true;
+  }
+
+  return sharedCount >= 1 && (leftTerms.length <= 2 || rightTerms.length <= 2);
+}
+
+export function normalizeAutonomyTopicKey(text: string): string {
+  const terms = extractAutonomyTopicTerms(text);
+  if (terms.length === 0) {
+    return normalizeKey(stripAutonomyTopicPrefixes(text));
+  }
+
+  return [...new Set(terms)]
+    .slice(0, 4)
+    .sort()
+    .join("__");
 }
 
 function buildCuriosityCandidates(
@@ -129,14 +214,6 @@ function buildCuriosityCandidates(
     feedbackCandidates: AutonomyIntent[];
   },
 ): AutonomyIntent[] {
-  if (
-    existing.todoCandidates.length > 0
-    || existing.openQuestionCandidates.length > 0
-    || existing.feedbackCandidates.length > 0
-  ) {
-    return [];
-  }
-
   if (isCooldownActive(input.now, CURIOSITY_COOLDOWN_KEY, input.selfRuntime.cooldowns, input.learningState.cooldowns)) {
     return [];
   }
@@ -144,6 +221,8 @@ function buildCuriosityCandidates(
   const representedQuestions = new Set(input.selfRuntime.openQuestions.map(normalizeKey));
   const representedHypotheses = new Set(input.selfRuntime.currentHypotheses.map(normalizeKey));
   const seenSeeds = new Set<string>();
+  const representedQuestionTexts = input.selfRuntime.openQuestions;
+  const representedHypothesisTexts = input.selfRuntime.currentHypotheses;
 
   for (const seed of collectCuriositySeeds(input)) {
     if (!isCuriositySeedEligible(seed)) {
@@ -162,17 +241,28 @@ function buildCuriosityCandidates(
     if (seed.source !== "hypothesis" && representedHypotheses.has(normalizedSeed)) {
       continue;
     }
+    if (representedQuestionTexts.some((text) => autonomyTextsShareTopic(text, seed.text))) {
+      continue;
+    }
+    if (seed.source !== "hypothesis" && representedHypothesisTexts.some((text) => autonomyTextsShareTopic(text, seed.text))) {
+      continue;
+    }
+
+    const repetitionPenalty = evaluateAutonomyTopicPenalty(seed.text, input.learningState.autonomyTopicStats ?? [], input.now);
+    if (repetitionPenalty.suppressed) {
+      continue;
+    }
 
     return [{
       id: createId(),
       createdAt: input.now,
       kind: "curiosity_probe",
       sourceSignal: "novelty_signal",
-      priority: 0.58,
+      priority: clamp(0.58 - repetitionPenalty.penalty, 0, 1),
       riskLevel: "low",
       recommendedAction: "enqueue_task",
       status: "pending",
-      goal: `Explore one repo question suggested by runtime seed: ${seed.text}. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.`,
+      goal: `Explore one background question suggested by runtime seed: ${seed.text}. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.`,
       evidence: [`Seed: ${seed.text}`],
     } satisfies AutonomyIntent];
   }
@@ -474,7 +564,16 @@ export function applyFeedbackToLearningState(
   signals: FeedbackSignal[],
   task: TaskState,
   diagnosis: TaskDiagnosis | null,
-  now: number
+  now: number,
+  options: {
+    autonomyIntent?: AutonomyIntent;
+    heartbeatReplyEvaluation?: {
+      status: "sent" | "ack" | "duplicate" | "suppressed";
+      visibleText: string;
+      reason: string;
+    };
+    taskStatus?: TaskResult["status"];
+  } = {},
 ): LearningState {
   const strategy = diagnosis
     ? `${task.origin ?? "user"}:${diagnosis.code}`
@@ -536,6 +635,14 @@ export function applyFeedbackToLearningState(
         reason: diagnosis.summary,
       }])
     : current.cooldowns;
+  const autonomyTopicStats = options.autonomyIntent
+    ? updateAutonomyTopicStats(current.autonomyTopicStats ?? [], {
+        intent: options.autonomyIntent,
+        taskStatus: options.taskStatus,
+        heartbeatReplyEvaluation: options.heartbeatReplyEvaluation,
+        now,
+      })
+    : (current.autonomyTopicStats ?? []);
 
   return {
     updatedAt: now,
@@ -543,6 +650,7 @@ export function applyFeedbackToLearningState(
     failurePatterns,
     userPreferenceBias,
     cooldowns,
+    autonomyTopicStats,
   };
 }
 
@@ -639,12 +747,16 @@ function buildOpenQuestionCandidates(input: HeartbeatInputs): AutonomyIntent[] {
     const frictionBoost = input.selfRuntime.frictionPatterns.some((item) =>
       hasSharedTerms(item, question)
     ) ? 0.02 : 0;
+    const repetitionPenalty = evaluateAutonomyTopicPenalty(question, input.learningState.autonomyTopicStats ?? [], input.now);
+    if (repetitionPenalty.suppressed) {
+      return [];
+    }
     return [{
       id: createId(),
       createdAt: input.now,
       kind: "investigate_gap",
       sourceSignal: "open_question",
-      priority: clamp(0.7 + feedbackBias + frictionBoost - 0.18, 0, 1),
+      priority: clamp(0.7 + feedbackBias + frictionBoost - 0.18 - repetitionPenalty.penalty, 0, 1),
       riskLevel: "low",
       recommendedAction: "enqueue_task",
       status: "pending",
@@ -685,17 +797,20 @@ function buildFeedbackReflectionCandidate(input: HeartbeatInputs): AutonomyInten
 
 function collectCuriositySeeds(input: HeartbeatInputs): Array<{
   text: string;
-  source: "session" | "hypothesis";
+  source: "session" | "hypothesis" | "task_hint" | "goal" | "tension";
 }> {
   return [
     ...input.selfRuntime.currentHypotheses.slice(-4).reverse().map((text) => ({ text, source: "hypothesis" as const })),
+    ...input.selfRuntime.taskHints.slice(-4).reverse().map((text) => ({ text, source: "task_hint" as const })),
+    ...input.selfRuntime.currentGoals.slice(-4).reverse().map((text) => ({ text, source: "goal" as const })),
+    ...input.selfRuntime.currentTensions.slice(-4).reverse().map((text) => ({ text, source: "tension" as const })),
     ...input.recentSessionTexts.slice(-8).reverse().map((text) => ({ text, source: "session" as const })),
   ].filter((seed) => seed.text.trim() && !isSelfReferentialCuriosityText(seed.text));
 }
 
 function isCuriositySeedEligible(seed: {
   text: string;
-  source: "session" | "hypothesis";
+  source: "session" | "hypothesis" | "task_hint" | "goal" | "tension";
 }): boolean {
   if (seed.source === "hypothesis") {
     return true;
@@ -712,6 +827,34 @@ function toDecisionCandidate(intent: AutonomyIntent): HeartbeatDecision["candida
     goal: intent.goal,
     riskLevel: intent.riskLevel,
   };
+}
+
+function filterDuplicateAutonomyCandidates(
+  candidates: AutonomyIntent[],
+  recentIntents: AutonomyIntent[],
+  now: number,
+): AutonomyIntent[] {
+  return candidates.filter((candidate) => !hasMatchingUnresolvedIntent(candidate, recentIntents, now));
+}
+
+function hasMatchingUnresolvedIntent(
+  candidate: AutonomyIntent,
+  recentIntents: AutonomyIntent[],
+  now: number,
+): boolean {
+  return recentIntents.some((intent) =>
+    intent.status !== "completed"
+      && (
+        candidate.kind !== "curiosity_probe"
+        || intent.createdAt >= now - CURIOSITY_COOLDOWN_MS
+      )
+      && intent.kind === candidate.kind
+      && intent.sourceSignal === candidate.sourceSignal
+      && (
+        intent.goal === candidate.goal
+        || autonomyTextsShareTopic(intent.goal, candidate.goal)
+      )
+  );
 }
 
 function isCooldownActive(
@@ -781,8 +924,8 @@ function isDiagnosticSessionSeed(text: string): boolean {
   const normalized = text.trim();
   return /`[^`]+`/u.test(normalized)
     || /\/[A-Za-z0-9._/-]+/.test(normalized)
-    || /\b(sendSticker|channel_action|write_todos|getUpdates|telegram|sticker|runtime|session|channel|tool|function|api|repo|path)\b/iu.test(normalized)
-    || /(为什么|如何|问题|原因|路径|行为|运行时|会话|通道|工具|函数|接口|仓库|代码)/u.test(normalized);
+    || /\b(sendSticker|channel_action|write_todos|getUpdates|telegram|sticker|runtime|session|channel|tool|function|api|repo|path|heartbeat|autonomy|background)\b/iu.test(normalized)
+    || /(为什么|如何|问题|原因|路径|行为|运行时|会话|通道|工具|函数|接口|仓库|代码|心跳|后台|自动|自主)/u.test(normalized);
 }
 
 function isStatusPromptSeed(text: string): boolean {
@@ -797,10 +940,132 @@ function isStatusPromptSeed(text: string): boolean {
 }
 
 function isSelfReferentialCuriosityText(text: string): boolean {
-  return text.startsWith("Explore one repo question suggested by runtime seed:")
+  return text.startsWith("Explore one background question suggested by runtime seed:")
+    || text.startsWith("Explore one repo question suggested by runtime seed:")
     || text.includes("[curiosity-question:")
     || text.includes("[curiosity-hypothesis:")
     || text.includes("[curiosity-evidence:");
+}
+
+function updateAutonomyTopicStats(
+  current: AutonomyTopicStat[],
+  input: {
+    intent: AutonomyIntent;
+    taskStatus?: TaskResult["status"];
+    heartbeatReplyEvaluation?: {
+      status: "sent" | "ack" | "duplicate" | "suppressed";
+      visibleText: string;
+      reason: string;
+    };
+    now: number;
+  },
+): AutonomyTopicStat[] {
+  if (input.intent.kind !== "curiosity_probe" && input.intent.kind !== "investigate_gap") {
+    return current;
+  }
+
+  const matched = findMatchingAutonomyTopicStat(current, input.intent.goal);
+  const nextKey = matched?.key ?? normalizeAutonomyTopicKey(input.intent.goal);
+  const repetitionCount = matched && input.now - matched.lastTouchedAt <= AUTONOMY_TOPIC_REPEAT_WINDOW_MS
+    ? matched.repetitionCount + 1
+    : 1;
+  const outcome = resolveAutonomyTopicOutcome(input);
+  const boredomDelta =
+    outcome === "novel"
+      ? -0.28
+      : outcome === "repeated"
+        ? 0.48
+        : outcome === "suppressed"
+          ? 0.56
+          : 0.34;
+  const boredomScore = clamp(
+    (matched?.boredomScore ?? 0) + boredomDelta + Math.max(0, repetitionCount - 1) * 0.04,
+    0,
+    AUTONOMY_TOPIC_MAX_BOREDOM,
+  );
+
+  const nextStat: AutonomyTopicStat = {
+    key: nextKey,
+    summary: matched?.summary || summarizeAutonomyTopicText(input.intent.goal),
+    repetitionCount,
+    boredomScore,
+    lastTouchedAt: input.now,
+    lastIntentKind: input.intent.kind,
+    lastOutcome: outcome,
+  };
+
+  const remaining = current.filter((item) => item.key !== nextKey);
+  return [nextStat, ...remaining]
+    .sort((left, right) => right.lastTouchedAt - left.lastTouchedAt)
+    .slice(0, MAX_AUTONOMY_TOPIC_STATS);
+}
+
+function resolveAutonomyTopicOutcome(input: {
+  taskStatus?: TaskResult["status"];
+  heartbeatReplyEvaluation?: {
+    status: "sent" | "ack" | "duplicate" | "suppressed";
+  };
+}): AutonomyTopicStat["lastOutcome"] {
+  if (input.heartbeatReplyEvaluation?.status === "sent" && input.taskStatus === "done") {
+    return "novel";
+  }
+  if (input.heartbeatReplyEvaluation?.status === "duplicate") {
+    return "repeated";
+  }
+  if (input.heartbeatReplyEvaluation?.status === "ack" || input.heartbeatReplyEvaluation?.status === "suppressed") {
+    return "suppressed";
+  }
+  if (input.taskStatus === "blocked" || input.taskStatus === "incomplete" || input.taskStatus === "aborted") {
+    return "blocked";
+  }
+  return "repeated";
+}
+
+function evaluateAutonomyTopicPenalty(
+  text: string,
+  stats: AutonomyTopicStat[],
+  now: number,
+): { penalty: number; suppressed: boolean } {
+  const matched = findMatchingAutonomyTopicStat(stats, text);
+  if (!matched) {
+    return { penalty: 0, suppressed: false };
+  }
+
+  const ageFactor = clamp((now - matched.lastTouchedAt) / AUTONOMY_TOPIC_DECAY_MS, 0, 1);
+  const effectiveBoredom = clamp(matched.boredomScore - ageFactor * 0.5, 0, AUTONOMY_TOPIC_MAX_BOREDOM);
+  const penalty = clamp(effectiveBoredom * 0.18 + Math.max(0, matched.repetitionCount - 1) * 0.05, 0, 0.42);
+  return {
+    penalty,
+    suppressed: effectiveBoredom >= AUTONOMY_TOPIC_SUPPRESSION_THRESHOLD && ageFactor < 1,
+  };
+}
+
+function findMatchingAutonomyTopicStat(
+  stats: AutonomyTopicStat[],
+  text: string,
+): AutonomyTopicStat | undefined {
+  const directKey = normalizeAutonomyTopicKey(text);
+  return stats.find((item) => item.key === directKey)
+    ?? stats.find((item) => autonomyTextsShareTopic(item.summary, text));
+}
+
+function summarizeAutonomyTopicText(text: string): string {
+  const normalized = stripAutonomyTopicPrefixes(text).replace(/\s+/gu, " ").trim();
+  return normalized.length <= 160 ? normalized : `${normalized.slice(0, 159)}…`;
+}
+
+function stripAutonomyTopicPrefixes(text: string): string {
+  return text
+    .replace(/^Explore one background question suggested by runtime seed:\s*/iu, "")
+    .replace(/^Explore one repo question suggested by runtime seed:\s*/iu, "")
+    .replace(/^Investigate and resolve:\s*/iu, "")
+    .replace(/^Review recent repeated failures:\s*/iu, "");
+}
+
+function extractAutonomyTopicTerms(text: string): string[] {
+  return tokenize(stripAutonomyTopicPrefixes(text))
+    .filter((item) => !AUTONOMY_TOPIC_STOPWORDS.has(item))
+    .slice(0, 8);
 }
 
 function uniqueTail(items: string[], limit: number): string[] {

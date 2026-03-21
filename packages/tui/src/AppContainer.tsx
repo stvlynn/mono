@@ -311,6 +311,8 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
 
   const syncInitializedState = useCallback(() => {
     const summary = agent.getConfigSummary();
+    const resolved = agent.getResolvedConfig();
+    const resolvedTui = resolved.settings.tui;
     setUiState((current) => ({
       ...current,
       initialized: true,
@@ -324,6 +326,18 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       currentTask: agent.getCurrentTask(),
       currentTodoRecord: agent.getCurrentTodoRecord(),
       status: summary.hasAnyProfiles ? "Ready" : "No configured profiles found. Run mono auth login."
+    }));
+    setSettings((current) => ({
+      ...current,
+      cleanUiDetailsVisible: resolvedTui.cleanUiDetailsVisible,
+      footerVisible: resolvedTui.footerVisible,
+      alternateBuffer: resolvedTui.alternateBuffer === "auto"
+        ? getDefaultAlternateBufferEnabled()
+        : resolvedTui.alternateBuffer,
+      shortcutsHint: resolvedTui.shortcutsHint,
+      assistantMarkdownEnabled: resolvedTui.assistantMarkdownEnabled,
+      thinkingVisible: resolvedTui.thinkingVisible,
+      toolDetailsVisible: resolvedTui.toolDetailsVisible,
     }));
   }, [agent]);
 

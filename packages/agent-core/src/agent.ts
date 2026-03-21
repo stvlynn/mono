@@ -106,6 +106,7 @@ import {
   updateTaskAfterTurn
 } from "./task-runtime.js";
 import {
+  autonomyTextsShareTopic,
   applyFeedbackToLearningState,
   applyFeedbackToSelfRuntime,
   buildAutonomyExtraContext,
@@ -1124,10 +1125,32 @@ export class Agent {
       return;
     }
 
-    const [identityRecord, projectProfile] = await Promise.all([
+    const [identityRecord, projectProfile, selfRuntime] = await Promise.all([
       this.state.structuredMemoryStore.getSelfIdentity(),
-      this.state.structuredMemoryStore.getProjectProfile()
+      this.state.structuredMemoryStore.getProjectProfile(),
+      this.state.structuredMemoryStore.getSelfRuntime(),
     ]);
+
+    const desiredAutonomyPolicy = {
+      ...selfRuntime.autonomyPolicy,
+      enabled: this.state.config.settings.autonomy.enabled,
+      heartbeatIntervalMs: this.state.config.settings.autonomy.heartbeatIntervalMs,
+      maxAutonomousTasksPerHour: this.state.config.settings.autonomy.maxAutonomousTasksPerHour,
+      allowBroadExecution: this.state.config.settings.autonomy.allowBroadExecution,
+      isolatedSession: this.state.config.settings.autonomy.isolatedSession,
+    };
+
+    if (
+      selfRuntime.autonomyPolicy.enabled !== desiredAutonomyPolicy.enabled
+      || selfRuntime.autonomyPolicy.heartbeatIntervalMs !== desiredAutonomyPolicy.heartbeatIntervalMs
+      || selfRuntime.autonomyPolicy.maxAutonomousTasksPerHour !== desiredAutonomyPolicy.maxAutonomousTasksPerHour
+      || selfRuntime.autonomyPolicy.allowBroadExecution !== desiredAutonomyPolicy.allowBroadExecution
+      || selfRuntime.autonomyPolicy.isolatedSession !== desiredAutonomyPolicy.isolatedSession
+    ) {
+      await this.state.structuredMemoryStore.upsertSelfRuntime({
+        autonomyPolicy: desiredAutonomyPolicy,
+      });
+    }
 
     if (!identityRecord.summary && identityRecord.nonNegotiablePrinciples.length === 0) {
       const identityText = await this.readWorkspaceTextFile(".mono/IDENTITY.md");
@@ -1449,19 +1472,9 @@ export class Agent {
       todos: heartbeatState.todos,
       recentFeedback: heartbeatState.recentFeedback,
       recentSessionTexts: heartbeatState.recentSessionTexts,
+      recentIntents: heartbeatState.recentIntents,
       currentTaskId: this.state.currentTask?.taskId,
     });
-    const duplicateIntent = selection.selectedIntent
-      ? this.findMatchingOpenAutonomyIntent(selection.selectedIntent, heartbeatState.recentIntents, now)
-      : undefined;
-    if (duplicateIntent) {
-      return this.skipHeartbeat(
-        now,
-        `A matching unresolved autonomy intent already exists: ${duplicateIntent.goal}`,
-        selfRuntime.autonomyPolicy.heartbeatIntervalMs,
-        true
-      );
-    }
     await this.persistHeartbeatSelection(selection.decision, now);
     if (!selection.selectedIntent) {
       this.scheduleHeartbeat(selfRuntime.autonomyPolicy.heartbeatIntervalMs);
@@ -1496,23 +1509,6 @@ export class Agent {
       item.createdAt >= now - 60 * 60_000
       && item.status !== "pending"
     ).length;
-  }
-
-  private findMatchingOpenAutonomyIntent(
-    selectedIntent: AutonomyIntent,
-    recentIntents: AutonomyIntent[],
-    now: number,
-  ): AutonomyIntent | undefined {
-    return recentIntents.find((intent) =>
-      intent.status !== "completed"
-      && (
-        selectedIntent.kind !== "curiosity_probe"
-        || intent.createdAt >= now - CURIOSITY_COOLDOWN_MS
-      )
-      && intent.kind === selectedIntent.kind
-      && intent.sourceSignal === selectedIntent.sourceSignal
-      && intent.goal === selectedIntent.goal
-    );
   }
 
   private async skipHeartbeat(
@@ -1867,7 +1863,18 @@ export class Agent {
       signals,
       task,
       options.diagnosis,
-      now
+      now,
+      {
+        autonomyIntent: context.autonomyIntent,
+        heartbeatReplyEvaluation: context.heartbeatReplyEvaluation
+          ? {
+            status: context.heartbeatReplyEvaluation.status,
+            visibleText: context.heartbeatReplyEvaluation.visibleText,
+            reason: context.heartbeatReplyEvaluation.reason,
+          }
+          : undefined,
+        taskStatus: result.status,
+      },
     );
 
     await Promise.all([
@@ -2240,7 +2247,7 @@ export class Agent {
         task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
         "Mode: curiosity",
         "This is an idle curiosity exploration.",
-        "Scan the repo lightly and gather only read-only evidence.",
+        "Scan the available background context lightly and gather only read-only evidence.",
         "If bash is available, use it only for read-only inspection commands.",
         "Do not edit files or use write_todos.",
         "Return exactly one curiosity question, one hypothesis, and one evidence line using:",

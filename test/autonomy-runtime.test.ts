@@ -304,7 +304,7 @@ describe("autonomy runtime", () => {
         currentHypotheses: [],
         taskHints: [],
         currentGoals: [
-          "Explore one repo question suggested by runtime seed: 用sticker，不要用文本. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.",
+          "Explore one background question suggested by runtime seed: 用sticker，不要用文本. Scan lightly, identify one concrete information gap, propose one hypothesis, record brief evidence, then stop.",
         ],
         currentTensions: [],
       },
@@ -316,6 +316,67 @@ describe("autonomy runtime", () => {
 
     expect(selection.selectedIntent).toBeUndefined();
     expect(selection.decision.decision).toBe("noop");
+  });
+
+  it("does not create a curiosity probe when an open question already covers the same topic semantically", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        openQuestions: ["Does Telegram inbound normalization treat sticker payloads image webp as supported attachments?"],
+        currentHypotheses: [],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: ["<media:sticker>\n[image:image/webp]"],
+    });
+
+    expect(selection.selectedIntent).toBeUndefined();
+    expect(selection.decision.decision).toBe("noop");
+  });
+
+  it("suppresses repeated investigate_gap work when the topic boredom score is high", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: createRuntime(),
+      learningState: {
+        ...createLearningState(),
+        autonomyTopicStats: [{
+          key: "sticker__webp",
+          summary: "Does Telegram inbound normalization treat sticker payloads image webp as supported attachments?",
+          repetitionCount: 3,
+          boredomScore: 1.05,
+          lastTouchedAt: 50_000,
+          lastIntentKind: "investigate_gap",
+          lastOutcome: "repeated",
+        }],
+      },
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: [],
+    });
+
+    expect(selection.selectedIntent).toBeUndefined();
+    expect(selection.decision.decision).toBe("noop");
+  });
+
+  it("selects a different-topic fallback when the top candidate is below threshold", () => {
+    const selection = buildHeartbeatSelection({
+      now: 60_000,
+      selfRuntime: {
+        ...createRuntime(),
+        taskHints: ["Investigate why isolated heartbeat sessions are not visible to foreground chat replies."],
+      },
+      learningState: createLearningState(),
+      todos: [],
+      recentFeedback: [],
+      recentSessionTexts: [],
+    });
+
+    expect(selection.selectedIntent?.goal).toContain("isolated heartbeat sessions");
+    expect(selection.decision.decision).toBe("enqueue_task");
+    expect(selection.decision.reasons[0]).toContain("different-topic fallback");
   });
 
   it("does not create a curiosity probe from a style-only hint or generic status prompt", () => {
