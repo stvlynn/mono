@@ -854,6 +854,65 @@ export interface MonoConfigSummary {
   hasAnyProfiles: boolean;
 }
 
+export const CONFIG_UI_REDACTED_SENTINEL = "__MONO_CONFIG_UI_REDACTED__";
+
+export interface ConfigUiBootstrapResponse {
+  globalConfigPath: string;
+  globalSecretsPath: string;
+  projectConfigPath: string;
+  projectConfigExists: boolean;
+  summary: MonoConfigSummary;
+  resolvedProfile: string;
+  profileSource: ResolvedMonoConfig["source"]["profile"];
+  apiKeySource: ResolvedMonoConfig["source"]["apiKey"];
+}
+
+export interface ConfigUiGlobalConfigSnapshot {
+  config: MonoGlobalConfig;
+  baseHash: string;
+  configPath: string;
+  redactedPaths: string[];
+}
+
+export interface ConfigUiSaveGlobalConfigRequest {
+  baseHash: string;
+  config: MonoGlobalConfig;
+  sensitiveUpdates?: Record<string, string | null>;
+}
+
+export interface ConfigUiProfileSummary {
+  name: string;
+  profile: MonoProfileConfig;
+  isDefault: boolean;
+  hasSecret: boolean;
+}
+
+export interface ConfigUiSaveProfileRequest {
+  baseHash: string;
+  profile: MonoProfileConfig;
+  newName?: string;
+  setDefault?: boolean;
+}
+
+export interface ConfigUiDeleteProfileRequest {
+  baseHash: string;
+}
+
+export interface ConfigUiSetProfileSecretRequest {
+  baseHash: string;
+  secret: string;
+}
+
+export interface ConfigUiDeleteProfileSecretRequest {
+  baseHash: string;
+}
+
+export interface ConfigUiReloadSignal {
+  version: string;
+  updatedAt: number;
+  reason: string;
+}
+
 export type ContextSectionKind =
   | "operator_identity"
   | "agent_guide"

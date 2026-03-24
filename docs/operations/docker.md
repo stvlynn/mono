@@ -91,6 +91,28 @@ docker compose run --rm mono --help
 docker compose run --rm mono --print hello
 ```
 
+## Web Config UI
+
+The compose file also includes a dedicated `mono-config-ui` service that runs:
+
+```bash
+mono config ui --host 0.0.0.0 --port 5173 --no-open
+```
+
+Start it with:
+
+```bash
+docker compose up -d mono-config-ui
+```
+
+Then open:
+
+```text
+http://127.0.0.1:${MONO_CONFIG_UI_PORT:-5173}
+```
+
+The UI container mounts the same host `~/.mono` volume as the main `mono` service, so edits go to the real global config and secrets files.
+
 Current compose/runtime behavior:
 
 - the container still ships a built `/app` image

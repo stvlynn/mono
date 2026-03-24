@@ -31,6 +31,28 @@ The project is organized as a monorepo with the following packages:
 - **`@mono/prompts`**: Template system for AI prompts
 - **`@mono/session`**: Session state management
 - **`@mono/tui`**: Terminal user interface components
+- **`@mono/web-config`**: Web-based configuration UI (React + Vite)
+
+## Web Config UI
+
+A browser-based dashboard for managing mono configuration:
+
+```bash
+# Serve the config UI through the CLI
+mono config ui
+```
+
+Then open `http://127.0.0.1:5173` in your browser.
+
+**Features:**
+- global `config.json` editing with defaults materialized
+- profile CRUD plus local API-key secret management
+- memory/context/Telegram configuration
+- raw JSON editing with hash-guarded saves
+- nearby status panels for memory and Telegram
+- skills inventory, remote search, and install
+
+See [`packages/web-config/README.md`](packages/web-config/README.md) for detailed documentation.
 
 ## Installation
 

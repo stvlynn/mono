@@ -93,7 +93,10 @@ describe("tui app bootstrap", () => {
     expect(appContainer).toContain("applyProfile: async (profileName) => {\n        await agent.refreshRegistry();");
     expect(appContainer).toContain("listConfiguredProfiles: async () => {\n        await agent.refreshRegistry();");
     expect(appContainer).toContain("agent.setChannelCapabilityProvider(runtime)");
-    expect(appContainer).toContain("setTimeout(() => {\n          void telegramRuntimeRef.current?.flushPendingProfileApplication();\n        }, 0);");
+    expect(appContainer).toContain("setTimeout(() => {");
+    expect(appContainer).toContain("void telegramRuntimeRef.current?.flushPendingProfileApplication();");
+    expect(appContainer).toContain("void applyPendingConfigUiReload(pendingConfigUiReloadVersionRef.current);");
+    expect(appContainer).toContain("}, 0);");
   });
 
   it("keeps runtime request errors out of the fatal path", () => {

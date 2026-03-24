@@ -47,6 +47,7 @@ The agent runtime still receives a generic `TaskInput`; the CLI does not constru
 ## Notes
 
 - `context` inspects assembled prompt context, not stored memory records
+- `config ui` serves the browser-based global config UI and same-origin JSON API
 - `memory` inspects execution-memory status and adapter state, and now also reports `memory-v2` configuration
 - `memory structured [entityId]` prints the current structured-memory package plus runtime/conflict/queue state for one entity
 - `pair telegram` approves Telegram pairing codes or directly writes Telegram DM allowlist entries

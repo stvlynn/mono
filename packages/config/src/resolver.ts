@@ -162,18 +162,156 @@ export async function resolveMonoConfig(options: ResolveConfigOptions = {}): Pro
   };
 }
 
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function preserveUnknownFields<T>(materialized: T, source: unknown): T {
+  if (!isPlainObject(materialized) || !isPlainObject(source)) {
+    return materialized;
+  }
+
+  const next = cloneJsonValue(materialized) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(source)) {
+    if (!(key in next)) {
+      next[key] = cloneJsonValue(value);
+      continue;
+    }
+
+    if (isPlainObject(next[key]) && isPlainObject(value)) {
+      next[key] = preserveUnknownFields(next[key], value);
+    }
+  }
+
+  return next as T;
+}
+
+function resolveMaterializedDefaultProfile(
+  requestedDefaultProfile: string | undefined,
+  profiles: Record<string, MonoProfileConfig>,
+  fallbackDefaultProfile: string
+): string {
+  if (requestedDefaultProfile && profiles[requestedDefaultProfile]) {
+    return requestedDefaultProfile;
+  }
+
+  const firstProfile = Object.keys(profiles).at(0);
+  if (firstProfile) {
+    return firstProfile;
+  }
+
+  return fallbackDefaultProfile;
+}
+
+export function materializeGlobalConfig(
+  globalConfig: MonoGlobalConfig | undefined,
+  options: {
+    cwd?: string;
+    projectConfig?: MonoProjectConfig;
+  } = {}
+): MonoGlobalConfig {
+  const cwd = options.cwd ?? process.cwd();
+  const store = new MonoConfigStore(cwd);
+  const defaults = createDefaultGlobalConfig();
+  const source = globalConfig ? cloneJsonValue(globalConfig) : cloneJsonValue(defaults);
+  const sourceProfiles = source.mono?.profiles ?? {};
+  const profiles = Object.keys(sourceProfiles).length > 0 ? sourceProfiles : defaults.mono.profiles;
+  const base: MonoGlobalConfig = {
+    ...defaults,
+    ...source,
+    mono: {
+      ...defaults.mono,
+      ...source.mono,
+      profiles,
+      defaultProfile: resolveMaterializedDefaultProfile(
+        source.mono?.defaultProfile,
+        profiles,
+        defaults.mono.defaultProfile
+      ),
+    },
+    projects: source.projects ?? defaults.projects,
+  };
+
+  const settings = preserveUnknownFields(resolveSettingsConfig(base), source.mono?.settings);
+  const memory = preserveUnknownFields(
+    resolveMemoryConfig({
+      globalConfig: base,
+      projectConfig: options.projectConfig,
+      store,
+    }),
+    source.mono?.memory
+  );
+  const context = preserveUnknownFields(
+    resolveContextConfig({
+      globalConfig: base,
+      projectConfig: options.projectConfig,
+    }),
+    source.mono?.context
+  );
+  const channels = preserveUnknownFields(resolveResolvedChannelsConfig(base), source.mono?.channels);
+
+  return {
+    ...base,
+    mono: {
+      ...base.mono,
+      settings,
+      memory,
+      context,
+      channels,
+    },
+  };
+}
+
+export async function validateAndMaterializeGlobalConfig(
+  globalConfig: MonoGlobalConfig | undefined,
+  options: {
+    cwd?: string;
+    projectConfig?: MonoProjectConfig;
+  } = {}
+): Promise<MonoGlobalConfig> {
+  const cwd = options.cwd ?? process.cwd();
+  const materialized = materializeGlobalConfig(globalConfig, options);
+  const normalizedProfiles = await Promise.all(
+    Object.entries(materialized.mono.profiles).map(async ([name, profile]) => {
+      const normalized = await normalizeProfileWithCatalog(cwd, profile, name);
+      ensureSupportedModel(profileToModel(normalized), name);
+      return [name, normalized] as const;
+    })
+  );
+
+  const profiles = Object.fromEntries(normalizedProfiles);
+  const defaultProfile = resolveMaterializedDefaultProfile(
+    materialized.mono.defaultProfile,
+    profiles,
+    createDefaultGlobalConfig().mono.defaultProfile
+  );
+
+  return {
+    ...materialized,
+    mono: {
+      ...materialized.mono,
+      profiles,
+      defaultProfile,
+    },
+  };
+}
+
 function nonEmptyEnv(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
 
-function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChannelsConfig {
+export function resolveResolvedChannelsConfig(globalConfig: MonoGlobalConfig): MonoChannelsConfig {
   const resolved = resolveChannelsConfig(globalConfig);
   validateTelegramConfig(resolved.telegram);
   return resolved;
 }
 
-function resolveSettingsConfig(globalConfig: MonoGlobalConfig): MonoSettingsConfig {
+export function resolveSettingsConfig(globalConfig: MonoGlobalConfig): MonoSettingsConfig {
   const defaults = createDefaultSettingsConfig();
   const configured = globalConfig.mono.settings ?? {};
   const approvalMode = configured.safety?.approvalMode ?? configured.approvalMode ?? defaults.approvalMode;
@@ -575,7 +713,7 @@ function applyProjectOverride(profile: MonoProfileConfig, projectConfig: MonoPro
   };
 }
 
-function resolveMemoryConfig(options: {
+export function resolveMemoryConfig(options: {
   globalConfig: MonoGlobalConfig;
   projectConfig?: MonoProjectConfig;
   store: MonoConfigStore;
@@ -684,7 +822,7 @@ function resolveMemoryConfig(options: {
   };
 }
 
-function resolveContextConfig(options: {
+export function resolveContextConfig(options: {
   globalConfig: MonoGlobalConfig;
   projectConfig?: MonoProjectConfig;
 }): MonoContextConfig {

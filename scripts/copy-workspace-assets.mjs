@@ -19,6 +19,10 @@ const copies = [
   {
     from: resolve(root, "packages/telegram-control/src/templates"),
     to: resolve(root, "packages/telegram-control/dist/templates")
+  },
+  {
+    from: resolve(root, "packages/web-config/dist"),
+    to: resolve(root, "packages/cli/dist/web-config")
   }
 ];
 

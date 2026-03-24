@@ -652,6 +652,26 @@ export class Agent {
     }
   }
 
+  async reloadConfig(): Promise<ResolvedMonoConfig> {
+    await this.ensureRegistryLoaded();
+    const resolved = await this.registry.resolveConfig(this.modelSelection, this.profileSelection, this.baseURLOverride);
+    if (!this.initialized) {
+      return resolved;
+    }
+
+    this.assertIdle("reload config");
+    this.state.profileName = resolved.profileName;
+    this.state.model = resolved.model;
+    this.state.config = resolved;
+    this.state.memoryStore = new FolderMemoryStore(resolveMemoryStorePath(this.cwd, resolved.memory.storePath));
+    this.state.structuredMemoryStore = new FolderStructuredMemoryStore(resolveMemoryStorePath(this.cwd, resolved.memory.v2.storePath));
+    this.state.taskTodoStore = new FolderTaskTodoStore(resolveTaskTodoStorePath(this.cwd, resolved.memory.storePath));
+    await this.state.structuredMemoryStore.ensureLayout();
+    await this.seedStructuredMemoryStore();
+    this.state.configSummary = await this.registry.getConfigSummary();
+    return resolved;
+  }
+
   async setModel(selection: string): Promise<UnifiedModel> {
     await this.ensureRegistryLoaded();
     if (!this.initialized) {

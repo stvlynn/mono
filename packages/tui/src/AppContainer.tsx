@@ -6,6 +6,7 @@ import {
   listCatalogModels,
   listCatalogProviders,
   persistProjectProfileSelection,
+  readConfigUiReloadSignal,
   upsertProfile,
   type CatalogProvider,
   type CatalogTransportCandidate
@@ -198,6 +199,8 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
   const nextKeypressHandlerIdRef = useRef(0);
   const telegramRuntimeRef = useRef<TelegramControlRuntime | null>(null);
   const telegramChatLanesRef = useRef(new Map<string, TelegramChatLane[]>());
+  const lastSeenConfigUiReloadVersionRef = useRef<string | null>(null);
+  const pendingConfigUiReloadVersionRef = useRef<string | null>(null);
 
   useEffect(() => {
     uiStateRef.current = uiState;
@@ -1325,11 +1328,75 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     };
   }, [agent, handleTelegramChatMessage, handleTelegramRuntimeEvent, reportUiError, setSelectedProfile]);
 
+  const applyPendingConfigUiReload = useCallback(async (version: string) => {
+    if (agent.isRunning()) {
+      pendingConfigUiReloadVersionRef.current = version;
+      return;
+    }
+
+    await agent.refreshRegistry();
+    await agent.reloadConfig();
+    await telegramRuntimeRef.current?.reload().catch((error) => {
+      reportUiError(error, "Failed to reload Telegram runtime");
+    });
+    pendingConfigUiReloadVersionRef.current = null;
+    lastSeenConfigUiReloadVersionRef.current = version;
+    setStatus("Reloaded configuration from the web UI");
+  }, [agent, reportUiError, setStatus]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const pollConfigUiReloadSignal = async () => {
+      try {
+        const signal = await readConfigUiReloadSignal(process.cwd());
+        if (disposed || !signal?.version) {
+          return;
+        }
+
+        if (!lastSeenConfigUiReloadVersionRef.current) {
+          lastSeenConfigUiReloadVersionRef.current = signal.version;
+          return;
+        }
+
+        if (
+          signal.version === lastSeenConfigUiReloadVersionRef.current
+          || signal.version === pendingConfigUiReloadVersionRef.current
+        ) {
+          return;
+        }
+
+        if (agent.isRunning()) {
+          pendingConfigUiReloadVersionRef.current = signal.version;
+          setStatus("Config changed on disk. Reload will apply after the current task.");
+          return;
+        }
+
+        await applyPendingConfigUiReload(signal.version);
+      } catch {
+        // Ignore transient polling failures; the next interval will retry.
+      }
+    };
+
+    void pollConfigUiReloadSignal();
+    const timer = setInterval(() => {
+      void pollConfigUiReloadSignal();
+    }, 3000);
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [agent, applyPendingConfigUiReload, setStatus]);
+
   useEffect(() => {
     const unsubscribe = agent.subscribe((event) => {
       if (event.type === "run-end" || event.type === "run-aborted") {
         setTimeout(() => {
           void telegramRuntimeRef.current?.flushPendingProfileApplication();
+          if (pendingConfigUiReloadVersionRef.current) {
+            void applyPendingConfigUiReload(pendingConfigUiReloadVersionRef.current);
+          }
         }, 0);
       }
     });
@@ -1337,7 +1404,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     return () => {
       unsubscribe();
     };
-  }, [agent]);
+  }, [agent, applyPendingConfigUiReload]);
 
   useEffect(() => {
     const handleUnhandledRejection = (reason: unknown) => {

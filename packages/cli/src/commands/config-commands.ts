@@ -1,10 +1,28 @@
 import { stdout as output } from "node:process";
 import { Command } from "commander";
+import { runConfigUi } from "../use-cases/config-ui.js";
 import { runBindProject, runConfigGet, runConfigInit, runConfigList, runConfigMigrate, runConfigSet } from "../use-cases/config.js";
 import { writeJson, writeLine } from "../output.js";
 
 export function registerConfigCommands(program: Command): void {
   const config = program.command("config").description("Manage ~/.mono configuration");
+
+  config
+    .command("ui")
+    .description("Serve the browser-based configuration UI")
+    .option("--host <host>", "bind host", "127.0.0.1")
+    .option("--port <port>", "bind port", "5173")
+    .option("--api-only", "serve JSON API without static assets")
+    .option("--no-open", "do not open the browser automatically")
+    .action(async (options) => {
+      const result = await runConfigUi({
+        host: options.host,
+        port: Number(options.port),
+        apiOnly: Boolean(options.apiOnly),
+        openBrowser: Boolean(options.open),
+      });
+      writeLine(`Config UI available at ${result.url}`);
+    });
 
   config
     .command("init")
