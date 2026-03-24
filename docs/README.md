@@ -30,6 +30,7 @@ The root [`README.md`](../README.md) stays intentionally lightweight. The detail
 - [`cli/`](./cli/commands.md): command groups, config/auth flows, context inspection, and memory surfaces
 - `cli/skills-commands.md`: local skill browsing and remote skill search/install
 - [`operations/`](./operations/troubleshooting.md): troubleshooting, debugging, compatibility, migration notes
+- `operations/prompt-template-migration.md`: archive of the shared and platform-local Jinja prompt migration
 - [`decisions/`](./decisions/0001-config-home-is-dot-mono.md): short ADRs for durable architectural choices
 
 ## Recommended Reading Order

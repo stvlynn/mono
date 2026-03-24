@@ -34,6 +34,7 @@ This page is the entry point for reading and traversing all technical docs in th
 - [IM Platform](./im-platform/overview.md)
 - [Telegram Control](./telegram-control/overview.md)
 - [Operations](./operations/troubleshooting.md)
+- [Prompt Template Migration Archive](./operations/prompt-template-migration.md)
 - [Decisions (ADR)](./decisions/0001-config-home-is-dot-mono.md)
 
 ## Cross-Index Links

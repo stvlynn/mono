@@ -1023,6 +1023,7 @@ export interface ChannelCapabilityContext {
   channel: string;
   actions: string[];
   storeResources: string[];
+  replyFormattingRules?: string[];
   currentResource?: ChannelContextResource;
   store?: ChannelContextStore;
   recommendedAction?: {

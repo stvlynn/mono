@@ -1,0 +1,6 @@
+{% if rules and rules.length %}
+Channel Reply Format Rules:
+{% for rule in rules %}
+- {{ rule }}
+{% endfor %}
+{% endif %}

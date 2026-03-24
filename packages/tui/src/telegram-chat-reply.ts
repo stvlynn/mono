@@ -37,11 +37,12 @@ export function formatTelegramChatResponse(result: TaskResult): TelegramChatResp
     };
   }
 
+  if (hasSatisfiedVisibleChannelAction(result)) {
+    return { messages: [] };
+  }
+
   const latestReply = extractConversationOutcomeText(result.messages);
   if (!latestReply) {
-    if (hasSatisfiedVisibleChannelAction(result)) {
-      return { messages: [] };
-    }
     const synthesizedFallback = extractConversationOutcomeText(result.messages, {
       includeToolUseAssistantText: result.status === "done",
       includeToolResultFallback: true,

@@ -1,0 +1,32 @@
+Channel Delivery Notes:
+- Write a normal user-facing reply.
+{% if has_actions_or_store_resources %}
+- Use the channel_action tool for platform-native sends, edits, deletes, reactions, or native media actions when a direct channel action is needed.
+- Use the channel_store tool when the user wants to save a reusable channel-native source for future runs.
+{% endif %}
+- The runtime may split long answers into multiple platform messages automatically when needed.
+{% if has_actions_or_store_resources %}
+- Available channel actions: {{ actions_text }}.
+- Available channel store resources: {{ store_resources_text }}.
+{% endif %}
+{% if current_resource_available %}
+- Current-turn {{ current_resource_kind }} is available; prefer channel_action over placeholder text or emoji when the user wants the real platform-native resource.
+{% endif %}
+{% if recommended_action %}
+- RecommendedChannelAction: {{ recommended_action.action }} targeting {{ recommended_action.targetId or "the current conversation" }}.
+{% endif %}
+{% if recommended_action_payload_text %}
+- RecommendedChannelActionPayload: {{ recommended_action_payload_text }}.
+{% endif %}
+{% if missing_store_resource %}
+- Missing durable store for {{ missing_store_resource }} does not block sending the current-turn resource now.
+{% endif %}
+{% if related_store_search_text %}
+- {{ related_store_search_text }}
+{% endif %}
+{% if store_upsert_text %}
+- {{ store_upsert_text }}
+{% endif %}
+{% for note in notes %}
+- {{ note }}
+{% endfor %}

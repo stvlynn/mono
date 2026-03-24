@@ -16,6 +16,8 @@ It currently performs:
 
 1. `tsc -b` across the workspace
 2. asset copying for prompt templates via `scripts/copy-workspace-assets.mjs`
+   - shared templates from `packages/prompts/src/templates`
+   - platform-local templates such as `packages/telegram-control/src/templates`
 
 ## Test Suite
 

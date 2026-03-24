@@ -15,6 +15,10 @@ const copies = [
   {
     from: resolve(root, "packages/telegram-control/src/locales"),
     to: resolve(root, "packages/telegram-control/dist/locales")
+  },
+  {
+    from: resolve(root, "packages/telegram-control/src/templates"),
+    to: resolve(root, "packages/telegram-control/dist/templates")
   }
 ];
 

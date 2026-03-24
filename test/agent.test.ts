@@ -1022,6 +1022,43 @@ describeIfRealTestModel("Agent", () => {
     delete process.env.MONO_CONFIG_DIR;
   });
 
+  it("renders channel reply format rules when the channel context provides them", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-channel-format-rules-"));
+    const cwd = join(rootDir, "workspace");
+    await mkdir(cwd, { recursive: true });
+    process.env.MONO_CONFIG_DIR = await createAgentConfig(rootDir);
+
+    const { Agent } = await import("../packages/agent-core/src/agent.js");
+    const agent = new Agent({ cwd });
+    await agent.initialize();
+
+    const rules = (agent as unknown as {
+      buildChannelReplyFormattingRules: (context: {
+        channel: string;
+        actions: string[];
+        storeResources: string[];
+        replyFormattingRules?: string[];
+      } | null) => string;
+    }).buildChannelReplyFormattingRules({
+      channel: "telegram",
+      actions: ["send"],
+      storeResources: [],
+      replyFormattingRules: [
+        "Write the final user-visible reply in plain text or Markdown, not raw HTML.",
+        "Do not output HTML tags such as <b> or <pre>.",
+      ],
+    });
+
+    expect(rules).toContain("Channel Reply Format Rules:");
+    expect(rules).toContain("plain text or Markdown");
+    expect(rules).toContain("Do not output HTML tags");
+    expect((agent as unknown as {
+      buildChannelReplyFormattingRules: (context: null) => string;
+    }).buildChannelReplyFormattingRules(null)).toBe("");
+
+    delete process.env.MONO_CONFIG_DIR;
+  });
+
   it("builds structured Telegram sticker context for the current turn", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "mono-agent-telegram-sticker-context-"));
     const cwd = join(rootDir, "workspace");

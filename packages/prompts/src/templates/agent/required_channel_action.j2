@@ -1,0 +1,12 @@
+Required Channel Action:
+- RequestedNativeActionRequired: {{ "yes" if native_action_required else "no" }}
+{% if action %}
+- RequestedNativeAction: {{ action }}
+{% endif %}
+{% if reason %}
+- RequestedNativeActionReason: {{ reason }}
+{% endif %}
+- TextOnlyFallbackAllowed: {{ "yes" if text_only_fallback_allowed else "no" }}
+{% if native_action_required %}
+- A plain-text response does not satisfy this turn.
+{% endif %}

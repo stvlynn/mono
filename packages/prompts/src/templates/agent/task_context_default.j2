@@ -1,0 +1,26 @@
+<TaskContext>
+Goal: {{ goal }}
+Phase: {{ phase }}
+Attempts: {{ attempts }}
+{% if verification_mode == "none" %}
+Verification: not required
+{% else %}
+Verification: {{ "passed" if verification_passed else (verification_reason or "pending") }}
+{% endif %}
+Origin: {{ origin }}
+{% if autonomy_intent %}
+AutonomyIntent: {{ autonomy_intent }}
+{% endif %}
+{% if lease %}
+Lease: {{ lease.maxWallTimeMs }}ms / {{ lease.maxToolCalls }} tools / {{ lease.maxSteps }} steps
+{% endif %}
+{% if todos and todos.length %}
+Todos:
+{% for todo in todos %}
+- [{{ todo.status }}] {{ todo.description }}
+{% endfor %}
+{% else %}
+Todos: <none>
+{% endif %}
+Use write_todos to create or update the current task plan when needed.
+</TaskContext>

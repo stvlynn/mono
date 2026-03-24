@@ -1,0 +1,45 @@
+Channel Native Resource Context:
+- Channel: {{ channel }}
+- AvailableChannelActions: {{ actions_text }}
+- AvailableChannelStoreResources: {{ store_resources_text }}
+{% if store %}
+- Store.resource: {{ store.resource }}
+{% endif %}
+{% if store and store.path %}
+- Store.path: {{ store.path }}
+{% endif %}
+{% if store %}
+- Store.exists: {{ "yes" if store.exists else "no" }}
+- Store.readable: {{ "yes" if store.readable else "no" }}
+- Store.entryCount: {{ store.entryCount }}
+- Store.searchSupported: {{ "yes" if store.searchSupported else "no" }}
+{% endif %}
+{% if current_resource %}
+- CurrentTurnNativeResourceKind: {{ current_resource.kind }}
+- CurrentTurnNativeResourceAvailable: {{ "yes" if current_resource.available else "no" }}
+{% if current_resource.source %}
+- CurrentTurnNativeResourceSource: {{ current_resource.source }}
+{% endif %}
+{% for attr in current_resource_attributes %}
+- Resource.{{ attr.key }}: {{ attr.value }}
+{% endfor %}
+{% endif %}
+{% if required_action %}
+- RequiredChannelAction.required: {{ "yes" if required_action.required else "no" }}
+{% if required_action.action %}
+- RequiredChannelAction.action: {{ required_action.action }}
+{% endif %}
+{% if required_action.reason %}
+- RequiredChannelAction.reason: {{ required_action.reason }}
+{% endif %}
+- RequiredChannelAction.textOnlyFallbackAllowed: {{ "yes" if required_action.textOnlyFallbackAllowed else "no" }}
+{% endif %}
+{% if recommended_action %}
+- RecommendedChannelAction.action: {{ recommended_action.action }}
+{% if recommended_action.targetId %}
+- RecommendedChannelAction.targetId: {{ recommended_action.targetId }}
+{% endif %}
+{% for payload in recommended_action_payload %}
+- RecommendedChannelAction.payload.{{ payload.key }}: {{ payload.value }}
+{% endfor %}
+{% endif %}

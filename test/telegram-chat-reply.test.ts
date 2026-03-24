@@ -236,6 +236,47 @@ describe("telegram chat reply formatting", () => {
     expect(formatTelegramChatResponse(result)).toEqual({ messages: [] });
   });
 
+  it("does not send a second Telegram message when channel_action already delivered a final reply", () => {
+    const result = createTaskResult({
+      status: "done",
+      messages: [
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "tool_use",
+          timestamp: 1,
+          content: [{ type: "text", text: "I'll reply in-channel." }],
+        },
+        {
+          role: "tool",
+          toolCallId: "tool-1",
+          toolName: "channel_action",
+          content: JSON.stringify({
+            ok: true,
+            channel: "telegram",
+            action: "send",
+            targetId: "123456",
+            messageId: "42",
+          }),
+          isError: false,
+          timestamp: 2,
+        },
+        {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          stopReason: "stop",
+          timestamp: 3,
+          content: [{ type: "text", text: "[final-reply]hi! 👋[/final-reply]" }],
+        },
+      ],
+    });
+
+    expect(formatTelegramChatReply(result)).toBe("");
+    expect(formatTelegramChatResponse(result)).toEqual({ messages: [] });
+  });
+
   it("does not inject a fallback after successful Telegram media channel actions", () => {
     for (const action of ["photo", "document"] as const) {
       const result = createTaskResult({

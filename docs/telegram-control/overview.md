@@ -149,6 +149,8 @@ Agent tool behavior:
 - Telegram DM runs can expose the generic `channel_store` tool for listing, searching, or persisting reusable sticker sources
 - Telegram chat handoff runs in a dedicated `channel_chat` interaction mode rather than the normal coding-task mode
 - `channel_chat` turns do not expose `write_todos` or the full coding toolset; allowlisted Telegram chats can expose protected `bash`, and all other native replies still go through `channel_action` / `channel_store`
+- Telegram channel context now injects `replyFormattingRules` so `channel_chat` turns avoid raw HTML tags and author final text in plain text / Markdown while the runtime keeps Telegram-safe rendering behavior
+- Telegram-specific prompt fragments now live under `packages/telegram-control/src/templates/` as local Jinja templates instead of hardcoded strings in `runtime.ts`
 - Telegram chat handoff now runs through short-lived handoff agent instances instead of borrowing the main TUI agent run slot
 - those handoff agents disable automatic autonomy heartbeat and are disposed after the handoff finishes
 - those handoff agents still switch into the current shared session rather than creating per-chat sessions

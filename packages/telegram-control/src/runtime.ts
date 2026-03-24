@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMonoConfig } from "@mono/config";
+import { renderPromptTemplateFile } from "@mono/prompts";
 import {
   createBuiltInProvider,
   createDistributor,
@@ -67,6 +68,20 @@ import {
 import { processTelegramIncomingMessage } from "./inbound.js";
 
 const TELEGRAM_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+
+function renderTelegramPromptTemplate(name: string, context: Record<string, unknown> = {}): string {
+  return renderPromptTemplateFile(
+    fileURLToPath(new URL(`./templates/${name}`, import.meta.url)),
+    context,
+  );
+}
+
+function renderTelegramPromptLines(name: string, context: Record<string, unknown> = {}): string[] {
+  return renderTelegramPromptTemplate(name, context)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 
 interface TelegramUpdateResponse<T> {
   ok: boolean;
@@ -400,6 +415,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       channel: channel.platform,
       actions,
       storeResources,
+      replyFormattingRules: renderTelegramPromptLines("reply_format_rules.j2"),
       ...(mediaContext
         ? {
           currentResource: {
@@ -466,18 +482,15 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         }
         : {}),
       notes: [
-        ...(stickerContext?.source === "recent_history"
-          ? ["The current sticker source was recovered from recent user history in this conversation."]
-          : []),
-        ...(requestsAlternativeSticker && sticker?.setName
-          ? [`Use channel_store(resource="sticker_source", action="search", entry={ setName: "${sticker.setName}", excludeFileId: "${sticker.fileId}" }) to find another sticker from the same set before calling channel_action.`]
-          : []),
-        ...(requestsAlternativeSticker
-          ? [`Sticker catalog search reads from ${cachePath}.`]
-          : []),
-        ...(mediaContext
-          ? [`The current ${mediaContext.kind} can be sent back with channel_action(action="${mediaContext.kind}", payload.fileId="${mediaContext.attributes.fileId ?? ""}").`]
-          : []),
+        ...renderTelegramPromptLines("channel_notes.j2", {
+          has_media_actions: actions.includes("photo") || actions.includes("document") || actions.includes("sticker"),
+          recovered_sticker_source: stickerContext?.source === "recent_history",
+          alternative_sticker_set_name: requestsAlternativeSticker ? sticker?.setName : undefined,
+          alternative_sticker_file_id: requestsAlternativeSticker ? sticker?.fileId : undefined,
+          cache_path: requestsAlternativeSticker ? cachePath : undefined,
+          current_media_kind: mediaContext?.kind,
+          current_media_file_id: mediaContext?.attributes.fileId ?? "",
+        }),
       ],
     };
   }

@@ -16,6 +16,7 @@ import {
   type VerificationMode,
   type VerificationState,
 } from "@mono/shared";
+import { defaultPromptRenderer } from "@mono/prompts";
 
 export interface TaskRuntimeOptions {
   goal: string;
@@ -84,62 +85,37 @@ export function buildTaskTurnPlan(
   if (task.phase === "verify") {
     return {
       phase: "verify",
-      prompt: [
-        "You are in verification mode.",
-        `Goal: ${task.goal}`,
-        "Verify whether the requested work is complete.",
-        "Prefer targeted checks over more edits.",
-        "Use read or bash tools if you need evidence.",
-        "If verification fails, explain precisely what is still wrong.",
-        "If the current todo list is wrong or incomplete, update it with write_todos."
-      ].join("\n")
+      prompt: defaultPromptRenderer.render("agent/task_turn_verify", {
+        goal: task.goal,
+      }),
     };
   }
 
   if (interactionMode === "curiosity") {
     return {
       phase: "execute",
-      prompt: [
-        "You are in curiosity exploration mode.",
-        `Goal: ${task.goal}`,
-        "Investigate one small background question suggested by recent runtime context.",
-        "Use read or bash only for concrete evidence.",
-        "Choose one most-likely file or one read-only shell command first.",
-        "Use at most two tool calls.",
-        "If the first inspection is inconclusive, emit a tagged fallback instead of continuing to scan.",
-        "Do not create todo plans or edit files.",
-        "Wrap the final user-visible reply in [final-reply]...[/final-reply].",
-        "Return exactly one curiosity question, one hypothesis, and one evidence line using:",
-        "[curiosity-question: ...]",
-        "[curiosity-hypothesis: ...]",
-        "[curiosity-evidence: ...]",
-      ].join("\n"),
+      prompt: defaultPromptRenderer.render("agent/task_turn_curiosity", {
+        goal: task.goal,
+      }),
     };
   }
 
   if (isDirectResponseTask(task)) {
     return {
       phase: "execute",
-      prompt: [
-        "You are handling a direct user question or lightweight request.",
-        `Goal: ${task.goal}`,
-        "Answer directly.",
-        "Use read or bash tools only when they provide concrete evidence you need for the reply.",
-        "If you use tools, only the final user-visible answer should be wrapped in [final-reply]...[/final-reply].",
-        "Do not create or refine todo plans unless the user explicitly asked for implementation work."
-      ].join("\n")
+      prompt: defaultPromptRenderer.render("agent/task_turn_direct_response", {
+        goal: task.goal,
+      }),
     };
   }
 
   return {
     phase: "execute",
-    prompt: [
-      "You are in execution mode.",
-      `Goal: ${task.goal}`,
-      currentTaskLine(todoRecord),
-      todoRecord ? "Make progress on the in_progress todo item." : "If the task is multi-step, create or refine a todo plan with write_todos before proceeding.",
-      "If code or files changed, leave enough evidence for a later verification pass."
-    ].join("\n")
+    prompt: defaultPromptRenderer.render("agent/task_turn_execute", {
+      goal: task.goal,
+      current_task_description: currentTaskDescription(todoRecord),
+      has_todo_record: Boolean(todoRecord),
+    }),
   };
 }
 
@@ -318,29 +294,23 @@ function suffixHasDanglingToolResults(messages: ConversationMessage[], startInde
 }
 
 export function buildTaskContext(task: TaskState, todoRecord?: TaskTodoRecord | null): string {
-  const todoLines = todoRecord?.todos.map((todo) => `- [${todo.status}] ${todo.description}`).join("\n") ?? "";
-  const verificationLine =
-    task.verification.mode === "none"
-      ? "Verification: not required"
-      : `Verification: ${task.verification.passed ? "passed" : task.verification.reason ?? "pending"}`;
-  return [
-    "<TaskContext>",
-    `Goal: ${task.goal}`,
-    `Phase: ${task.phase}`,
-    `Attempts: ${task.attempts}`,
-    verificationLine,
-    `Origin: ${task.origin ?? "user"}`,
-    task.parentIntentId ? `AutonomyIntent: ${task.parentIntentId}` : "",
-    task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
-    ...(todoLines ? ["Todos:", todoLines] : ["Todos: <none>"]),
-    "Use write_todos to create or update the current task plan when needed.",
-    "</TaskContext>"
-  ].join("\n");
+  return defaultPromptRenderer.render("agent/task_context_default", {
+    goal: task.goal,
+    phase: task.phase,
+    attempts: task.attempts,
+    verification_mode: task.verification.mode,
+    verification_passed: task.verification.passed ?? false,
+    verification_reason: task.verification.reason,
+    origin: task.origin ?? "user",
+    autonomy_intent: task.parentIntentId,
+    lease: task.lease,
+    todos: todoRecord?.todos ?? [],
+  });
 }
 
-function currentTaskLine(todoRecord?: TaskTodoRecord | null): string {
+function currentTaskDescription(todoRecord?: TaskTodoRecord | null): string {
   const current = todoRecord?.todos.find((todo) => todo.status === "in_progress");
-  return current ? `Current task: ${current.description}` : "Current task: progress the overall goal.";
+  return current?.description ?? "progress the overall goal.";
 }
 
 function shouldSkipVerificationAfterExecute(messages: ConversationMessage[], mode: VerificationMode): boolean {

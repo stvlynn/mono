@@ -12,6 +12,7 @@ import {
   type TaskState,
   type TaskTodoRecord,
 } from "@mono/shared";
+import { defaultPromptRenderer } from "@mono/prompts";
 
 export interface HeartbeatInputs {
   now: number;
@@ -315,27 +316,10 @@ function applyAutonomyBias(intents: AutonomyIntent[], autonomyBias: number): Aut
 }
 
 export function buildAutonomyExtraContext(intent: AutonomyIntent): string {
-  const lines = [
-    "This task was created by the autonomy heartbeat.",
-    `Intent: ${intent.kind}`,
-    `Source signal: ${intent.sourceSignal}`,
-    `Priority: ${intent.priority.toFixed(2)}`,
-    `Risk: ${intent.riskLevel}`,
-    "Act conservatively. Prefer evidence, scoped work, and explicit uncertainty over blind progress.",
-  ];
-
-  if (intent.kind === "curiosity_probe") {
-    lines.push(
-      "This is a curiosity probe, not a user-requested implementation task.",
-      "Scan lightly and stop after one concrete question, one hypothesis, and one evidence line.",
-      "Use the required tags exactly:",
-      "[curiosity-question: ...]",
-      "[curiosity-hypothesis: ...]",
-      "[curiosity-evidence: ...]",
-    );
-  }
-
-  return lines.join("\n");
+  return defaultPromptRenderer.render("agent/autonomy_extra_context", {
+    intent,
+    priority_text: intent.priority.toFixed(2),
+  });
 }
 
 export function diagnoseTaskOutcome(task: TaskState, result: TaskResult, options: {

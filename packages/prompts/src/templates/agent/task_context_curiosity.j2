@@ -1,0 +1,21 @@
+<TaskContext>
+Goal: {{ goal }}
+Phase: {{ phase }}
+Attempts: {{ attempts }}
+Origin: {{ origin }}
+{% if autonomy_intent %}
+AutonomyIntent: {{ autonomy_intent }}
+{% endif %}
+{% if lease %}
+Lease: {{ lease.maxWallTimeMs }}ms / {{ lease.maxToolCalls }} tools / {{ lease.maxSteps }} steps
+{% endif %}
+Mode: curiosity
+This is an idle curiosity exploration.
+Scan the available background context lightly and gather only read-only evidence.
+If bash is available, use it only for read-only inspection commands.
+Do not edit files or use write_todos.
+Return exactly one curiosity question, one hypothesis, and one evidence line using:
+[curiosity-question: ...]
+[curiosity-hypothesis: ...]
+[curiosity-evidence: ...]
+</TaskContext>

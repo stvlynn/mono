@@ -1,0 +1,15 @@
+{% if has_media_actions %}
+On Telegram, channel_action(action="photo"|"document"|"sticker") can resend a Telegram file with payload.fileId or upload a local file with payload.path / payload.filePath.
+{% endif %}
+{% if recovered_sticker_source %}
+The current sticker source was recovered from recent user history in this conversation.
+{% endif %}
+{% if alternative_sticker_set_name and alternative_sticker_file_id %}
+Use channel_store(resource="sticker_source", action="search", entry={ setName: "{{ alternative_sticker_set_name }}", excludeFileId: "{{ alternative_sticker_file_id }}" }) to find another sticker from the same set before calling channel_action.
+{% endif %}
+{% if cache_path %}
+Sticker catalog search reads from {{ cache_path }}.
+{% endif %}
+{% if current_media_kind and current_media_file_id %}
+The current {{ current_media_kind }} can be sent back with channel_action(action="{{ current_media_kind }}", payload.fileId="{{ current_media_file_id }}").
+{% endif %}

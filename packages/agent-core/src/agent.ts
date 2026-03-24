@@ -129,6 +129,7 @@ import {
 import { HeartbeatWakeController, type HeartbeatWakeTrigger } from "./heartbeat-wake.js";
 import { guardMessagesBeforeSessionPersist } from "./session-tool-result-guard.js";
 import { createWriteTodosTool } from "./task-todo-tool.js";
+import { defaultPromptRenderer } from "@mono/prompts";
 
 interface TaskRunContext {
   runId: number;
@@ -2035,22 +2036,21 @@ export class Agent {
       this.buildTaskContextForRun(task, todoRecord, context.interactionMode),
       context.extraTaskContext ?? "",
       turnPlan.prompt,
+      this.buildChannelReplyFormattingRules(channelContext),
       this.buildChannelReplyInstructions(channelContext),
       this.buildChannelPlatformContext(channelContext),
       context.channelActionRequirement
-        ? [
-          "Required Channel Action:",
-          `- RequestedNativeActionRequired: ${context.channelActionRequirement.nativeActionRequired ? "yes" : "no"}`,
-          context.channelActionRequirement.action ? `- RequestedNativeAction: ${context.channelActionRequirement.action}` : "",
-          context.channelActionRequirement.reason ? `- RequestedNativeActionReason: ${context.channelActionRequirement.reason}` : "",
-          `- TextOnlyFallbackAllowed: ${context.channelActionRequirement.textOnlyFallbackAllowed ? "yes" : "no"}`,
-          context.channelActionRequirement.nativeActionRequired
-            ? "- A plain-text response does not satisfy this turn."
-            : "",
-        ].filter(Boolean).join("\n")
+        ? defaultPromptRenderer.render("agent/required_channel_action", {
+          native_action_required: context.channelActionRequirement.nativeActionRequired,
+          action: context.channelActionRequirement.action,
+          reason: context.channelActionRequirement.reason,
+          text_only_fallback_allowed: context.channelActionRequirement.textOnlyFallbackAllowed,
+        })
         : "",
       context.channelActionFeedback
-        ? `Channel Action Retry Feedback:\n- ${context.channelActionFeedback}`
+        ? defaultPromptRenderer.render("agent/channel_action_retry_feedback", {
+          feedback: context.channelActionFeedback,
+        })
         : "",
     ].filter(Boolean).join("\n");
     const assembledPrompt = await assemblePromptContext({
@@ -2140,45 +2140,37 @@ export class Agent {
       return "";
     }
 
-    if (context.actions.length === 0 && context.storeResources.length === 0) {
-      return [
-        "Channel Delivery Notes:",
-        "- Write a normal user-facing reply.",
-        "- The runtime may split long answers into multiple platform messages automatically when needed.",
-      ].join("\n");
-    }
-
-    return [
-      "Channel Delivery Notes:",
-      "- Write a normal user-facing reply.",
-      "- Use the channel_action tool for platform-native sends, edits, deletes, reactions, or native media actions when a direct channel action is needed.",
-      "- On Telegram, channel_action(action=\"photo\"|\"document\"|\"sticker\") can resend a Telegram file with payload.fileId or upload a local file with payload.path / payload.filePath.",
-      "- Use the channel_store tool when the user wants to save a reusable channel-native source for future runs.",
-      "- The runtime may split long answers into multiple platform messages automatically when needed.",
-      `- Available channel actions: ${context.actions.join(", ") || "<none>"}.`,
-      `- Available channel store resources: ${context.storeResources.join(", ") || "<none>"}.`,
-      context.currentResource?.available
-        ? `- Current-turn ${context.currentResource.kind} is available; prefer channel_action over placeholder text or emoji when the user wants the real platform-native resource.`
+    return defaultPromptRenderer.render("agent/channel_reply_instructions", {
+      has_actions_or_store_resources: context.actions.length > 0 || context.storeResources.length > 0,
+      actions_text: context.actions.join(", ") || "<none>",
+      store_resources_text: context.storeResources.join(", ") || "<none>",
+      current_resource_available: context.currentResource?.available ?? false,
+      current_resource_kind: context.currentResource?.kind,
+      recommended_action: context.recommendedAction,
+      recommended_action_payload_text: context.recommendedAction?.payload
+        ? formatRecommendedChannelActionPayload(context.recommendedAction.payload)
         : "",
-      context.recommendedAction
-        ? `- RecommendedChannelAction: ${context.recommendedAction.action} targeting ${context.recommendedAction.targetId ?? "the current conversation"}.`
-        : "",
-      context.recommendedAction?.payload
-        ? `- RecommendedChannelActionPayload: ${formatRecommendedChannelActionPayload(context.recommendedAction.payload)}.`
-        : "",
-      context.store && !context.store.exists
-        ? `- Missing durable store for ${context.store.resource} does not block sending the current-turn resource now.`
-        : "",
-      context.currentResource?.kind === "sticker"
+      missing_store_resource: context.store && !context.store.exists ? context.store.resource : "",
+      related_store_search_text: context.currentResource?.kind === "sticker"
         && context.currentResource?.attributes?.setName
         && context.store?.searchSupported
-        ? `- When the user asks for another sticker from the same set, first call channel_store(resource="${context.store.resource}", action="search", entry={ setName: "${context.currentResource.attributes.setName}", excludeFileId: "${context.currentResource.attributes.fileId ?? ""}" }) and then send a different fileId with channel_action.`
+        ? `When the user asks for another sticker from the same set, first call channel_store(resource="${context.store.resource}", action="search", entry={ setName: "${context.currentResource.attributes.setName}", excludeFileId: "${context.currentResource.attributes.fileId ?? ""}" }) and then send a different fileId with channel_action.`
         : "",
-      context.store
-        ? `- Persist reusable future sources with channel_store(resource="${context.store.resource}", action="upsert", ...).`
+      store_upsert_text: context.store
+        ? `Persist reusable future sources with channel_store(resource="${context.store.resource}", action="upsert", ...).`
         : "",
-      ...(context.notes ?? []),
-    ].join("\n");
+      notes: context.notes ?? [],
+    });
+  }
+
+  private buildChannelReplyFormattingRules(context: ChannelCapabilityContext | null): string {
+    if (!context?.replyFormattingRules?.length) {
+      return "";
+    }
+
+    return defaultPromptRenderer.render("agent/channel_reply_format_rules", {
+      rules: context.replyFormattingRules,
+    });
   }
 
   private buildChannelPlatformContext(context: ChannelCapabilityContext | null): string {
@@ -2186,29 +2178,17 @@ export class Agent {
       return "";
     }
 
-    return [
-      "Channel Native Resource Context:",
-      `- Channel: ${context.channel}`,
-      `- AvailableChannelActions: ${context.actions.join(", ") || "<none>"}`,
-      `- AvailableChannelStoreResources: ${context.storeResources.join(", ") || "<none>"}`,
-      context.store ? `- Store.resource: ${context.store.resource}` : "",
-      context.store?.path ? `- Store.path: ${context.store.path}` : "",
-      context.store ? `- Store.exists: ${context.store.exists ? "yes" : "no"}` : "",
-      context.store ? `- Store.readable: ${context.store.readable ? "yes" : "no"}` : "",
-      context.store ? `- Store.entryCount: ${context.store.entryCount}` : "",
-      context.store ? `- Store.searchSupported: ${context.store.searchSupported ? "yes" : "no"}` : "",
-      context.currentResource ? `- CurrentTurnNativeResourceKind: ${context.currentResource.kind}` : "",
-      context.currentResource ? `- CurrentTurnNativeResourceAvailable: ${context.currentResource.available ? "yes" : "no"}` : "",
-      context.currentResource?.source ? `- CurrentTurnNativeResourceSource: ${context.currentResource.source}` : "",
-      ...Object.entries(context.currentResource?.attributes ?? {}).map(([key, value]) => `- Resource.${key}: ${value}`),
-      context.requiredAction ? `- RequiredChannelAction.required: ${context.requiredAction.required ? "yes" : "no"}` : "",
-      context.requiredAction?.action ? `- RequiredChannelAction.action: ${context.requiredAction.action}` : "",
-      context.requiredAction?.reason ? `- RequiredChannelAction.reason: ${context.requiredAction.reason}` : "",
-      context.requiredAction ? `- RequiredChannelAction.textOnlyFallbackAllowed: ${context.requiredAction.textOnlyFallbackAllowed ? "yes" : "no"}` : "",
-      context.recommendedAction ? `- RecommendedChannelAction.action: ${context.recommendedAction.action}` : "",
-      context.recommendedAction?.targetId ? `- RecommendedChannelAction.targetId: ${context.recommendedAction.targetId}` : "",
-      ...Object.entries(context.recommendedAction?.payload ?? {}).map(([key, value]) => `- RecommendedChannelAction.payload.${key}: ${value}`),
-    ].filter(Boolean).join("\n");
+    return defaultPromptRenderer.render("agent/channel_platform_context", {
+      channel: context.channel,
+      actions_text: context.actions.join(", ") || "<none>",
+      store_resources_text: context.storeResources.join(", ") || "<none>",
+      store: context.store,
+      current_resource: context.currentResource,
+      current_resource_attributes: Object.entries(context.currentResource?.attributes ?? {}).map(([key, value]) => ({ key, value })),
+      required_action: context.requiredAction,
+      recommended_action: context.recommendedAction,
+      recommended_action_payload: Object.entries(context.recommendedAction?.payload ?? {}).map(([key, value]) => ({ key, value })),
+    });
   }
 
   private buildInspectableTaskContext(goal: string): string {
@@ -2219,16 +2199,10 @@ export class Agent {
     if (!promptGoal) {
       return "";
     }
-    return [
-      "<TaskContext>",
-      `Goal: ${promptGoal}`,
-      "Phase: preview",
-      "Attempts: 0",
-      `Verification: ${this.verificationMode ?? "light"}`,
-      "Todos: <none>",
-      "Use write_todos to create a task plan if the work becomes multi-step.",
-      "</TaskContext>"
-    ].join("\n");
+    return defaultPromptRenderer.render("agent/task_context_preview", {
+      goal: promptGoal,
+      verification_mode: this.verificationMode ?? "light",
+    });
   }
 
   private buildTaskContextForRun(
@@ -2237,25 +2211,14 @@ export class Agent {
     interactionMode: "default" | "channel_chat" | "curiosity",
   ): string {
     if (interactionMode === "curiosity") {
-      return [
-        "<TaskContext>",
-        `Goal: ${task.goal}`,
-        `Phase: ${task.phase}`,
-        `Attempts: ${task.attempts}`,
-        `Origin: ${task.origin ?? "user"}`,
-        task.parentIntentId ? `AutonomyIntent: ${task.parentIntentId}` : "",
-        task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
-        "Mode: curiosity",
-        "This is an idle curiosity exploration.",
-        "Scan the available background context lightly and gather only read-only evidence.",
-        "If bash is available, use it only for read-only inspection commands.",
-        "Do not edit files or use write_todos.",
-        "Return exactly one curiosity question, one hypothesis, and one evidence line using:",
-        "[curiosity-question: ...]",
-        "[curiosity-hypothesis: ...]",
-        "[curiosity-evidence: ...]",
-        "</TaskContext>",
-      ].join("\n");
+      return defaultPromptRenderer.render("agent/task_context_curiosity", {
+        goal: task.goal,
+        phase: task.phase,
+        attempts: task.attempts,
+        origin: task.origin ?? "user",
+        autonomy_intent: task.parentIntentId,
+        lease: task.lease,
+      });
     }
 
     if (interactionMode !== "channel_chat") {
@@ -2266,23 +2229,15 @@ export class Agent {
       task.verification.mode === "none"
         ? "Verification: not required"
         : `Verification: ${task.verification.passed ? "passed" : task.verification.reason ?? "pending"}`;
-    return [
-      "<TaskContext>",
-      `Goal: ${task.goal}`,
-      `Phase: ${task.phase}`,
-      `Attempts: ${task.attempts}`,
-      verificationLine,
-      `Origin: ${task.origin ?? "user"}`,
-      task.parentIntentId ? `AutonomyIntent: ${task.parentIntentId}` : "",
-      task.lease ? `Lease: ${task.lease.maxWallTimeMs}ms / ${task.lease.maxToolCalls} tools / ${task.lease.maxSteps} steps` : "",
-      "Mode: channel_chat",
-      "This is a live channel chat turn.",
-      "Do not plan engineering work or use write_todos.",
-      "If bash is available in this chat, use it only for concrete workspace evidence or shell execution.",
-      "Only the final user-visible reply should be wrapped in [final-reply]...[/final-reply].",
-      "Respond in-channel and prefer channel_action for required native actions.",
-      "</TaskContext>",
-    ].join("\n");
+    return defaultPromptRenderer.render("agent/task_context_channel_chat", {
+      goal: task.goal,
+      phase: task.phase,
+      attempts: task.attempts,
+      verification_line: verificationLine,
+      origin: task.origin ?? "user",
+      autonomy_intent: task.parentIntentId,
+      lease: task.lease,
+    });
   }
 
   private async createToolsForRun(context: TaskRunContext, task: TaskState) {

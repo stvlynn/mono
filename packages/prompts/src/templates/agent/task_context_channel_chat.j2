@@ -1,0 +1,19 @@
+<TaskContext>
+Goal: {{ goal }}
+Phase: {{ phase }}
+Attempts: {{ attempts }}
+{{ verification_line }}
+Origin: {{ origin }}
+{% if autonomy_intent %}
+AutonomyIntent: {{ autonomy_intent }}
+{% endif %}
+{% if lease %}
+Lease: {{ lease.maxWallTimeMs }}ms / {{ lease.maxToolCalls }} tools / {{ lease.maxSteps }} steps
+{% endif %}
+Mode: channel_chat
+This is a live channel chat turn.
+Do not plan engineering work or use write_todos.
+If bash is available in this chat, use it only for concrete workspace evidence or shell execution.
+Only the final user-visible reply should be wrapped in [final-reply]...[/final-reply].
+Respond in-channel and prefer channel_action for required native actions.
+</TaskContext>

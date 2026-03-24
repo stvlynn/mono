@@ -466,6 +466,12 @@ describeIfRealTestModel("telegram runtime conflict detection", () => {
         emoji: "🙂",
       },
     });
+    expect(context.replyFormattingRules).toEqual([
+      "Write the final user-visible reply in plain text or Markdown, not raw HTML.",
+      "Do not output HTML tags such as <b>, <strong>, <i>, <em>, <a>, <code>, <pre>, or <blockquote>.",
+      "Use Markdown for emphasis, links, inline code, and fenced code blocks; the runtime will convert it to Telegram-safe formatting.",
+      "Do not hand-write Telegram parse_mode markup or Telegram-specific HTML.",
+    ]);
     expect(context.requiredAction).toEqual({
       required: true,
       action: "sticker",

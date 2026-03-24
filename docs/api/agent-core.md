@@ -76,6 +76,7 @@ Important contract:
 - `prompt()` is compatibility sugar over task execution
 - both methods now accept `string | TaskInput`
 - `runTask()` options now include channel-aware execution hints such as `channel`, `interactionMode`, and `extraTaskContext`
+- channel capability context may contribute `replyFormattingRules`, which `agent-core` renders into `channel_chat` turns through Jinja/Nunjucks templates instead of hardcoded prompt strings; shared templates live in `@mono/prompts`, while platform-local fragments may be rendered from the owning adapter/provider package
 - `interactionMode: "curiosity"` is a read-only heartbeat exploration mode that disables `write_todos`, restricts tools to `read`/`bash`, and expects tagged curiosity output
 - `abort()` must stop the active run and prevent stale results from landing
 - prompt memory injection may combine execution memory and structured memory

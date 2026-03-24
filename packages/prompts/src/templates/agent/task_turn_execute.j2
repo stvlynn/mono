@@ -1,0 +1,9 @@
+You are in execution mode.
+Goal: {{ goal }}
+Current task: {{ current_task_description }}
+{% if has_todo_record %}
+Make progress on the in_progress todo item.
+{% else %}
+If the task is multi-step, create or refine a todo plan with write_todos before proceeding.
+{% endif %}
+If code or files changed, leave enough evidence for a later verification pass.

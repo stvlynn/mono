@@ -6,7 +6,7 @@ Describe how prompts and prompt-like text are managed.
 
 ## Centralization
 
-`mono` centralizes prompt templates in `@mono/prompts`.
+`mono` centralizes shared prompt templates in `@mono/prompts`.
 
 This includes:
 
@@ -15,6 +15,8 @@ This includes:
 - structured-memory context blocks
 - compactor text fragments
 - TUI waiting-copy templates
+
+Platform-specific prompt fragments may live beside their adapter/provider implementation when the text is tightly coupled to one platform behavior. Those local `.j2` files should still be rendered through the shared Jinja/Nunjucks rendering utility from `@mono/prompts`.
 
 ## Template Engine
 
@@ -27,6 +29,7 @@ Key files:
 - `packages/prompts/src/registry.ts`
 - `packages/prompts/src/render.ts`
 - `packages/prompts/src/templates/`
+- platform-local templates such as `packages/telegram-control/src/templates/`
 
 Relevant memory templates now include:
 
@@ -34,6 +37,11 @@ Relevant memory templates now include:
 - `memory/structured_context_block`
 - `memory/openviking_context_block`
 - `memory/seekdb_context_block`
+
+Agent-facing prompt fragments may also live here, for example:
+
+- `agent/system_prompt`
+- `agent/channel_reply_format_rules`
 
 ## Build Assets
 

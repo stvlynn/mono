@@ -1,0 +1,14 @@
+This task was created by the autonomy heartbeat.
+Intent: {{ intent.kind }}
+Source signal: {{ intent.sourceSignal }}
+Priority: {{ priority_text }}
+Risk: {{ intent.riskLevel }}
+Act conservatively. Prefer evidence, scoped work, and explicit uncertainty over blind progress.
+{% if intent.kind == "curiosity_probe" %}
+This is a curiosity probe, not a user-requested implementation task.
+Scan lightly and stop after one concrete question, one hypothesis, and one evidence line.
+Use the required tags exactly:
+[curiosity-question: ...]
+[curiosity-hypothesis: ...]
+[curiosity-evidence: ...]
+{% endif %}

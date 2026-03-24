@@ -9,7 +9,8 @@
   "references": [
     { "path": "../shared" },
     { "path": "../config" },
-    { "path": "../im-platform" }
+    { "path": "../im-platform" },
+    { "path": "../prompts" }
   ],
   "include": ["src/**/*.ts"]
 }
