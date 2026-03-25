@@ -27,7 +27,7 @@ import type {
   UserPart
 } from "@mono/shared";
 import { ToolBatchScheduler, type StoredToolResult } from "./tool-batch-scheduler.js";
-import type { LlmRunOptions } from "./types.js";
+import type { LlmRunOptions, LlmTextStreamOptions } from "./types.js";
 import { resolveModelTransport } from "./transport.js";
 
 type ModelToolOutput =
@@ -740,6 +740,61 @@ export async function runAiSdkConversation(options: LlmRunOptions): Promise<Conv
   for (const step of steps) {
     output.push(stepToAssistantMessage(options, step));
     output.push(...stepToToolMessages(step, toolResultMap));
+  }
+
+  return output;
+}
+
+export async function streamAiSdkText(options: LlmTextStreamOptions): Promise<string> {
+  const providerOptions = createProviderOptions(options.model, options.thinkingLevel);
+  const wrapperParser = createReasoningWrapperStreamParser();
+  let streamError: unknown;
+  let output = "";
+
+  const result = streamText({
+    model: createLanguageModel(options.model) as never,
+    system: options.systemPrompt,
+    messages: conversationMessagesToModelMessages(options.model, options.messages, []),
+    abortSignal: options.signal,
+    providerOptions,
+    onError: ({ error }) => {
+      streamError = error;
+    },
+    onChunk: ({ chunk }) => {
+      if (chunk.type === "text-delta") {
+        const parsed = wrapperParser.push(chunk.text);
+        if (parsed.textDelta) {
+          output += parsed.textDelta;
+          options.onTextDelta?.(parsed.textDelta);
+        }
+        if (parsed.thinkingDelta) {
+          options.onThinkingDelta?.(parsed.thinkingDelta);
+        }
+        return;
+      }
+
+      if (chunk.type === "reasoning-delta") {
+        options.onThinkingDelta?.(chunk.text);
+      }
+    },
+  });
+
+  try {
+    await result.text;
+  } catch (error) {
+    if (streamError && NoOutputGeneratedError.isInstance(error)) {
+      throw normalizeStreamError(streamError);
+    }
+    throw error;
+  }
+
+  const trailing = wrapperParser.finish();
+  if (trailing.textDelta) {
+    output += trailing.textDelta;
+    options.onTextDelta?.(trailing.textDelta);
+  }
+  if (trailing.thinkingDelta) {
+    options.onThinkingDelta?.(trailing.thinkingDelta);
   }
 
   return output;

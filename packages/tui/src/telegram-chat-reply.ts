@@ -1,4 +1,3 @@
-import { splitTelegramMessageText } from "@mono/im-platform";
 import { extractConversationOutcomeText, extractFinalReply, type TaskResult } from "@mono/shared";
 import type { TelegramChatResponse } from "@mono/telegram-control";
 
@@ -9,6 +8,7 @@ const FINAL_REPLY_CLOSE = "[/final-reply]";
 const TELEGRAM_STICKER_TAG_RE = /(?:^|\n)\[telegram-sticker:([^\]\n]+)\]\s*$/u;
 const TELEGRAM_STICKER_FILE_TAG_RE = /(?:^|\n)\[telegram-sticker-file:([^\]\n]+)\]\s*$/u;
 const TELEGRAM_MULTI_MESSAGE_SOFT_LIMIT = 1200;
+const TELEGRAM_MESSAGE_HARD_LIMIT = 4096;
 const VISIBLE_TELEGRAM_CHANNEL_ACTIONS = new Set([
   "send",
   "sticker",
@@ -217,8 +217,74 @@ function splitTelegramReplyMessages(text: string): string[] {
 
   const sections = splitMarkdownSections(normalized);
   if (sections.length === 0) {
-    return splitTelegramMessageText(normalized);
+  return splitTelegramMessageText(normalized);
+}
+
+function splitTelegramMessageText(text: string, threshold = TELEGRAM_MESSAGE_HARD_LIMIT): string[] {
+  if (threshold <= 0 || text.length <= threshold) {
+    return [text];
   }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > threshold) {
+    const window = remaining.slice(0, threshold);
+    let cutIndex = -1;
+
+    const paragraphIndex = window.lastIndexOf("\n\n");
+    if (paragraphIndex > 0) {
+      cutIndex = paragraphIndex + 2;
+    }
+
+    if (cutIndex <= 0) {
+      const lineIndex = window.lastIndexOf("\n");
+      if (lineIndex > 0) {
+        cutIndex = lineIndex + 1;
+      }
+    }
+
+    if (cutIndex <= 0) {
+      let lastSentenceEnd = -1;
+      for (const match of window.matchAll(/[.。！？!?;；]\s/g)) {
+        lastSentenceEnd = match.index + match[0].length;
+      }
+      if (lastSentenceEnd > 0) {
+        cutIndex = lastSentenceEnd;
+      }
+    }
+
+    if (cutIndex <= 0) {
+      cutIndex = threshold;
+    }
+
+    const chunk = remaining.slice(0, cutIndex).trim();
+    if (chunk) {
+      chunks.push(chunk);
+    }
+    remaining = remaining.slice(cutIndex).trim();
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  const safeChunks: string[] = [];
+  for (const chunk of chunks) {
+    if (chunk.length <= TELEGRAM_MESSAGE_HARD_LIMIT) {
+      safeChunks.push(chunk);
+      continue;
+    }
+    for (let index = 0; index < chunk.length; index += TELEGRAM_MESSAGE_HARD_LIMIT) {
+      const part = chunk.slice(index, index + TELEGRAM_MESSAGE_HARD_LIMIT).trim();
+      if (part) {
+        safeChunks.push(part);
+      }
+    }
+  }
+
+  return safeChunks;
+}
 
   const messages: string[] = [];
   let current = "";

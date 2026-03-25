@@ -1,7 +1,22 @@
 import { Command } from "commander";
+import { existsSync } from "node:fs";
 import { Agent } from "@mono/agent-core";
 import { readInputImageAttachmentFromPath } from "@mono/shared";
 import { runPrint } from "../print-runtime.js";
+
+async function loadTuiModule(): Promise<{
+  runInteractiveApp: (options: {
+    agent: Agent;
+    initialPrompt?: string;
+    initialAttachments?: Awaited<ReturnType<typeof readInputImageAttachmentFromPath>>[];
+  }) => Promise<void>;
+}> {
+  if (existsSync(new URL("../../../tui/src/index.ts", import.meta.url))) {
+    return import("../../../tui/src/index.js");
+  }
+
+  return import("../../../tui/dist/index.js");
+}
 
 export function registerRootCommand(program: Command): void {
   program
@@ -52,7 +67,7 @@ export function registerRootCommand(program: Command): void {
         approvalPolicy: options.approvalPolicy,
         continueSession: options.continue
       });
-      const { runInteractiveApp } = await import("@mono/tui");
+      const { runInteractiveApp } = await loadTuiModule();
       await runInteractiveApp({
         agent,
         initialPrompt: promptText || undefined,

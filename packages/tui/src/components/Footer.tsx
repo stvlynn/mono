@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { useAppContext } from "../contexts/AppContext.js";
 import { useSettings } from "../contexts/SettingsContext.js";

@@ -786,6 +786,36 @@ describeIfRealTestModel("Agent", () => {
     const { Agent } = await import("../packages/agent-core/src/agent.js");
     const agent = new Agent({ cwd });
     await agent.initialize();
+    agent.setChannelCapabilityProvider({
+      supportsChannel: (channel) => channel?.platform === "telegram",
+      listAvailableActions: () => [],
+      listStoreResources: () => [],
+      buildContext: async () => ({
+        channel: "telegram",
+        actions: [],
+        storeResources: [],
+      }),
+      executeAction: async () => ({
+        ok: true,
+        channel: "telegram",
+        action: "send",
+        targetId: "7001",
+      }),
+      executeStore: async () => ({
+        ok: true,
+        channel: "telegram",
+        resource: "sticker_source",
+        action: "list",
+        entryCount: 0,
+      }),
+      getPermissionProfile: async (channel) => ({
+        allowlistedChannels: channel?.kind === "dm"
+          ? [{ platform: "telegram", kind: "dm", id: "7001" }]
+          : [],
+        commandDenylist: ["pnpm publish"],
+        exposeProtectedBash: channel?.kind === "dm" && channel.id === "7001",
+      }),
+    });
 
     const policy = await (agent as unknown as {
       createPermissionPolicy: (channel: { platform: string; kind: "dm" | "channel"; id: string }) => Promise<{
@@ -874,6 +904,34 @@ describeIfRealTestModel("Agent", () => {
     const { Agent } = await import("../packages/agent-core/src/agent.js");
     const agent = new Agent({ cwd });
     await agent.initialize();
+    agent.setChannelCapabilityProvider({
+      supportsChannel: (channel) => channel?.platform === "telegram",
+      listAvailableActions: () => [],
+      listStoreResources: () => [],
+      buildContext: async () => ({
+        channel: "telegram",
+        actions: [],
+        storeResources: [],
+      }),
+      executeAction: async () => ({
+        ok: true,
+        channel: "telegram",
+        action: "send",
+        targetId: "7002",
+      }),
+      executeStore: async () => ({
+        ok: true,
+        channel: "telegram",
+        resource: "sticker_source",
+        action: "list",
+        entryCount: 0,
+      }),
+      getPermissionProfile: async (channel) => ({
+        allowlistedChannels: [{ platform: "telegram", kind: "dm", id: "7002" }],
+        commandDenylist: [],
+        exposeProtectedBash: channel?.kind === "dm" && channel.id === "7002",
+      }),
+    });
 
     const policy = await (agent as unknown as {
       createPermissionPolicy: (channel: { platform: string; kind: "dm" | "channel"; id: string }) => Promise<{
@@ -971,6 +1029,11 @@ describeIfRealTestModel("Agent", () => {
         resource: "sticker_source",
         action: "list",
         entryCount: 0,
+      }),
+      getPermissionProfile: async (channel) => ({
+        allowlistedChannels: [{ platform: "telegram", kind: "dm", id: "7002" }],
+        commandDenylist: [],
+        exposeProtectedBash: channel?.kind === "dm" && channel.id === "7002",
       }),
     });
 
@@ -1139,6 +1202,11 @@ describeIfRealTestModel("Agent", () => {
         action: "list",
         entryCount: 0,
       }),
+      getPermissionProfile: async (channel) => ({
+        allowlistedChannels: [{ platform: "telegram", kind: "dm", id: "7002" }],
+        commandDenylist: [],
+        exposeProtectedBash: channel?.kind === "dm" && channel.id === "7002",
+      }),
     });
 
     const contextText = (agent as unknown as {
@@ -1262,6 +1330,11 @@ describeIfRealTestModel("Agent", () => {
         resource: "sticker_source",
         action: "list",
         entryCount: 0,
+      }),
+      getPermissionProfile: async (channel) => ({
+        allowlistedChannels: [{ platform: "telegram", kind: "dm", id: "7002" }],
+        commandDenylist: [],
+        exposeProtectedBash: channel?.kind === "dm" && channel.id === "7002",
       }),
     });
 

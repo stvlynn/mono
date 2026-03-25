@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";
 import { useUIActions } from "../contexts/UIActionsContext.js";

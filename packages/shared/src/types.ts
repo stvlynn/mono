@@ -216,7 +216,17 @@ export interface MonoTelegramConfig {
   pollingTimeoutSeconds: number;
 }
 
+export interface MonoTuiChannelConfig {
+  enabled: boolean;
+  renderer: "json-render-ink";
+  specMode: "deterministic" | "generative";
+  validateGeneratedSpec: boolean;
+  streamGeneratedSpec: boolean;
+  debugRender: boolean;
+}
+
 export interface MonoChannelsConfig {
+  tui: MonoTuiChannelConfig;
   telegram: MonoTelegramConfig;
 }
 
@@ -1040,6 +1050,12 @@ export interface ChannelCapabilityContext {
   notes?: string[];
 }
 
+export interface ChannelPermissionProfile {
+  allowlistedChannels?: ToolExecutionChannel[];
+  commandDenylist?: string[];
+  exposeProtectedBash?: boolean;
+}
+
 export interface ChannelCapabilityProvider {
   supportsChannel(channel: ToolExecutionChannel | undefined): boolean;
   listAvailableActions(channel: ToolExecutionChannel): string[];
@@ -1047,6 +1063,7 @@ export interface ChannelCapabilityProvider {
   buildContext(input: TaskInput, channel: ToolExecutionChannel, history: ConversationMessage[]): Promise<ChannelCapabilityContext>;
   executeAction(request: ChannelActionRequest, context: { channel: ToolExecutionChannel }): Promise<ChannelActionResult>;
   executeStore(request: ChannelStoreRequest, context: { channel: ToolExecutionChannel }): Promise<ChannelStoreResult>;
+  getPermissionProfile?(channel: ToolExecutionChannel): Promise<ChannelPermissionProfile | null> | ChannelPermissionProfile | null;
 }
 
 export type TelegramActionName = "send" | "sticker" | "photo" | "document" | "edit" | "delete" | "react";

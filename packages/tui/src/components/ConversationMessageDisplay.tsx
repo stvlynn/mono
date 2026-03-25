@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import type { AssistantMessage, ConversationMessage, ToolCallPart, ToolResultMessage, UserMessage } from "@mono/shared";
 import type { ReactNode } from "react";

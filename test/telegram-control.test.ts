@@ -51,6 +51,14 @@ describeIfRealTestModel("telegram control", () => {
 
     const resolved = await resolveMonoConfig({ cwd });
 
+    expect(resolved.channels.tui).toEqual({
+      enabled: true,
+      renderer: "json-render-ink",
+      specMode: "deterministic",
+      validateGeneratedSpec: true,
+      streamGeneratedSpec: false,
+      debugRender: false,
+    });
     expect(resolved.channels.telegram.enabled).toBe(false);
     expect(resolved.channels.telegram.dmPolicy).toBe("pairing");
     expect(resolved.channels.telegram.allowFrom).toEqual([]);

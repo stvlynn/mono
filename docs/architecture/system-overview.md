@@ -18,7 +18,7 @@ This is the high-level architecture document. For subsystem specifics, use the l
 A typical interactive request follows this path:
 
 1. `packages/cli` constructs an `Agent`
-2. `packages/tui` mounts the Ink app, manages pending image attachments, and bridges runtime events into UI state
+2. `packages/tui` resolves the local `tui` surface channel, mounts the Ink/json-render host, manages pending image attachments, and bridges runtime events into UI state
 3. local or platform entrypoints normalize text and images into a shared `TaskInput`
 4. `Agent.initialize()` resolves config, profile, model, session, and memory stores
 5. `Agent.runTask()` creates task state and runs task/turn orchestration
@@ -68,11 +68,12 @@ Responsibilities:
 
 Responsibilities:
 
-- Ink UI composition
+- local channel surface registration
+- Ink/json-render host composition
 - input handling
 - pending image attachment management
 - dialog lifecycle
-- mapping runtime events into visible state
+- mapping runtime events into visible state and validated json-render specs
 
 ### Agent
 

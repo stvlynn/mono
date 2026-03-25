@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { Fragment, useMemo, type ReactNode } from "react";
 import { parseMarkdownToBlocks, type MarkdownBlockNode, type MarkdownInlineNode } from "../markdown.js";

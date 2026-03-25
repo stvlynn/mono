@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { useAppContext } from "../contexts/AppContext.js";
 import { useUIState } from "../contexts/UIStateContext.js";

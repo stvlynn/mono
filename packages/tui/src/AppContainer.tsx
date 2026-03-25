@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useStdin } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Agent as AgentRuntime, formatContextReportLines, loadAvailableSkills, type Agent } from "@mono/agent-core";
 import {
   catalogModelToUnifiedModel,
@@ -11,15 +11,13 @@ import {
   type CatalogTransportCandidate
 } from "@mono/config";
 import {
-  executePairCommand,
-  executeTelegramCommand,
   type TelegramChatRequest,
   type TelegramChatResponse,
-  TelegramControlRuntime,
   type TelegramControlEvent,
 } from "@mono/telegram-control";
 import {
   type ApprovalRequest,
+  type ChannelCapabilityProvider,
   readInputImageAttachmentFromPath,
   telegramChatIdToToolExecutionChannel,
   type ConversationMessage,
@@ -27,7 +25,6 @@ import {
   type MemoryRecord,
   type TaskInput,
 } from "@mono/shared";
-import { RootApp } from "./RootApp.js";
 import { AppContext } from "./contexts/AppContext.js";
 import { ForegroundKeypressContext, type ForegroundKeypressHandler } from "./contexts/ForegroundKeypressContext.js";
 import { SettingsContext } from "./contexts/SettingsContext.js";
@@ -43,17 +40,28 @@ import { useTuiShutdown } from "./hooks/useTuiShutdown.js";
 import { useSlashCommands } from "./hooks/useSlashCommands.js";
 import { createConfiguredProfileItems, createMemoryItems, createSessionItems, createSkillItems, createTreeItems } from "./selector-items.js";
 import { formatTelegramChatResponse, sanitizeTelegramReplyPreview } from "./telegram-chat-reply.js";
+import { AppHeader } from "./components/AppHeader.js";
+import { ContextUsageDisplay } from "./components/ContextUsageDisplay.js";
+import { DialogManager } from "./components/DialogManager.js";
 import { FatalScreen } from "./components/FatalScreen.js";
+import { Footer } from "./components/Footer.js";
+import { InputPrompt } from "./components/InputPrompt.js";
+import { ToastDisplay } from "./components/ToastDisplay.js";
+import { TodoTray } from "./components/TodoTray.js";
 import { TuiErrorBoundary } from "./components/TuiErrorBoundary.js";
 import { isRecoverableRuntimeError } from "./error-classification.js";
 import { shouldSetConnectedProfileAsDefault } from "./connect-default.js";
 import { clampHistoryScrollOffset, getMaxHistoryScrollOffset, HISTORY_PAGE_SIZE } from "./history-scroll.js";
+import { JsonRenderTui } from "./json-render-tui.js";
+import { loadTelegramControlModule } from "./load-telegram-control.js";
 import type { DialogInstance, ListDialogItem, UISettings, UIState } from "./types/ui.js";
+import type { ChannelIntegrationHandle, ChannelRegistry } from "./channel-registry.js";
 
 export interface InteractiveAppProps {
   agent: Agent;
   initialPrompt?: string;
   initialAttachments?: InputImageAttachment[];
+  channelRegistry?: ChannelRegistry;
 }
 
 interface TelegramChatLane {
@@ -71,6 +79,8 @@ const initialUiState: UIState = {
   startupState: "idle",
   running: false,
   isExiting: false,
+  focusTarget: "shell",
+  paneGeneration: 0,
   status: "Starting...",
   fatalError: undefined,
   waitingCopy: undefined,
@@ -176,7 +186,54 @@ function createSuggestedProfileName(providerId: string, modelId: string, existin
   return `${uniqueBase}-${index}`;
 }
 
-export function AppContainer({ agent, initialPrompt, initialAttachments }: InteractiveAppProps) {
+function composeChannelCapabilityProviders(
+  providers: ChannelCapabilityProvider[],
+): ChannelCapabilityProvider | undefined {
+  if (providers.length === 0) {
+    return undefined;
+  }
+
+  return {
+    supportsChannel(channel) {
+      return providers.some((provider) => provider.supportsChannel(channel));
+    },
+    listAvailableActions(channel) {
+      const provider = providers.find((candidate) => candidate.supportsChannel(channel));
+      return provider?.listAvailableActions(channel) ?? [];
+    },
+    listStoreResources(channel) {
+      const provider = providers.find((candidate) => candidate.supportsChannel(channel));
+      return provider?.listStoreResources(channel) ?? [];
+    },
+    buildContext(input, channel, history) {
+      const provider = providers.find((candidate) => candidate.supportsChannel(channel));
+      if (!provider) {
+        throw new Error(`No channel capability provider found for ${channel.platform}`);
+      }
+      return provider.buildContext(input, channel, history);
+    },
+    executeAction(request, context) {
+      const provider = providers.find((candidate) => candidate.supportsChannel(context.channel));
+      if (!provider) {
+        throw new Error(`No channel capability provider found for ${context.channel.platform}`);
+      }
+      return provider.executeAction(request, context);
+    },
+    executeStore(request, context) {
+      const provider = providers.find((candidate) => candidate.supportsChannel(context.channel));
+      if (!provider) {
+        throw new Error(`No channel capability provider found for ${context.channel.platform}`);
+      }
+      return provider.executeStore(request, context);
+    },
+    getPermissionProfile(channel) {
+      const provider = providers.find((candidate) => candidate.supportsChannel(channel));
+      return provider?.getPermissionProfile?.(channel) ?? null;
+    },
+  };
+}
+
+export function AppContainer({ agent, initialPrompt, initialAttachments, channelRegistry }: InteractiveAppProps) {
   const { exit } = useApp();
   const { setRawMode } = useStdin();
   const [uiState, setUiState] = useState<UIState>(initialUiState);
@@ -196,7 +253,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
   const initializationRef = useRef<Promise<void> | null>(null);
   const keypressHandlerStackRef = useRef<Array<{ id: number; handler: ForegroundKeypressHandler }>>([]);
   const nextKeypressHandlerIdRef = useRef(0);
-  const telegramRuntimeRef = useRef<TelegramControlRuntime | null>(null);
+  const channelIntegrationHandlesRef = useRef<ChannelIntegrationHandle[]>([]);
   const telegramChatLanesRef = useRef(new Map<string, TelegramChatLane[]>());
 
   useEffect(() => {
@@ -559,16 +616,18 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     }), [pushDialog]);
 
   const handleApprovalRequest = useCallback(async (request: ApprovalRequest): Promise<boolean> => {
-    const runtime = telegramRuntimeRef.current;
-    if (request.channel?.platform === "telegram" && request.channel.kind === "dm" && runtime) {
+    for (const handle of channelIntegrationHandlesRef.current) {
+      if (!handle.requestApproval) {
+        continue;
+      }
       try {
-        setStatus(`Waiting for Telegram approval for ${request.toolName}...`);
-        const remoteApproval = await runtime.requestApproval(request);
+        setStatus(`Waiting for ${handle.id} approval for ${request.toolName}...`);
+        const remoteApproval = await handle.requestApproval(request);
         if (remoteApproval !== null) {
           return remoteApproval;
         }
       } catch {
-        setStatus("Telegram approval unavailable. Falling back to local approval.");
+        setStatus(`${handle.id} approval unavailable. Falling back to local approval.`);
       }
     }
 
@@ -576,7 +635,11 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
   }, [requestLocalApproval, setStatus]);
 
   const createTelegramHandoffAgent = useCallback(async () => {
-    const runtime = telegramRuntimeRef.current;
+    const provider = composeChannelCapabilityProviders(
+      channelIntegrationHandlesRef.current
+        .map((handle) => handle.provider)
+        .filter((handle): handle is ChannelCapabilityProvider => Boolean(handle)),
+    );
     const handoffAgent = new AgentRuntime({
       cwd: process.cwd(),
       profile: agent.getProfileName(),
@@ -584,8 +647,8 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       requestApproval: handleApprovalRequest,
     });
     await handoffAgent.initialize();
-    if (runtime) {
-      handoffAgent.setChannelCapabilityProvider(runtime);
+    if (provider) {
+      handoffAgent.setChannelCapabilityProvider(provider);
     }
     await handoffAgent.switchSession(agent.getSessionId(), undefined, { preserveCurrentModel: true });
     return handoffAgent;
@@ -1006,6 +1069,8 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       setUiState((current) => ({
         ...current,
         isExiting: false,
+        focusTarget: "shell",
+        paneGeneration: current.paneGeneration + 1,
         currentPrompt: taskInput.text ?? "",
         waitingCopy: undefined,
         interrupt: {},
@@ -1042,6 +1107,25 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
     },
     clearInterruptArming: () => {
       clearArming();
+    },
+    toggleFocusTarget: () => {
+      setUiState((current) => ({
+        ...current,
+        focusTarget: current.dialogs.length > 0
+          ? "shell"
+          : current.focusTarget === "shell"
+            ? "generated"
+            : "shell",
+      }));
+    },
+    setShellFocus: () => {
+      setUiState((current) => ({ ...current, focusTarget: "shell" }));
+    },
+    setGeneratedFocus: () => {
+      setUiState((current) => ({
+        ...current,
+        focusTarget: current.dialogs.length > 0 ? "shell" : "generated",
+      }));
     },
     openHelp: () => pushDialog({ id: `help-${Date.now()}`, type: "help", title: "Help" }),
     openSettings: () => {
@@ -1205,23 +1289,35 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
       }, "Failed to open session tree");
     },
     runPairCommand: async (argsText) => {
+      const { executePairCommand } = await loadTelegramControlModule();
       const result = await executePairCommand(argsText, process.cwd());
       pushDialog(infoDialog(result.title, flattenDialogLines(result.lines)));
       setStatus(result.status);
       if (result.shouldReloadRuntime) {
-        await telegramRuntimeRef.current?.reload().catch((error) => {
-          reportUiError(error, "Failed to reload Telegram runtime");
-        });
+        await Promise.all(channelIntegrationHandlesRef.current.map(async (handle) => {
+          if (!handle.reload) {
+            return;
+          }
+          await handle.reload().catch((error) => {
+            reportUiError(error, `Failed to reload ${handle.id} runtime`);
+          });
+        }));
       }
     },
     runTelegramCommand: async (argsText) => {
+      const { executeTelegramCommand } = await loadTelegramControlModule();
       const result = await executeTelegramCommand(argsText, process.cwd());
       pushDialog(infoDialog(result.title, flattenDialogLines(result.lines)));
       setStatus(result.status);
       if (result.shouldReloadRuntime) {
-        await telegramRuntimeRef.current?.reload().catch((error) => {
-          reportUiError(error, "Failed to reload Telegram runtime");
-        });
+        await Promise.all(channelIntegrationHandlesRef.current.map(async (handle) => {
+          if (!handle.reload) {
+            return;
+          }
+          await handle.reload().catch((error) => {
+            reportUiError(error, `Failed to reload ${handle.id} runtime`);
+          });
+        }));
       }
     },
     closeTopDialog,
@@ -1277,7 +1373,7 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
   useAlternateBuffer(settings.alternateBuffer);
   useRawKeypress(dispatchForegroundKeypress, {
     isActive: true,
-    enableMouseTracking: settings.alternateBuffer
+    enableMouseTracking: settings.alternateBuffer && uiState.focusTarget === "shell"
   });
   useAgentBridge({ agent, setUiState });
 
@@ -1290,46 +1386,74 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
   }, [initializeAgent]);
 
   useEffect(() => {
-    const runtime = new TelegramControlRuntime({
-      cwd: process.cwd(),
-      onEvent: handleTelegramRuntimeEvent,
-      onChatMessage: handleTelegramChatMessage,
-      applyProfile: async (profileName) => {
-        await agent.refreshRegistry();
-        await setSelectedProfile(profileName);
-      },
-      listConfiguredProfiles: async () => {
-        await agent.refreshRegistry();
-        const profiles = await agent.listConfiguredProfiles();
-        return profiles.map((profile) => ({
-          name: profile.name,
-          model: {
-            provider: profile.model.provider,
-            modelId: profile.model.modelId,
-            baseURL: profile.model.baseURL,
-          },
-        }));
-      },
-      isAgentBusy: () => agent.isRunning(),
-    });
-    agent.setChannelCapabilityProvider(runtime);
-    telegramRuntimeRef.current = runtime;
-    void runtime.start().catch((error) => {
-      reportUiError(error, "Failed to start Telegram runtime");
-    });
+    let disposed = false;
+
+    void (async () => {
+      await initializeAgent();
+      if (disposed) {
+        return;
+      }
+      const integrations = channelRegistry?.listIntegrations() ?? [];
+      const handles = await Promise.all(integrations.map(async (integration) => {
+        try {
+          return await integration.attach({
+            agent,
+            onEventMessage: (event) => handleTelegramRuntimeEvent(event),
+            onChatError: reportUiError,
+            onChatMessage: (request) => handleTelegramChatMessage(request as TelegramChatRequest),
+            applyProfile: async (profileName) => {
+              await agent.refreshRegistry();
+              await setSelectedProfile(profileName);
+            },
+            listConfiguredProfiles: async () => {
+              await agent.refreshRegistry();
+              const profiles = await agent.listConfiguredProfiles();
+              return profiles.map((profile) => ({
+                name: profile.name,
+                model: {
+                  provider: profile.model.provider,
+                  modelId: profile.model.modelId,
+                  baseURL: profile.model.baseURL,
+                },
+              }));
+            },
+            isAgentBusy: () => agent.isRunning(),
+          });
+        } catch (error) {
+          reportUiError(error, `Failed to start ${integration.id} runtime`);
+          return null;
+        }
+      }));
+      if (disposed) {
+        await Promise.all(handles.map((handle) => handle?.dispose()));
+        return;
+      }
+
+      const activeHandles = handles.filter((handle): handle is ChannelIntegrationHandle => Boolean(handle));
+      channelIntegrationHandlesRef.current = activeHandles;
+      agent.setChannelCapabilityProvider(composeChannelCapabilityProviders(
+        activeHandles
+          .map((handle) => handle.provider)
+          .filter((provider): provider is ChannelCapabilityProvider => Boolean(provider)),
+      ));
+    })();
 
     return () => {
+      disposed = true;
       agent.setChannelCapabilityProvider(undefined);
-      telegramRuntimeRef.current = null;
-      void runtime.stop();
+      const handles = channelIntegrationHandlesRef.current;
+      channelIntegrationHandlesRef.current = [];
+      void Promise.all(handles.map((handle) => handle.dispose()));
     };
-  }, [agent, handleTelegramChatMessage, handleTelegramRuntimeEvent, reportUiError, setSelectedProfile]);
+  }, [agent, channelRegistry, handleTelegramChatMessage, handleTelegramRuntimeEvent, reportUiError, setSelectedProfile]);
 
   useEffect(() => {
     const unsubscribe = agent.subscribe((event) => {
       if (event.type === "run-end" || event.type === "run-aborted") {
         setTimeout(() => {
-          void telegramRuntimeRef.current?.flushPendingProfileApplication();
+          for (const handle of channelIntegrationHandlesRef.current) {
+            void handle.flushPendingProfileApplication?.();
+          }
         }, 0);
       }
     });
@@ -1389,7 +1513,26 @@ export function AppContainer({ agent, initialPrompt, initialAttachments }: Inter
                   <FatalScreen />
                 ) : (
                   <TuiErrorBoundary onError={(error) => reportFatalError(error, "Render failure in TUI")}>
-                    <RootApp composer={composer} slash={slash} attachments={pendingAttachments} />
+                    <Box flexDirection="column">
+                      <AppHeader />
+                      <JsonRenderTui
+                        slash={slash}
+                        dialogsOpen={uiState.dialogs.length > 0}
+                        paneGeneration={uiState.paneGeneration}
+                        focusTarget={uiState.focusTarget}
+                      />
+                      <TodoTray />
+                      <ToastDisplay />
+                      <InputPrompt
+                        composer={composer}
+                        slash={slash}
+                        dialogsOpen={uiState.dialogs.length > 0}
+                        attachments={pendingAttachments}
+                      />
+                      <ContextUsageDisplay />
+                      <Footer />
+                      <DialogManager />
+                    </Box>
                   </TuiErrorBoundary>
                 )}
               </Box>

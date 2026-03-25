@@ -9,9 +9,9 @@
   "references": [
     { "path": "../shared" },
     { "path": "../config" },
+    { "path": "../llm" },
     { "path": "../memory" },
     { "path": "../telegram-control" },
-    { "path": "../pi-tui" },
     { "path": "../agent-core" }
   ],
   "include": ["src/**/*.ts", "src/**/*.tsx"]

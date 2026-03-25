@@ -43,12 +43,12 @@ This is a package-level overview, not a runtime walkthrough.
 
 ### User-facing packages
 
-- `packages/tui`: interactive Ink UI, state bridge, dialogs, input handling, slash command integration
+- `packages/tui`: interactive local `tui` channel surface, json-render Ink host, state bridge, dialogs, input handling, slash command integration
 - `packages/cli`: `mono` command entrypoint, auth/config/memory commands, interactive/bootstrap logic
 
 ### Legacy/compat context
 
-- `packages/pi-tui`: earlier terminal rendering/runtime helpers retained for reference or compatibility context; the active interactive UI is `@mono/tui`
+- `packages/pi-tui`: legacy terminal helpers retained only for isolated compatibility tests; `@mono/tui` no longer depends on it at runtime
 
 ## Where To Start By Problem Type
 

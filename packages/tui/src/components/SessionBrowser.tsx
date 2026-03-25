@@ -1,3 +1,4 @@
+import React from "react";
 import type { ListDialog as ListDialogType } from "../types/ui.js";
 import { ListDialog } from "./ListDialog.js";
 

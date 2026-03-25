@@ -2,6 +2,7 @@ import type {
   MonoTelegramActionsConfig,
   MonoChannelsConfig,
   MonoGlobalConfig,
+  MonoTuiChannelConfig,
   MonoTelegramApprovalConfig,
   MonoTelegramConfig,
   MonoTelegramReplyConfig,
@@ -15,6 +16,17 @@ import {
   normalizeTelegramGroupsConfig,
   normalizeTelegramReplyConfig,
 } from "@mono/shared";
+
+export function createDefaultTuiChannelConfig(): MonoTuiChannelConfig {
+  return {
+    enabled: true,
+    renderer: "json-render-ink",
+    specMode: "deterministic",
+    validateGeneratedSpec: true,
+    streamGeneratedSpec: false,
+    debugRender: false,
+  };
+}
 
 export function createDefaultTelegramActionsConfig(): MonoTelegramActionsConfig {
   return {
@@ -64,15 +76,27 @@ export function createDefaultTelegramConfig(): MonoTelegramConfig {
 
 export function createDefaultChannelsConfig(): MonoChannelsConfig {
   return {
+    tui: createDefaultTuiChannelConfig(),
     telegram: createDefaultTelegramConfig(),
   };
 }
 
 export function resolveChannelsConfig(globalConfig: MonoGlobalConfig): MonoChannelsConfig {
   const defaults = createDefaultChannelsConfig();
+  const tui = globalConfig.mono.channels?.tui;
   const telegram = globalConfig.mono.channels?.telegram;
 
   return {
+    tui: {
+      ...defaults.tui,
+      ...tui,
+      enabled: tui?.enabled ?? defaults.tui.enabled,
+      renderer: tui?.renderer ?? defaults.tui.renderer,
+      specMode: tui?.specMode ?? defaults.tui.specMode,
+      validateGeneratedSpec: tui?.validateGeneratedSpec ?? defaults.tui.validateGeneratedSpec,
+      streamGeneratedSpec: tui?.streamGeneratedSpec ?? defaults.tui.streamGeneratedSpec,
+      debugRender: tui?.debugRender ?? defaults.tui.debugRender,
+    },
     telegram: {
       ...defaults.telegram,
       ...telegram,
@@ -109,7 +133,17 @@ export function validateTelegramConfig(config: MonoTelegramConfig): void {
   }
 }
 
+export function validateTuiConfig(config: MonoTuiChannelConfig): void {
+  if (config.renderer !== "json-render-ink") {
+    throw new Error(`Unsupported mono.channels.tui.renderer: ${config.renderer}`);
+  }
+  if (config.specMode !== "deterministic" && config.specMode !== "generative") {
+    throw new Error(`Unsupported mono.channels.tui.specMode: ${String(config.specMode)}`);
+  }
+}
+
 export function validateChannelsConfig(globalConfig: MonoGlobalConfig): void {
   const resolved = resolveChannelsConfig(globalConfig);
+  validateTuiConfig(resolved.tui);
   validateTelegramConfig(resolved.telegram);
 }

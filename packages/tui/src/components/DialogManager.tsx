@@ -1,3 +1,4 @@
+import React from "react";
 import { Box } from "ink";
 import { useUIState } from "../contexts/UIStateContext.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";

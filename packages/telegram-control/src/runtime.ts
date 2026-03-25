@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMonoConfig } from "@mono/config";
-import { renderPromptTemplateFile } from "@mono/prompts";
 import {
   createBuiltInProvider,
   createDistributor,
@@ -19,6 +18,7 @@ import {
   type ChannelCapabilityContext,
   type ChannelCapabilityProvider,
   type ChannelContextResourceSource,
+  type ChannelPermissionProfile,
   type ChannelStoreRequest,
   type ChannelStoreResult,
   guessImageMimeTypeFromPath,
@@ -66,18 +66,20 @@ import {
   upsertTelegramStickerStore,
 } from "./sticker-store.js";
 import { processTelegramIncomingMessage } from "./inbound.js";
+import { loadPromptsModule } from "./load-prompts.js";
 
 const TELEGRAM_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
-function renderTelegramPromptTemplate(name: string, context: Record<string, unknown> = {}): string {
+async function renderTelegramPromptTemplate(name: string, context: Record<string, unknown> = {}): Promise<string> {
+  const { renderPromptTemplateFile } = await loadPromptsModule();
   return renderPromptTemplateFile(
     fileURLToPath(new URL(`./templates/${name}`, import.meta.url)),
     context,
   );
 }
 
-function renderTelegramPromptLines(name: string, context: Record<string, unknown> = {}): string[] {
-  return renderTelegramPromptTemplate(name, context)
+async function renderTelegramPromptLines(name: string, context: Record<string, unknown> = {}): Promise<string[]> {
+  return (await renderTelegramPromptTemplate(name, context))
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
@@ -333,6 +335,27 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     return channel?.platform === "telegram";
   }
 
+  async getPermissionProfile(
+    channel: { platform: string; kind: "dm" | "channel"; id: string },
+  ): Promise<ChannelPermissionProfile | null> {
+    if (!this.supportsChannel(channel) || !this.#config) {
+      return null;
+    }
+
+    const allowlistedChannels = await this.#resolveAllowlistedChannels(channel);
+    const isAllowlisted = allowlistedChannels.some((candidate) =>
+      candidate.platform === channel.platform
+      && candidate.kind === channel.kind
+      && candidate.id === channel.id,
+    );
+
+    return {
+      allowlistedChannels,
+      commandDenylist: this.#config.approval.commandDenylist,
+      exposeProtectedBash: isAllowlisted,
+    };
+  }
+
   listAvailableActions(channel: { platform: string; kind: "dm" | "channel"; id: string }): string[] {
     if (!this.supportsChannel(channel) || !this.#config) {
       return [];
@@ -415,7 +438,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
       channel: channel.platform,
       actions,
       storeResources,
-      replyFormattingRules: renderTelegramPromptLines("reply_format_rules.j2"),
+      replyFormattingRules: await renderTelegramPromptLines("reply_format_rules.j2"),
       ...(mediaContext
         ? {
           currentResource: {
@@ -482,7 +505,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
         }
         : {}),
       notes: [
-        ...renderTelegramPromptLines("channel_notes.j2", {
+        ...(await renderTelegramPromptLines("channel_notes.j2", {
           has_media_actions: actions.includes("photo") || actions.includes("document") || actions.includes("sticker"),
           recovered_sticker_source: stickerContext?.source === "recent_history",
           alternative_sticker_set_name: requestsAlternativeSticker ? sticker?.setName : undefined,
@@ -490,7 +513,7 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
           cache_path: requestsAlternativeSticker ? cachePath : undefined,
           current_media_kind: mediaContext?.kind,
           current_media_file_id: mediaContext?.attributes.fileId ?? "",
-        }),
+        })),
       ],
     };
   }
@@ -906,6 +929,34 @@ export class TelegramControlRuntime implements ChannelCapabilityProvider {
     const storeAllowFrom = await readTelegramAllowFromStore(this.#cwd);
     const effectiveAllowFrom = mergeTelegramAllowFrom(this.#config, storeAllowFrom);
     return isTelegramSenderAllowed(message.senderId, effectiveAllowFrom);
+  }
+
+  async #resolveAllowlistedChannels(
+    channel: { platform: string; kind: "dm" | "channel"; id: string },
+  ): Promise<Array<{ platform: string; kind: "dm" | "channel"; id: string }>> {
+    if (!this.#config) {
+      return [];
+    }
+
+    const configuredAllowlistedChannels = this.#config.approval.allowChats.map((chatId) => ({
+      platform: "telegram",
+      kind: chatId.startsWith("-") ? "channel" : "dm",
+      id: chatId,
+    }) as const);
+    const implicitDmChannels = channel.kind === "dm"
+      ? mergeTelegramAllowFrom(this.#config, await readTelegramAllowFromStore(this.#cwd)).map((senderId) => ({
+        platform: "telegram",
+        kind: "dm",
+        id: senderId,
+      }) as const)
+      : [];
+    const unique = new Map<string, { platform: string; kind: "dm" | "channel"; id: string }>();
+
+    for (const candidate of [...configuredAllowlistedChannels, ...implicitDmChannels]) {
+      unique.set(`${candidate.platform}:${candidate.kind}:${candidate.id}`, candidate);
+    }
+
+    return [...unique.values()];
   }
 
   async #handleConfiguredProfile(

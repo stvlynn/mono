@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { useCallback, useMemo, useState } from "react";
 import type { ListDialog as ListDialogType } from "../types/ui.js";

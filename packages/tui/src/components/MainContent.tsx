@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { AppHeader } from "./AppHeader.js";
 import { HistoryItemDisplay } from "./HistoryItemDisplay.js";
@@ -7,7 +8,7 @@ import { useSettings } from "../contexts/SettingsContext.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
 import { getHistoryWindow, HISTORY_PAGE_SIZE } from "../history-scroll.js";
 
-function PendingTools() {
+export function PendingToolsPanel() {
   const { pendingTools, waitingCopy } = useUIState();
   const { settings } = useSettings();
   if (pendingTools.length === 0) {
@@ -33,7 +34,7 @@ function PendingTools() {
   );
 }
 
-function PendingAssistant() {
+export function PendingAssistantPanel() {
   const { pendingAssistant, running } = useUIState();
   const { settings } = useSettings();
   if (!pendingAssistant && !running) {
@@ -57,32 +58,38 @@ function PendingAssistant() {
   );
 }
 
-export function MainContent() {
+export function HistoryPane() {
   const { history, historyScrollOffset } = useUIState();
   const { settings } = useSettings();
   const window = getHistoryWindow(history.length, historyScrollOffset, HISTORY_PAGE_SIZE);
   const visibleHistory = settings.alternateBuffer ? history.slice(window.start, window.end) : history;
 
   return (
+    <Box flexDirection="column" marginTop={1}>
+      {history.length === 0 ? (
+        <Text dimColor>No conversation yet.</Text>
+      ) : (
+        <>
+          {settings.alternateBuffer && window.hiddenAbove > 0 ? (
+            <Text dimColor>↑ {window.hiddenAbove} earlier item(s) · PageUp/Home to scroll back</Text>
+          ) : null}
+          {visibleHistory.map((item) => <HistoryItemDisplay key={item.id} item={item} />)}
+          {settings.alternateBuffer && window.hiddenBelow > 0 ? (
+            <Text dimColor>↓ {window.hiddenBelow} newer item(s) · Down/PageDown/End to return</Text>
+          ) : null}
+        </>
+      )}
+    </Box>
+  );
+}
+
+export function MainContent() {
+  return (
     <Box flexDirection="column" flexGrow={1}>
       <AppHeader />
-      <Box flexDirection="column" marginTop={1}>
-        {history.length === 0 ? (
-          <Text dimColor>No conversation yet.</Text>
-        ) : (
-          <>
-            {settings.alternateBuffer && window.hiddenAbove > 0 ? (
-              <Text dimColor>↑ {window.hiddenAbove} earlier item(s) · PageUp/Home to scroll back</Text>
-            ) : null}
-            {visibleHistory.map((item) => <HistoryItemDisplay key={item.id} item={item} />)}
-            {settings.alternateBuffer && window.hiddenBelow > 0 ? (
-              <Text dimColor>↓ {window.hiddenBelow} newer item(s) · Down/PageDown/End to return</Text>
-            ) : null}
-          </>
-        )}
-      </Box>
-      <PendingTools />
-      <PendingAssistant />
+      <HistoryPane />
+      <PendingToolsPanel />
+      <PendingAssistantPanel />
     </Box>
   );
 }

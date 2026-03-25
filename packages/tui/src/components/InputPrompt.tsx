@@ -1,6 +1,6 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { useCallback, useEffect, useState } from "react";
-import stringWidth from "string-width";
 import type { InputImageAttachment } from "@mono/shared";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";
 import type { ReturnTypeUseSlashCommands } from "../hooks/useSlashCommands.types.js";
@@ -33,7 +33,7 @@ function formatAttachmentLine(attachment: InputImageAttachment, index: number): 
 export function InputPrompt({ composer, slash, dialogsOpen, attachments }: InputPromptProps) {
   const actions = useUIActions();
   const { settings } = useSettings();
-  const { running, isExiting, historyScrollOffset } = useUIState();
+  const { running, isExiting, historyScrollOffset, focusTarget } = useUIState();
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
 
   useEffect(() => {
@@ -48,12 +48,25 @@ export function InputPrompt({ composer, slash, dialogsOpen, attachments }: Input
   }, [actions]);
 
   const handleKeypress = useCallback((input: string, key: RawKey) => {
+    if (input.startsWith("\u001b[<")) {
+      return;
+    }
+
+    if (key.ctrl && key.name === "o") {
+      actions.toggleFocusTarget();
+      return;
+    }
+
     if (key.ctrl && key.name === "c") {
       void actions.handleInterrupt();
       return;
     }
 
     if (dialogsOpen || isExiting) {
+      return;
+    }
+
+    if (focusTarget !== "shell") {
       return;
     }
 
@@ -203,14 +216,14 @@ export function InputPrompt({ composer, slash, dialogsOpen, attachments }: Input
       actions.clearInterruptArming();
       composer.insert(input);
     }
-  }, [actions, composer, dialogsOpen, handleAsyncError, historyScrollOffset, inputIsEmpty, isExiting, selectedSlashIndex, settings.alternateBuffer, slash, slashVisible]);
+  }, [actions, composer, dialogsOpen, focusTarget, handleAsyncError, historyScrollOffset, inputIsEmpty, isExiting, selectedSlashIndex, settings.alternateBuffer, slash, slashVisible]);
 
   useForegroundKeypress(handleKeypress, !dialogsOpen || isExiting);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={running ? "cyan" : "gray"} paddingX={1}>
       <Text dimColor>
-        {isExiting ? "exiting" : running ? "task running" : "ready"} · Enter submit · {settings.alternateBuffer ? "PgUp/PgDn browse" : "terminal scrollback enabled"} · Ctrl+J newline · /attach path/to.png · Ctrl+C interrupt · double Ctrl+C exit
+        {isExiting ? "exiting" : running ? "task running" : "ready"} · focus:{focusTarget} · Ctrl+O switch pane focus · {settings.alternateBuffer ? "PgUp/PgDn browse" : "terminal scrollback enabled"} · Ctrl+J newline · /attach path/to.png · Ctrl+C interrupt · double Ctrl+C exit
       </Text>
       {attachments.length > 0 ? (
         <Box flexDirection="column">
@@ -222,7 +235,6 @@ export function InputPrompt({ composer, slash, dialogsOpen, attachments }: Input
         </Box>
       ) : null}
       <Text>{renderBuffer(composer.buffer.text, composer.buffer.cursor)}</Text>
-      <Text dimColor>width:{stringWidth(composer.buffer.text)}</Text>
       {slashVisible ? (
         <Box flexDirection="column" marginTop={1}>
           {composer.slashMatches.slice(0, 6).map((match, index) => (

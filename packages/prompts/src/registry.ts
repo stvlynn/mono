@@ -25,6 +25,7 @@ export const TEMPLATE_FILES: Record<PromptTemplateId, string> = {
   "ui/waiting_tool_running": "ui/waiting_tool_running.j2",
   "ui/waiting_task_planning": "ui/waiting_task_planning.j2",
   "ui/waiting_task_verifying": "ui/waiting_task_verifying.j2",
+  "ui/tui_render_spec": "ui/tui_render_spec.j2",
   "memory/context_block": "memory/context_block.j2",
   "memory/structured_context_block": "memory/structured_context_block.j2",
   "memory/openviking_context_block": "memory/openviking_context_block.j2",

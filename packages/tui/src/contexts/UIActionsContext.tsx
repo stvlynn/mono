@@ -8,6 +8,9 @@ export interface UIActions {
   showAttachments: () => void;
   handleInterrupt: () => Promise<void>;
   clearInterruptArming: () => void;
+  toggleFocusTarget: () => void;
+  setShellFocus: () => void;
+  setGeneratedFocus: () => void;
   openHelp: () => void;
   openSettings: () => void;
   openAuthInfo: () => void;

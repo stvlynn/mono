@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { Component, type ReactNode } from "react";
 

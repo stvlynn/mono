@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 describe("tui app bootstrap", () => {
   it("disables Ink's default Ctrl+C exit handling", async () => {
-    const source = readFileSync("packages/tui/src/app.tsx", "utf8");
+    const source = readFileSync("packages/tui/src/channel-registry.ts", "utf8");
 
     expect(source).toContain("exitOnCtrlC: false");
   });
@@ -89,11 +89,40 @@ describe("tui app bootstrap", () => {
 
   it("refreshes the registry before Telegram profile listing and apply", () => {
     const appContainer = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
+    const appSource = readFileSync("packages/tui/src/app.tsx", "utf8");
+    const integrationSource = readFileSync("packages/tui/src/integrations/telegram.ts", "utf8");
 
-    expect(appContainer).toContain("applyProfile: async (profileName) => {\n        await agent.refreshRegistry();");
-    expect(appContainer).toContain("listConfiguredProfiles: async () => {\n        await agent.refreshRegistry();");
-    expect(appContainer).toContain("agent.setChannelCapabilityProvider(runtime)");
-    expect(appContainer).toContain("setTimeout(() => {\n          void telegramRuntimeRef.current?.flushPendingProfileApplication();\n        }, 0);");
+    expect(appSource).toContain('registerSurface(createTuiSurfaceAdapter())');
+    expect(appSource).toContain('registerIntegration(createTelegramChannelIntegration())');
+    expect(integrationSource).toContain("applyProfile: context.applyProfile");
+    expect(integrationSource).toContain("listConfiguredProfiles: context.listConfiguredProfiles");
+    expect(integrationSource).toContain("context.onEventMessage(event);");
+    expect(appContainer).toContain("await agent.refreshRegistry();");
+    expect(appContainer).toContain("agent.setChannelCapabilityProvider(composeChannelCapabilityProviders(");
+    expect(appContainer).toContain("void handle.flushPendingProfileApplication?.();");
+  });
+
+  it("preserves integration event types and sets remote approval waiting state before awaiting", () => {
+    const appContainer = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
+
+    expect(appContainer).toContain("setStatus(`Waiting for ${handle.id} approval for ${request.toolName}...`);");
+    expect(appContainer).toContain("onEventMessage: (event) => handleTelegramRuntimeEvent(event)");
+    expect(appContainer).not.toContain('handleTelegramRuntimeEvent({ type: "started", message })');
+  });
+
+  it("mounts the local tui through a json-render host", () => {
+    const appContainer = readFileSync("packages/tui/src/AppContainer.tsx", "utf8");
+    const source = readFileSync("packages/tui/src/json-render-tui.tsx", "utf8");
+    const registrySource = readFileSync("packages/tui/src/tui-render-registry.tsx", "utf8");
+
+    expect(appContainer).toContain("JsonRenderTui");
+    expect(source).toContain("streamTuiSpec");
+    expect(source).toContain('renderConfig.specMode !== "generative"');
+    expect(source).toContain("<JSONUIProvider store={store} handlers={actionHandlers}>");
+    expect(source).toContain("<Renderer spec={spec} />");
+    expect(registrySource).toContain("tuiRenderCatalog");
+    expect(registrySource).toContain("pane_submit");
+    expect(registrySource).toContain("standardComponentDefinitions");
   });
 
   it("keeps runtime request errors out of the fatal path", () => {

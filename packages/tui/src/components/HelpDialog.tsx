@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import { useCallback } from "react";
 import { useForegroundKeypress } from "../contexts/ForegroundKeypressContext.js";

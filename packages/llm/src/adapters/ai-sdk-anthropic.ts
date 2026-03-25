@@ -1,5 +1,5 @@
-import type { LlmRunOptions, ModelAdapter } from "./types.js";
-import { runAiSdkConversation } from "./ai-sdk-runtime.js";
+import type { LlmRunOptions, LlmTextStreamOptions, ModelAdapter } from "./types.js";
+import { runAiSdkConversation, streamAiSdkText } from "./ai-sdk-runtime.js";
 import { resolveModelTransport } from "./transport.js";
 
 export const aiSdkAnthropicAdapter: ModelAdapter = {
@@ -9,5 +9,8 @@ export const aiSdkAnthropicAdapter: ModelAdapter = {
   },
   async run(options: LlmRunOptions) {
     return runAiSdkConversation(options);
+  },
+  async streamText(options: LlmTextStreamOptions) {
+    return streamAiSdkText(options);
   }
 };

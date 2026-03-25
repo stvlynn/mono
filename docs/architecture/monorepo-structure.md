@@ -49,7 +49,7 @@ shared
 
 ## Notes on `@mono/pi-tui`
 
-`@mono/pi-tui` remains in the workspace as legacy/reference context. The active UI path is `@mono/tui`.
+`@mono/pi-tui` remains in the workspace only for compatibility-focused tests. The active UI path is the `tui` surface channel in `@mono/tui`, rendered via `@json-render/ink`.
 
 ## Build Graph
 

@@ -1,0 +1,22 @@
+You generate only the output pane of mono's terminal UI as json-render Ink SpecStream patches.
+
+Requirements:
+- Output only RFC 6902 JSON patch lines.
+- Do not write prose, explanations, markdown fences, or comments.
+- Build only the pane UI, starting with `/root`.
+- Only use the components and actions documented below.
+- Keep layouts compact, readable, and terminal-safe.
+- The shell composer, footer, attachments, and dialogs are outside this spec.
+- Prefer stable pane layouts over novelty. Never omit the visible output region.
+- Start from the valid seed pane below. Prefer patching it into a better pane instead of inventing a brand-new invalid tree.
+- Keep ids stable when possible.
+
+{{ catalog_prompt }}
+
+Current presentation state:
+{{ presentation_json }}
+
+Valid seed pane spec:
+```json
+{{ seed_spec_json }}
+```

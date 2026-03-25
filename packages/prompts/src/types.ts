@@ -20,6 +20,7 @@ export type PromptTemplateId =
   | "ui/waiting_tool_running"
   | "ui/waiting_task_planning"
   | "ui/waiting_task_verifying"
+  | "ui/tui_render_spec"
   | "memory/context_block"
   | "memory/structured_context_block"
   | "memory/openviking_context_block"

@@ -4,6 +4,7 @@ import {
   type AutonomyIntent,
   type ChannelCapabilityContext,
   type ChannelCapabilityProvider,
+  type ChannelPermissionProfile,
   type RuntimeEvent,
   type ContextAssemblyReport,
   type ConversationMessage,
@@ -25,7 +26,6 @@ import {
   type SelfRuntimeRecord,
   createId,
   readJsonFile,
-  mergeTelegramAllowFrom,
   type SandboxMode,
   supportsImageAttachments,
   type TaskInput,
@@ -216,11 +216,6 @@ export interface AgentState {
 export interface ConfiguredModelProfile {
   name: string;
   model: UnifiedModel;
-}
-
-interface TelegramAllowFromStoreFile {
-  version?: number;
-  allowFrom?: string[];
 }
 
 interface HeartbeatRuntimeState {
@@ -2242,6 +2237,7 @@ export class Agent {
 
   private async createToolsForRun(context: TaskRunContext, task: TaskState) {
     const policy = await this.createPermissionPolicy(context.channel, context.approvalPolicy, context.sandboxMode);
+    const channelPermissionProfile = await this.resolveChannelPermissionProfile(context.channel);
     const toolPermissionOptions = {
       sessionId: context.session.sessionId,
       channel: context.channel,
@@ -2256,7 +2252,7 @@ export class Agent {
       cwd: this.cwd,
     } as const;
     const protectedTools = context.interactionMode === "channel_chat"
-      ? this.buildChannelChatProtectedTools(policy, toolPermissionOptions, context.channel)
+      ? this.buildChannelChatProtectedTools(policy, toolPermissionOptions, channelPermissionProfile)
       : context.interactionMode === "curiosity"
         ? this.buildCuriosityProtectedTools(policy, toolPermissionOptions)
         : createProtectedCodingTools(this.cwd, {
@@ -2339,9 +2335,9 @@ export class Agent {
       requestApproval: (request: ApprovalRequest) => Promise<boolean>;
       emit: (event: { type: "approval-request"; request: ApprovalRequest } | { type: "approval-result"; toolName: string; approved: boolean; reason?: string }) => void;
     },
-    channel: ToolExecutionChannel | undefined,
+    channelPermissionProfile: ChannelPermissionProfile | null,
   ) {
-    if (!this.canExposeChannelChatBash(policy, channel)) {
+    if (!channelPermissionProfile?.exposeProtectedBash && !policy.isAllowlistedChannel(toolPermissionOptions.channel)) {
       return [];
     }
 
@@ -2381,58 +2377,25 @@ export class Agent {
     sandboxMode: SandboxMode
   ): Promise<DefaultPermissionPolicy> {
     const sensitiveActionMode = this.state.config.settings.sensitiveActionMode;
-    if (channel?.platform !== "telegram") {
-      return new DefaultPermissionPolicy({
-        sensitiveActionMode,
-        approvalPolicy,
-        sandboxMode,
-      });
-    }
-
-    const approval = this.state.config.channels.telegram.approval;
-    const allowlistedChannels = approval.allowChats.map((chatId) => ({
-      platform: "telegram",
-      kind: chatId.startsWith("-") ? "channel" : "dm",
-      id: chatId,
-    }) satisfies ToolExecutionChannel);
-    const implicitTelegramDmChannels = channel.kind === "dm"
-      ? await this.loadTelegramImplicitApprovalChannels()
-      : [];
+    const channelPermissionProfile = await this.resolveChannelPermissionProfile(channel);
 
     return new DefaultPermissionPolicy({
-      allowlistedChannels: dedupeToolExecutionChannels([
-        ...allowlistedChannels,
-        ...implicitTelegramDmChannels,
-      ]),
-      commandDenylist: approval.commandDenylist,
+      allowlistedChannels: dedupeToolExecutionChannels(channelPermissionProfile?.allowlistedChannels ?? []),
+      commandDenylist: channelPermissionProfile?.commandDenylist ?? [],
       sensitiveActionMode,
       approvalPolicy,
       sandboxMode,
     });
   }
 
-  private canExposeChannelChatBash(
-    policy: DefaultPermissionPolicy,
+  private async resolveChannelPermissionProfile(
     channel: ToolExecutionChannel | undefined,
-  ): boolean {
-    return channel?.platform === "telegram" && policy.isAllowlistedChannel(channel);
-  }
+  ): Promise<ChannelPermissionProfile | null> {
+    if (!channel || !this.channelCapabilityProvider?.supportsChannel(channel)) {
+      return null;
+    }
 
-  private async loadTelegramImplicitApprovalChannels(): Promise<ToolExecutionChannel[]> {
-    const storeAllowFrom = await this.readTelegramAllowFromStore();
-    return mergeTelegramAllowFrom(this.state.config.channels.telegram, storeAllowFrom).map((senderId) => ({
-        platform: "telegram",
-        kind: "dm",
-        id: senderId,
-      }) satisfies ToolExecutionChannel);
-  }
-
-  private async readTelegramAllowFromStore(): Promise<string[]> {
-    const store = new MonoConfigStore(this.cwd);
-    const file = await readJsonFile<TelegramAllowFromStoreFile>(
-      join(store.paths.globalStateDir, "telegram", "allowFrom.json")
-    );
-    return file?.allowFrom?.map(String).filter(Boolean) ?? [];
+    return await this.channelCapabilityProvider.getPermissionProfile?.(channel) ?? null;
   }
 
   private async appendTurnMessages(context: TaskRunContext, newMessages: ConversationMessage[]): Promise<void> {

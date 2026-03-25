@@ -119,6 +119,8 @@ export interface UIState {
   startupState: "idle" | "initializing" | "ready" | "init_failed";
   running: boolean;
   isExiting: boolean;
+  focusTarget: "shell" | "generated";
+  paneGeneration: number;
   status: string;
   fatalError?: string;
   waitingCopy?: UIWaitingCopy;

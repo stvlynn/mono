@@ -1,3 +1,4 @@
+import React from "react";
 import { Box, Text } from "ink";
 import type { UIHistoryItem } from "../types/ui.js";
 import { ConversationMessageDisplay } from "./ConversationMessageDisplay.js";

@@ -5,6 +5,7 @@ import {
   aiSdkOpenAICompatibleAdapter,
   aiSdkOpenAIResponsesAdapter,
   type LlmRunOptions,
+  type LlmTextStreamOptions,
   type ModelAdapter
 } from "./adapters/index.js";
 
@@ -25,4 +26,8 @@ export function getAdapterForModel(model: UnifiedModel): ModelAdapter {
 
 export async function runConversation(options: LlmRunOptions): Promise<ConversationMessage[]> {
   return getAdapterForModel(options.model).run(options);
+}
+
+export async function streamConversationText(options: LlmTextStreamOptions): Promise<string> {
+  return getAdapterForModel(options.model).streamText(options);
 }

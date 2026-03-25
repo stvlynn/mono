@@ -1,3 +1,4 @@
+import React from "react";
 import { Box } from "ink";
 import type { InputImageAttachment } from "@mono/shared";
 import type { ReturnTypeUseComposerState } from "../hooks/useComposerState.types.js";

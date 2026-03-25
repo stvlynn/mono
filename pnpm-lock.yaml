@@ -186,6 +186,9 @@ importers:
       '@mono/im-platform':
         specifier: workspace:*
         version: link:../im-platform
+      '@mono/prompts':
+        specifier: workspace:*
+        version: link:../prompts
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
@@ -204,18 +207,24 @@ importers:
 
   packages/tui:
     dependencies:
+      '@json-render/core':
+        specifier: ^0.15.0
+        version: 0.15.0(zod@3.25.76)
+      '@json-render/ink':
+        specifier: ^0.15.0
+        version: 0.15.0(ink@5.2.1(@types/react@18.3.28)(react@18.3.1))(react@18.3.1)(zod@3.25.76)
       '@mono/agent-core':
         specifier: workspace:*
         version: link:../agent-core
       '@mono/config':
         specifier: workspace:*
         version: link:../config
+      '@mono/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@mono/memory':
         specifier: workspace:*
         version: link:../memory
-      '@mono/pi-tui':
-        specifier: workspace:*
-        version: link:../pi-tui
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
@@ -234,6 +243,9 @@ importers:
       string-width:
         specifier: ^7.2.0
         version: 7.2.0
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
 
 packages:
 
@@ -439,6 +451,17 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@json-render/core@0.15.0':
+    resolution: {integrity: sha512-ej5fx6C2Gp5iSit+HyyFh6QenKRIAO9xvFlxal6uzQQTpOJzJlXPsNROL2JT5QjY/iLgLaf4RJohdP1mWSYDNQ==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@json-render/ink@0.15.0':
+    resolution: {integrity: sha512-amA0C2T2gKPz/BaWzwcgs47JrBqvFoJONQJ7RebTtMpCDBALEJDXOiXIlhmKnuYDpAJd1MokEi7pYR1QN70jTQ==}
+    peerDependencies:
+      ink: ^6.0.0
+      react: ^19.0.0
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -863,6 +886,11 @@ packages:
   marked@15.0.12:
     resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
     engines: {node: '>= 18'}
+    hasBin: true
+
+  marked@17.0.5:
+    resolution: {integrity: sha512-6hLvc0/JEbRjRgzI6wnT2P1XuM1/RrrDEX0kPt0N7jGm1133g6X7DlxFasUIx+72aKAr904GTxhSLDrd5DIlZg==}
+    engines: {node: '>= 20'}
     hasBin: true
 
   mimic-fn@2.1.0:
@@ -1291,6 +1319,19 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
+  '@json-render/core@0.15.0(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+
+  '@json-render/ink@0.15.0(ink@5.2.1(@types/react@18.3.28)(react@18.3.1))(react@18.3.1)(zod@3.25.76)':
+    dependencies:
+      '@json-render/core': 0.15.0(zod@3.25.76)
+      ink: 5.2.1(@types/react@18.3.28)(react@18.3.1)
+      marked: 17.0.5
+      react: 18.3.1
+    transitivePeerDependencies:
+      - zod
+
   '@opentelemetry/api@1.9.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
@@ -1662,6 +1703,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   marked@15.0.12: {}
+
+  marked@17.0.5: {}
 
   mimic-fn@2.1.0: {}
 
