@@ -186,6 +186,9 @@ importers:
       '@mono/im-platform':
         specifier: workspace:*
         version: link:../im-platform
+      '@mono/prompts':
+        specifier: workspace:*
+        version: link:../prompts
       '@mono/shared':
         specifier: workspace:*
         version: link:../shared
