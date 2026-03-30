@@ -511,3 +511,13 @@ Mono 的 `task_turn_verify.j2` verification mode 设计比 OpenClaw 当前方案
 **待处理**:
 - PR #21 手动测试（发送视频/GIF/语音到 Telegram bot）
 - `feat/tui-json-render-surface` 分支 merge 后分析新架构
+
+---
+
+### 2026-03-30 20:39 - 巡查
+
+**结论**: 无新 commits（与 18:39 巡查相同）。
+
+- main 最新仍是 `ed67565`
+- PR #21 (fix/telegram-media-attachments) 保持 OPEN 状态
+- 代码无变化，无需额外研究
