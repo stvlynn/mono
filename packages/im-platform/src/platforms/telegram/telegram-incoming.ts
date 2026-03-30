@@ -27,6 +27,35 @@ interface TelegramSticker extends TelegramFileDescriptor {
   set_name?: string;
 }
 
+interface TelegramVideo extends TelegramFileDescriptor {
+  width?: number;
+  height?: number;
+  duration?: number;
+}
+
+interface TelegramAnimation extends TelegramFileDescriptor {
+  width?: number;
+  height?: number;
+  duration?: number;
+  thumbnail?: TelegramPhotoSize;
+}
+
+interface TelegramAudio extends TelegramFileDescriptor {
+  duration?: number;
+  performer?: string;
+  title?: string;
+}
+
+interface TelegramVoice extends TelegramFileDescriptor {
+  duration?: number;
+}
+
+interface TelegramVideoNote extends TelegramFileDescriptor {
+  length?: number;
+  duration?: number;
+  thumbnail?: TelegramPhotoSize;
+}
+
 interface TelegramChat {
   id: number | string;
   type?: string;
@@ -53,6 +82,11 @@ interface TelegramIncomingMessage {
   photo?: TelegramPhotoSize[];
   document?: TelegramFileDescriptor;
   sticker?: TelegramSticker;
+  video?: TelegramVideo;
+  animation?: TelegramAnimation;
+  audio?: TelegramAudio;
+  voice?: TelegramVoice;
+  video_note?: TelegramVideoNote;
 }
 
 interface TelegramUpdate {
@@ -190,11 +224,11 @@ async function extractIncomingAttachments(
   }
 
   const document = message.document;
-  if (document?.file_id && document.mime_type?.startsWith("image/")) {
+  if (document?.file_id) {
     const attachment = await downloadIncomingAttachment(client, {
       fileId: document.file_id,
-      mimeType: document.mime_type,
-      sourceLabel: document.file_name ?? `telegram-image-${message.message_id}`,
+      mimeType: document.mime_type ?? "application/octet-stream",
+      sourceLabel: document.file_name ?? `telegram-document-${message.message_id}`,
       origin,
     });
     if (attachment) {
@@ -208,6 +242,71 @@ async function extractIncomingAttachments(
       fileId: sticker.file_id,
       mimeType: "image/webp",
       sourceLabel: `telegram-sticker-${message.message_id}.webp`,
+      origin,
+    });
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  const video = message.video;
+  if (video?.file_id) {
+    const attachment = await downloadIncomingAttachment(client, {
+      fileId: video.file_id,
+      mimeType: video.mime_type ?? "video/mp4",
+      sourceLabel: `telegram-video-${message.message_id}.mp4`,
+      origin,
+    });
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  const animation = message.animation;
+  if (animation?.file_id) {
+    const attachment = await downloadIncomingAttachment(client, {
+      fileId: animation.file_id,
+      mimeType: animation.mime_type ?? "image/gif",
+      sourceLabel: animation.file_name ?? `telegram-animation-${message.message_id}.gif`,
+      origin,
+    });
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  const audio = message.audio;
+  if (audio?.file_id) {
+    const attachment = await downloadIncomingAttachment(client, {
+      fileId: audio.file_id,
+      mimeType: audio.mime_type ?? "audio/mpeg",
+      sourceLabel: audio.file_name ?? `telegram-audio-${message.message_id}`,
+      origin,
+    });
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  const voice = message.voice;
+  if (voice?.file_id) {
+    const attachment = await downloadIncomingAttachment(client, {
+      fileId: voice.file_id,
+      mimeType: voice.mime_type ?? "audio/ogg",
+      sourceLabel: `telegram-voice-${message.message_id}.ogg`,
+      origin,
+    });
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  const videoNote = message.video_note;
+  if (videoNote?.file_id) {
+    const attachment = await downloadIncomingAttachment(client, {
+      fileId: videoNote.file_id,
+      mimeType: videoNote.mime_type ?? "video/mp4",
+      sourceLabel: `telegram-video-note-${message.message_id}.mp4`,
       origin,
     });
     if (attachment) {
