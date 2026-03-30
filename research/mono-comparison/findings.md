@@ -496,3 +496,18 @@ Mono 的 `task_turn_verify.j2` verification mode 设计比 OpenClaw 当前方案
 - [ ] 手动测试: 从 Telegram DM 发送视频/GIF/语音
 
 **PR**: https://github.com/stvlynn/mono/pull/21
+
+---
+
+### 2026-03-30 18:19 - 巡查
+
+**结论**: 无新 commits。自上次 (2203e75) 以来仓库无变化。
+
+**代码库状态**:
+- `fix/telegram-media-attachments` 分支 PR #21 等待 review
+- `feat/tui-json-render-surface` (ce4a8bc) 仍领先 main 3 commits，未合并
+- 其他分支沉寂
+
+**待处理**:
+- PR #21 手动测试（发送视频/GIF/语音到 Telegram bot）
+- `feat/tui-json-render-surface` 分支 merge 后分析新架构

@@ -1,19 +1,19 @@
 {
-  "lastChecked": "2026-03-30T15:35:00+08:00",
+  "lastChecked": "2026-03-30T19:39:00+08:00",
   "commitsReviewed": [
-    "459a78e", "bfc8d3a", "df17301", "7a515fb", "9b57af8",
-    "86c14f9", "7ea3987", "05cb57d", "b98c0ab", "ed67565",
-    "2203e75"
+    "8d5b38c", "2203e75", "ed67565", "459a78e", "bfc8d3a",
+    "df17301", "7a515fb", "9b57af8", "86c14f9", "7ea3987",
+    "05cb57d", "b98c0ab", "ed67565", "2203e75"
   ],
-  "commitsLastSession": ["ed67565", "2203e75"],
+  "commitsLastSession": ["8d5b38c"],
   "keyBranches": {
-    "main": "bfc8d3a",
+    "main": "8d5b38c",
     "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
-    "fix/telegram-media-attachments": "2203e75 (PR #21, needs review)"
+    "HEAD": "8d5b38c (fix/telegram-media-attachments branch with research commit on top)"
   },
   "unmergedBranches": [
     "feat/tui-json-render-surface",
-    "fix/telegram-media-attachments"
+    "fix/telegram-media-attachments (merged into HEAD, but PR #21 may need rebasing)"
   ],
   "prsCreated": [
     {
@@ -27,13 +27,10 @@
     }
   ],
   "issuesCreated": [],
-  "newFindings": 18,
+  "newFindings": 0,
   "observations": [
-    "fix/stale-lockfile merged",
-    "feat/tui-json-render-surface still unmerged",
-    "codex review-branch is massive cleanup (25k deletions)",
-    "Mono prompt system uses Nunjucks with 35 categorized template IDs",
-    "UI waiting templates parameterized by emoji/prefix/action/suffix",
-    "PR #21 fixes Telegram media attachment drop bug"
+    "No new commits since last research (8d5b38c was just a doc update)",
+    "HEAD now contains research commit on top of 2203e75 - PR #21 may need rebasing",
+    "feat/tui-json-render-surface (ce4a8bc) still 3 commits ahead of main, not merged"
   ]
 }
