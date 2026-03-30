@@ -1,36 +1,47 @@
 {
-  "lastChecked": "2026-03-30T19:39:00+08:00",
+  "lastChecked": "2026-03-30T22:19:00+08:00",
   "commitsReviewed": [
-    "8d5b38c", "2203e75", "ed67565", "459a78e", "bfc8d3a",
-    "df17301", "7a515fb", "9b57af8", "86c14f9", "7ea3987",
-    "05cb57d", "b98c0ab", "ed67565", "2203e75"
+    "b5de9ef", "2203e75", "ed67565", "bfc8d3a", "df17301", "7a515fb",
+    "9b57af8", "86c14f9", "7ea3987", "05cb57d", "b98c0ab",
+    "ab7f647", "59eb024"
   ],
-  "commitsLastSession": ["8d5b38c"],
+  "commitsLastSession": ["b5de9ef"],
   "keyBranches": {
-    "main": "8d5b38c",
+    "main": "ed67565",
     "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
-    "HEAD": "8d5b38c (fix/telegram-media-attachments branch with research commit on top)"
+    "fix/telegram-media-attachments": "ab7f647 (PR #21 OPEN, needs manual testing)",
+    "codex/review-code-for-hardcoding-and-duplicates": "d3f75fc (26 commits ahead of main, PR #6 OPEN)"
   },
   "unmergedBranches": [
-    "feat/tui-json-render-surface",
-    "fix/telegram-media-attachments (merged into HEAD, but PR #21 may need rebasing)"
+    "feat/tui-json-render-surface (3 commits ahead, TUI JSON-spec generative rendering)",
+    "fix/telegram-media-attachments (PR #21 OPEN)",
+    "codex/review-code-for-hardcoding-and-duplicates (26 commits ahead, -25k lines, AI SDK→xsai)"
   ],
   "prsCreated": [
     {
       "number": 21,
       "title": "fix(telegram): handle video/animation/audio/voice/video_note attachments",
-      "url": "https://github.com/stvlynn/mono/pull/21",
+      "state": "OPEN",
       "branch": "fix/telegram-media-attachments",
-      "commit": "2203e75",
-      "fixes": "issue #16",
-      "verification": "build passes, TS clean, manual test pending"
+      "fixes": "Issue #16"
+    },
+    {
+      "number": 6,
+      "title": "Optimize SeekDB ancestor traversal queries",
+      "state": "OPEN",
+      "branch": "codex/review-code-for-hardcoding-and-duplicates",
+      "state_detail": "PR is on a large -25k line branch, not yet reviewed/merged"
     }
   ],
   "issuesCreated": [],
-  "newFindings": 0,
+  "activeIssues": [2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "newFindings": 1,
   "observations": [
-    "No new commits since last research (8d5b38c was just a doc update)",
-    "HEAD now contains research commit on top of 2203e75 - PR #21 may need rebasing",
-    "feat/tui-json-render-surface (ce4a8bc) still 3 commits ahead of main, not merged"
+    "No new commits on main (ed67565 = latest)",
+    "feat/tui-json-render-surface: +1864/-227 lines across 70 files, 3 commits ahead of main",
+    "TUI JSON-spec generative rendering: LLM→JSON-spec→@json-render/ink validation pipeline",
+    "PR #6 still OPEN (d3f75fc, 26 commits ahead of main)",
+    "PR #21 still OPEN (video/audio/voice/attachment fix)",
+    "Issue #15 update: intermittent on Telegram side, reproducible in local/container runs"
   ]
 }

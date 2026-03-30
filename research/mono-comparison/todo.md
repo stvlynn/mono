@@ -23,5 +23,6 @@
 
 ## Monitoring
 - [x] Watch `feat/tui-json-render-surface` merge into main (currently ce4a8bc, 3 commits ahead)
+- [x] ~~Deep-analyze JSON Patch streaming in tui-render-runtime.ts~~ (New Finding E: RFC 6902 patches, not full Spec JSON)
 - [ ] Monitor memory package changes (recent 103-line addition was significant)
 - [ ] Watch for any OpenClaw-like features appearing in Mono (heartbeat, autonomy, tool registry)
