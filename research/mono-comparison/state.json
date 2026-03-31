@@ -1,6 +1,8 @@
 {
-  "lastChecked": "2026-03-31T13:55:00+08:00",
+  "lastChecked": "2026-03-31T15:28:00+08:00",
   "commitsReviewed": [
+    "e76448a",
+    "4a795a2",
     "b5de9ef",
     "2203e75",
     "ed67565",
@@ -22,6 +24,7 @@
   ],
   "keyBranches": {
     "main": "ed67565",
+    "fix/phase-aware-error-handling": "e76448a (local fix for Issue #15, not merged)",
     "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
     "fix/telegram-media-attachments": "ab7f647 (PR #21 OPEN, needs manual testing)",
     "codex/review-code-for-hardcoding-and-duplicates": "d3f75fc (26 commits ahead of main, PR #6 OPEN)"
@@ -63,18 +66,17 @@
   ],
   "newFindings": 1,
   "observations": [
-    "No new commits on main (ed67565 = latest)",
-    "feat/tui-json-render-surface: still 3 commits ahead of main",
-    "Analyzed PlatformRegistry pattern in im-platform",
+    "NEW: e76448a = local fix for Issue #15 (phase-aware error wrapping), not merged to main",
+    "feat/tui-json-render-surface: still 3 commits ahead of main (ce4a8bc)",
     "PR #21 still OPEN (video/audio/voice/attachment fix)",
     "PR #6 still OPEN (SeekDB optimization)",
-    "2026-03-31 13:55 - No new commits, quiet session continues (13:55 check)"
+    "2026-03-31 15:28 - Issue #15 locally fixed with phase-aware error wrapping"
   ],
-  "version": 226,
-  "lastPatrolAt": "2026-03-31 04:55 UTC",
-  "lastActionAt": "2026-03-31 04:55 UTC",
+  "version": 227,
+  "lastPatrolAt": "2026-03-31 07:28 UTC",
+  "lastActionAt": "2026-03-31 07:28 UTC",
   "changes": {
     "newFindings": 1,
-    "notes": "226th patrol (2026-03-31 04:55 UTC). Confirmed Issue #15 root cause in agent.ts catch block - no phase-aware error enrichment. No new commits on main."
+    "notes": "227th patrol (2026-03-31 07:28 UTC). e76448a locally fixes Issue #15 - adds phase-aware error wrapping around runTaskTurn() to preserve task.phase context in errors."
   }
 }

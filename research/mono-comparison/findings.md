@@ -692,6 +692,31 @@ isRecoverableRuntimeError(error, state): boolean
 ---
 ---
 
+### 本轮新增 (2026-03-31 12:55) - Issue #15 (Verification Phase Error) 根因确认
+
+**状态**: Issue #15 仍然 OPEN，无修复 commits。
+
+**根因确认**:
+- `agent.ts` 主循环 catch block (lines 607-615) 捕获所有错误
+- 错误处理: `this.emitIfCurrent(runContext.runId, { type: "error", error: resolvedError }); throw resolvedError;`
+- **没有任何 task.phase 上下文注入**，不区分 "execution failed" vs "verification failed"
+- `runTaskTurn()` 内部 (lines 2009-2099) 会在 `phase=verify` 时 emit `task-verify-start` event，但 catch block 不知道这个 phase
+- 用户最终看到的是 `formatTelegramRuntimeError()` 拼接的 `error.message: cause.message`，完全丢失了 task phase 信息
+
+**验证方法**:
+- 搜索 `task.phase` 在 agent.ts 中的使用: lines 575, 2031, 2216, 2234, 2289, 2659
+- line 2031: `if (turnPlan.phase === "verify")` 只在 try block 内有效，catch block 无法访问
+- line 607-615 的 catch block 完全丢失了这个 phase 信息
+
+**建议修复**:
+1. 在 catch block 中检查 `task.phase` 状态（如果还能访问的话）
+2. 或者在 `runTaskTurn` 调用外包装 try-catch，按 phase 分别处理
+3. 或者在 `formatTelegramRuntimeError()` 中检测 error message pattern 并推断 phase
+
+**对比 OpenClaw**: OpenClaw 同样缺少类似的 phase-aware error classification 系统。
+
+---
+
 ### 本輪新增 (2026-03-31 09:14) - PlatformRegistry Pattern
 
 **狀態**: 無新 commits（main = ed67565）。
@@ -730,3 +755,33 @@ class PlatformRegistry {
 - Mono 的 provider 模式更像傳統插件注册表
 - OpenClaw 的 channel plugins 更像独立適配器
 - Mono 的 `normalizeIncoming*` 鉤子值得考慮（入站消息標準化）
+---
+
+### 本轮新增 (2026-03-31 15:28) - Issue #15 已本地修复 (e76448a)
+
+**状态**: Issue #15 已在 `fix/phase-aware-error-handling` 分支上修复，commit e76448a，尚未合并到 main。
+
+**修复内容** (`packages/agent-core/src/agent.ts`):
+```typescript
+let newMessages: ConversationMessage[];
+try {
+  newMessages = await this.runTaskTurn(runContext, task);
+} catch (turnError) {
+  // Phase-aware error wrapping for better diagnostics
+  const phaseAwareError = new Error(`[phase:${task.phase}] ${turnError instanceof Error ? turnError.message : String(turnError)}`);
+  phaseAwareError.cause = turnError;
+  throw phaseAwareError;
+}
+```
+
+**对比修复前**:
+- 修复前: catch block 丢失 task.phase，错误信息无 phase 上下文
+- 修复后: 错误消息前缀 `[phase:{task.phase}]`，且 original error 作为 cause property 保留
+
+**建议后续**:
+1. 将 `fix/phase-aware-error-handling` 合并到 main
+2. 考虑将 phase-aware error pattern 推广到其他 error-prone 代码路径
+3. OpenClaw 可考虑引入类似的 phase-aware error 包装机制
+
+**OpenClaw 对比**: 无 equivalent error wrapping pattern，仍是 plain error throw。
+
