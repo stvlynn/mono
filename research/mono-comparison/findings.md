@@ -837,15 +837,17 @@ try {
 
 ---
 
-## 2026-03-31 18:47 巡查 - 无新 commits
+## 2026-04-01 00:47 巡查 - 无新 commits
 
-**状态**: main (ed67565) 无新 commits。上次 16:06 的 findings 更新后无变化。
+**状态**: 实质性 commits (e76448a = Issue #15 fix) 后无新的代码变更。只有 research commits。
 
-**观察**:
-- `fix/phase-aware-error-handling` 分支存在但未合并
-- `fix/telegram-media-attachments` (PR #21) 仍为 OPEN
-- `feat/tui-json-render-surface` 仍是 3 commits ahead，未合并
+**Main 最后实质性 commit**: `e76448a` (6 hours ago)
+- Issue #15 phase-aware error wrapping 已修复
+
+**Open PRs**:
+- PR #21: `fix/telegram-media-attachments` - 仍为 OPEN
+- PR #6: SeekDB query optimization - 仍为 OPEN
 
 **下次建议**:
-- 继续监测 merge 进展
-- 可选: 检查 agent-core 和 memory 最近的改动是否有值得记录的点
+- 监测 PR #21 merge 进展
+- 监测是否有新的代码 commits
