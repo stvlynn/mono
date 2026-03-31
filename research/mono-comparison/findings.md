@@ -690,3 +690,43 @@ isRecoverableRuntimeError(error, state): boolean
 **OpenClaw 缺失的关键层**: 无 state model → JSON → prompt 管道，无 catalog 白名单验证，无 JSON-spec rendering，无 specMode 配置开关。
 
 ---
+---
+
+### 本輪新增 (2026-03-31 09:14) - PlatformRegistry Pattern
+
+**狀態**: 無新 commits（main = ed67565）。
+
+**`packages/im-platform/src/registry.ts` — PlatformRegistry**:
+```typescript
+class PlatformRegistry {
+  readonly #providers = new Map<string, ImPlatformProvider>();
+  
+  register(provider: ImPlatformProvider): this
+  resolve(id: string): ImPlatformProvider | undefined
+  list(): ImPlatformProvider[]
+}
+```
+
+**ImPlatformProvider 接口** (`types.ts`):
+- `id: string` / `platform: string`
+- `supportsTarget(target: DispatchTarget): boolean` — channel 或 dm
+- `supportsContent(content: DispatchContent): boolean` — 內容類型支持
+- `dispatch(request: DispatchRequest): Promise<DispatchResult>` — 發送消息
+- `normalizeIncomingMessage?(payload): Promise<InboundMessage>` — 入站標準化
+- `normalizeIncomingAction?(payload): Promise<InboundAction>` — Action 標準化
+
+**DispatchContent 類型**: text, photo, video, document, sticker, media-group
+
+**架構對比**:
+
+| 維度 | Mono | OpenClaw |
+|------|------|----------|
+| 模式 | Registry + Provider interface | Channel plugins |
+| 擴展方式 | 實現 ImPlatformProvider 接口 | 獨立 plugin 模組 |
+| 消息標準化 | normalizeIncomingMessage() | 無 equivalent |
+| 内容類型 | 內聯 enum (text/photo/video/...) | 取決於各 channel |
+
+**觀察**:
+- Mono 的 provider 模式更像傳統插件注册表
+- OpenClaw 的 channel plugins 更像独立適配器
+- Mono 的 `normalizeIncoming*` 鉤子值得考慮（入站消息標準化）
