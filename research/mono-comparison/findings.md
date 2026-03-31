@@ -785,3 +785,67 @@ try {
 
 **OpenClaw 对比**: 无 equivalent error wrapping pattern，仍是 plain error throw。
 
+
+---
+
+## 2026-03-31 16:04 巡查发现
+
+### Issue #15 (phase-aware error wrapping) 已修复 ✅
+
+**Commit**: `e76448a` (2026-03-31 14:59)
+
+**修复内容**:
+- 在 `runTaskTurn()` 的 catch block 中添加 phase-aware error wrapping
+- 新增 `[phase:{phase}]` 前缀帮助诊断
+- 使用 Error.cause 属性保留原始错误
+
+**代码改动** (`packages/agent-core/src/agent.ts`):
+```typescript
+try {
+  newMessages = await this.runTaskTurn(runContext, task);
+} catch (turnError) {
+  const phaseAwareError = new Error(`[phase:${task.phase}] ${turnError.message}`);
+  phaseAwareError.cause = turnError;
+  throw phaseAwareError;
+}
+```
+
+**评估**: 这是 Issue #15 的根本修复。之前 catch block 丢失了 task.phase 信息，现在通过错误前缀保留了上下文。下游错误处理器可以检测任务阶段来提供更友好的错误信息。
+
+**对比 OpenClaw**: OpenClaw 目前没有类似的 phase-aware error 包装机制，error 处理相对简单，可考虑借鉴。
+
+**后续建议**:
+- 验证实际用户体验是否改善 (用户是否仍看到 "fetch failed")
+- 检查是否有其他位置需要类似的 error wrapping
+
+---
+
+## 2026-03-31 18:47 巡查 - 无新 commits
+
+**状态**: main (ed67565) 无新 commits。上次 16:06 的 findings 更新后无变化。
+
+**观察**:
+-  分支存在但未合并
+-  (PR #21) 仍为 OPEN
+-  仍是 3 commits ahead，未合并
+
+**下次建议**:
+- 继续监测 merge 进展
+- 可选: 检查 agent-core 和 memory 最近的改动是否有值得记录的点
+
+
+
+---
+
+## 2026-03-31 18:47 巡查 - 无新 commits
+
+**状态**: main (ed67565) 无新 commits。上次 16:06 的 findings 更新后无变化。
+
+**观察**:
+- `fix/phase-aware-error-handling` 分支存在但未合并
+- `fix/telegram-media-attachments` (PR #21) 仍为 OPEN
+- `feat/tui-json-render-surface` 仍是 3 commits ahead，未合并
+
+**下次建议**:
+- 继续监测 merge 进展
+- 可选: 检查 agent-core 和 memory 最近的改动是否有值得记录的点
