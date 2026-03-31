@@ -1,8 +1,28 @@
 {
   "lastCheck": "2026-04-01T00:47:00Z",
   "commitsReviewed": [
+    "1276790",
+    "68dc906",
+    "70d2988",
     "e76448a",
-    "70d2988"
+    "4a795a2",
+    "193440d",
+    "3732409",
+    "b5de9ef",
+    "ab7f647",
+    "8d5b38c",
+    "2203e75",
+    "ed67565",
+    "bfc8d3a",
+    "df17301",
+    "7a515fb",
+    "9b57af8",
+    "86c14f9",
+    "7ea3987",
+    "05cb57d",
+    "5f54521",
+    "b98c0ab",
+    "b87691e"
   ],
   "areasChecked": [
     "agent-core",
@@ -19,18 +39,18 @@
     "skills"
   ],
   "keyFindings": [
-    "\u5b8c\u6574 autonomy-runtime.ts (1113\u884c): heartbeat \u51b3\u7b56\u3001\u4efb\u52a1\u8bca\u65ad\u3001cooldown\u3001topic \u7edf\u8ba1\u4e0e\u8870\u51cf",
-    "heartbeat-response.ts (164\u884c): reply \u8bc4\u4f30\u3001\u53bb\u91cd\u3001ACK token \u5904\u7406",
-    "\u914d\u7f6e\u9a71\u52a8\u7684 autonomy policy + topic-level suppression",
-    "Memory v2 \u8bed\u4e49\u53bb\u91cd (dedupeAutonomyCandidates)",
-    "Telegram \u6d88\u606f\u6291\u5236\u673a\u5236 (9b57af8)",
-    "Channel Registry \u62bd\u8c61 (channel-registry.ts)",
-    "CuriosityProbe \u673a\u5236 (86c14f9, 15min cooldown)",
-    "Prompt template \u7cfb\u7edf\u91cd\u6784 (df17301): registry + render",
-    "channel_action/channel_store \u5de5\u5177\u6743\u9650\u673a\u5236",
-    "Interaction mode \u7cfb\u7edf (channel_chat, curiosity, default, preview)",
-    "TUI JSON-Render \u5206\u652f (origin/feat/tui-json-render-surface)",
-    "Phase-aware error wrapping (e76448a) - Issue #15 \u4fee\u590d"
+    "完整 autonomy-runtime.ts (1113行): heartbeat 决策、任务诊断、cooldown、topic 统计与衰减",
+    "heartbeat-response.ts (164行): reply 评估、去重、ACK token 处理",
+    "配置驱动的 autonomy policy + topic-level suppression",
+    "Memory v2 语义去重 (dedupeAutonomyCandidates)",
+    "Telegram 消息抑制机制 (9b57af8)",
+    "Channel Registry 抽象 (channel-registry.ts)",
+    "CuriosityProbe 机制 (86c14f9, 15min cooldown)",
+    "Prompt template 系统重构 (df17301): registry + render",
+    "channel_action/channel_store 工具权限机制",
+    "Interaction mode 系统 (channel_chat, curiosity, default, preview)",
+    "TUI JSON-Render 分支 (origin/feat/tui-json-render-surface)",
+    "Phase-aware error wrapping (e76448a) - Issue #15 修复"
   ],
   "researchTopics": [
     "autonomy-runtime decision making",
@@ -38,9 +58,9 @@
     "heartbeat vs LLM interaction pattern",
     "prompt template system",
     "channel_action permission granularity",
-    "TUI json-render \u67b6\u6784",
-    "Channel Registry \u62bd\u8c61\u8bbe\u8ba1",
-    "CuriosityProbe seeds \u6765\u6e90",
+    "TUI json-render 架构",
+    "Channel Registry 抽象设计",
+    "CuriosityProbe seeds 来源",
     "Issue #15 phase-aware error wrapping"
   ],
   "issuesChecked": [
@@ -50,5 +70,9 @@
   "branchesReviewed": [
     "origin/feat/tui-json-render-surface"
   ],
-  "newCommitsSinceLastCheck": []
+  "newCommitsSinceLastCheck": [],
+  "lastChecked": "2026-04-01T05:27:00+08:00",
+  "observations": [
+    "2026-04-01 05:27 - No new commits, Mono quiet 48+ hours. Main=ed67565, local e76448a (Issue #15 fix), PR #21 still OPEN."
+  ]
 }
