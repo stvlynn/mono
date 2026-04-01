@@ -68,8 +68,8 @@ export class SeekDbExecutionMemoryBackend implements ExecutionMemoryBackend {
 
     for (let depth = 0; depth < level; depth += 1) {
       const next: string[] = [];
-      for (const currentId of frontier) {
-        const record = await this.getById(currentId);
+      const records = await this.getByIds(frontier);
+      for (const record of records) {
         if (!record) {
           continue;
         }
