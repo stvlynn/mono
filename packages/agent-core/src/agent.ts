@@ -503,7 +503,16 @@ export class Agent {
         }
 
         await this.compressSessionIfNeeded(runContext);
-        const newMessages = await this.runTaskTurn(runContext, task);
+        let newMessages: ConversationMessage[];
+        try {
+          newMessages = await this.runTaskTurn(runContext, task);
+        } catch (error: unknown) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const phaseLabel = `[phase:${task.phase}]`;
+          const wrappedError = new Error(`${phaseLabel} ${err.message}`);
+          wrappedError.cause = err;
+          throw wrappedError;
+        }
         if (!this.isRunCurrent(runContext.runId)) {
           return { result: this.buildAbortedTaskResult(runContext.taskMessages) };
         }
