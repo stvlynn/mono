@@ -690,3 +690,46 @@ isRecoverableRuntimeError(error, state): boolean
 **OpenClaw 缺失的关键层**: 无 state model → JSON → prompt 管道，无 catalog 白名单验证，无 JSON-spec rendering，无 specMode 配置开关。
 
 ---
+---
+
+### 本轮新增 (2026-04-01 12:27) - PR #21 Merged; Phase-Aware Error Handling Removed
+
+**状态**: PR #21 (fix/telegram-media-attachments) 已合并到 main (15bced8)。
+
+**关键发现**:
+- **Phase-aware error handling 被移除**: 分支 `fix/phase-aware-error-handling` (e76448a) 的代码在合并 PR #21 时被反向修改。`agent.ts` 中的 `[phase:${task.phase}]` 错误包装逻辑被完全删除。
+- **本地分支状态**: `fix/phase-aware-error-handling` 仍存在本地但未合并，其修改已被主分支的回退操作覆盖。
+- **影响**: Issue #15 (verification-phase provider failures) 的修复方案被撤销，需要重新实现或确认是否已在 codex 分支中有替代方案。
+
+**PR 状态更新**:
+- PR #21: MERGED ✓
+- PR #6: 仍 OPEN (SeekDB ancestor traversal 优化)
+
+**待跟进**:
+- 确认 issue #15 是否需要重新提 fix PR
+- 监控 codex 分支是否在合并时提供 issue #15 的替代解决方案
+
+
+---
+### 本轮新增 (2026-04-01 14:27) - Phase-Aware Error Wrapping 重新添加 (本地)
+
+**状态**: 新的本地分支 `fix/phase-aware-error-handling-v2` (afd4211) 重新实现了 phase-aware error wrapping。
+
+**新增代码变化** (afd4211 vs main 15bced8):
+- `packages/agent-core/src/agent.ts`: +10/-1 行
+- 在 `runTaskTurn()` catch 块中添加 `[phase:${task.phase}]` 前缀
+- 保留 original error 作为 cause property
+
+**与之前版本对比**:
+- 之前分支 `fix/phase-aware-error-handling` (1693b8a) 已被覆盖/删除
+- 新版本 afd4211 是重新实现，解决 Issue #15 root cause
+
+**Issue 状态**:
+- Issue #15: verification-phase provider failures (root cause: catch block loses task.phase)
+- 本次修复直接在 catch 块中恢复 phase context
+
+**未推送**: 该分支存在于本地但未 push 到 remote，PR #22 在 GitHub 上不存在。
+
+**待跟进**:
+- 如果测试通过，应 push 并开 PR
+- 验证 Issue #15 是否真正解决
