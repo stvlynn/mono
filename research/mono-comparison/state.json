@@ -1,47 +1,78 @@
 {
-  "lastChecked": "2026-03-30T22:19:00+08:00",
+  "lastCheck": "2026-04-01T00:47:00Z",
   "commitsReviewed": [
-    "b5de9ef", "2203e75", "ed67565", "bfc8d3a", "df17301", "7a515fb",
-    "9b57af8", "86c14f9", "7ea3987", "05cb57d", "b98c0ab",
-    "ab7f647", "59eb024"
+    "1276790",
+    "68dc906",
+    "70d2988",
+    "e76448a",
+    "4a795a2",
+    "193440d",
+    "3732409",
+    "b5de9ef",
+    "ab7f647",
+    "8d5b38c",
+    "2203e75",
+    "ed67565",
+    "bfc8d3a",
+    "df17301",
+    "7a515fb",
+    "9b57af8",
+    "86c14f9",
+    "7ea3987",
+    "05cb57d",
+    "5f54521",
+    "b98c0ab",
+    "b87691e"
   ],
-  "commitsLastSession": ["b5de9ef"],
-  "keyBranches": {
-    "main": "ed67565",
-    "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
-    "fix/telegram-media-attachments": "ab7f647 (PR #21 OPEN, needs manual testing)",
-    "codex/review-code-for-hardcoding-and-duplicates": "d3f75fc (26 commits ahead of main, PR #6 OPEN)"
-  },
-  "unmergedBranches": [
-    "feat/tui-json-render-surface (3 commits ahead, TUI JSON-spec generative rendering)",
-    "fix/telegram-media-attachments (PR #21 OPEN)",
-    "codex/review-code-for-hardcoding-and-duplicates (26 commits ahead, -25k lines, AI SDK→xsai)"
+  "areasChecked": [
+    "agent-core",
+    "autonomy-runtime",
+    "heartbeat-response",
+    "config",
+    "memory",
+    "telegram-control",
+    "tools-permission",
+    "prompts/templates",
+    "task-runtime",
+    "tui-json-render",
+    "channel-registry",
+    "skills"
   ],
-  "prsCreated": [
-    {
-      "number": 21,
-      "title": "fix(telegram): handle video/animation/audio/voice/video_note attachments",
-      "state": "OPEN",
-      "branch": "fix/telegram-media-attachments",
-      "fixes": "Issue #16"
-    },
-    {
-      "number": 6,
-      "title": "Optimize SeekDB ancestor traversal queries",
-      "state": "OPEN",
-      "branch": "codex/review-code-for-hardcoding-and-duplicates",
-      "state_detail": "PR is on a large -25k line branch, not yet reviewed/merged"
-    }
+  "keyFindings": [
+    "完整 autonomy-runtime.ts (1113行): heartbeat 决策、任务诊断、cooldown、topic 统计与衰减",
+    "heartbeat-response.ts (164行): reply 评估、去重、ACK token 处理",
+    "配置驱动的 autonomy policy + topic-level suppression",
+    "Memory v2 语义去重 (dedupeAutonomyCandidates)",
+    "Telegram 消息抑制机制 (9b57af8)",
+    "Channel Registry 抽象 (channel-registry.ts)",
+    "CuriosityProbe 机制 (86c14f9, 15min cooldown)",
+    "Prompt template 系统重构 (df17301): registry + render",
+    "channel_action/channel_store 工具权限机制",
+    "Interaction mode 系统 (channel_chat, curiosity, default, preview)",
+    "TUI JSON-Render 分支 (origin/feat/tui-json-render-surface)",
+    "Phase-aware error wrapping (e76448a) - Issue #15 修复"
   ],
-  "issuesCreated": [],
-  "activeIssues": [2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-  "newFindings": 1,
+  "researchTopics": [
+    "autonomy-runtime decision making",
+    "topic suppression algorithm",
+    "heartbeat vs LLM interaction pattern",
+    "prompt template system",
+    "channel_action permission granularity",
+    "TUI json-render 架构",
+    "Channel Registry 抽象设计",
+    "CuriosityProbe seeds 来源",
+    "Issue #15 phase-aware error wrapping"
+  ],
+  "issuesChecked": [
+    "15"
+  ],
+  "prsChecked": [],
+  "branchesReviewed": [
+    "origin/feat/tui-json-render-surface"
+  ],
+  "newCommitsSinceLastCheck": [],
+  "lastChecked": "2026-04-01T05:27:00+08:00",
   "observations": [
-    "No new commits on main (ed67565 = latest)",
-    "feat/tui-json-render-surface: +1864/-227 lines across 70 files, 3 commits ahead of main",
-    "TUI JSON-spec generative rendering: LLM→JSON-spec→@json-render/ink validation pipeline",
-    "PR #6 still OPEN (d3f75fc, 26 commits ahead of main)",
-    "PR #21 still OPEN (video/audio/voice/attachment fix)",
-    "Issue #15 update: intermittent on Telegram side, reproducible in local/container runs"
+    "2026-04-01 05:27 - No new commits, Mono quiet 48+ hours. Main=ed67565, local e76448a (Issue #15 fix), PR #21 still OPEN."
   ]
 }

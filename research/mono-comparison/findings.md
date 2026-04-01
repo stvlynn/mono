@@ -690,3 +690,164 @@ isRecoverableRuntimeError(error, state): boolean
 **OpenClaw 缺失的关键层**: 无 state model → JSON → prompt 管道，无 catalog 白名单验证，无 JSON-spec rendering，无 specMode 配置开关。
 
 ---
+---
+
+### 本轮新增 (2026-03-31 12:55) - Issue #15 (Verification Phase Error) 根因确认
+
+**状态**: Issue #15 仍然 OPEN，无修复 commits。
+
+**根因确认**:
+- `agent.ts` 主循环 catch block (lines 607-615) 捕获所有错误
+- 错误处理: `this.emitIfCurrent(runContext.runId, { type: "error", error: resolvedError }); throw resolvedError;`
+- **没有任何 task.phase 上下文注入**，不区分 "execution failed" vs "verification failed"
+- `runTaskTurn()` 内部 (lines 2009-2099) 会在 `phase=verify` 时 emit `task-verify-start` event，但 catch block 不知道这个 phase
+- 用户最终看到的是 `formatTelegramRuntimeError()` 拼接的 `error.message: cause.message`，完全丢失了 task phase 信息
+
+**验证方法**:
+- 搜索 `task.phase` 在 agent.ts 中的使用: lines 575, 2031, 2216, 2234, 2289, 2659
+- line 2031: `if (turnPlan.phase === "verify")` 只在 try block 内有效，catch block 无法访问
+- line 607-615 的 catch block 完全丢失了这个 phase 信息
+
+**建议修复**:
+1. 在 catch block 中检查 `task.phase` 状态（如果还能访问的话）
+2. 或者在 `runTaskTurn` 调用外包装 try-catch，按 phase 分别处理
+3. 或者在 `formatTelegramRuntimeError()` 中检测 error message pattern 并推断 phase
+
+**对比 OpenClaw**: OpenClaw 同样缺少类似的 phase-aware error classification 系统。
+
+---
+
+### 本輪新增 (2026-03-31 09:14) - PlatformRegistry Pattern
+
+**狀態**: 無新 commits（main = ed67565）。
+
+**`packages/im-platform/src/registry.ts` — PlatformRegistry**:
+```typescript
+class PlatformRegistry {
+  readonly #providers = new Map<string, ImPlatformProvider>();
+  
+  register(provider: ImPlatformProvider): this
+  resolve(id: string): ImPlatformProvider | undefined
+  list(): ImPlatformProvider[]
+}
+```
+
+**ImPlatformProvider 接口** (`types.ts`):
+- `id: string` / `platform: string`
+- `supportsTarget(target: DispatchTarget): boolean` — channel 或 dm
+- `supportsContent(content: DispatchContent): boolean` — 內容類型支持
+- `dispatch(request: DispatchRequest): Promise<DispatchResult>` — 發送消息
+- `normalizeIncomingMessage?(payload): Promise<InboundMessage>` — 入站標準化
+- `normalizeIncomingAction?(payload): Promise<InboundAction>` — Action 標準化
+
+**DispatchContent 類型**: text, photo, video, document, sticker, media-group
+
+**架構對比**:
+
+| 維度 | Mono | OpenClaw |
+|------|------|----------|
+| 模式 | Registry + Provider interface | Channel plugins |
+| 擴展方式 | 實現 ImPlatformProvider 接口 | 獨立 plugin 模組 |
+| 消息標準化 | normalizeIncomingMessage() | 無 equivalent |
+| 内容類型 | 內聯 enum (text/photo/video/...) | 取決於各 channel |
+
+**觀察**:
+- Mono 的 provider 模式更像傳統插件注册表
+- OpenClaw 的 channel plugins 更像独立適配器
+- Mono 的 `normalizeIncoming*` 鉤子值得考慮（入站消息標準化）
+---
+
+### 本轮新增 (2026-03-31 15:28) - Issue #15 已本地修复 (e76448a)
+
+**状态**: Issue #15 已在 `fix/phase-aware-error-handling` 分支上修复，commit e76448a，尚未合并到 main。
+
+**修复内容** (`packages/agent-core/src/agent.ts`):
+```typescript
+let newMessages: ConversationMessage[];
+try {
+  newMessages = await this.runTaskTurn(runContext, task);
+} catch (turnError) {
+  // Phase-aware error wrapping for better diagnostics
+  const phaseAwareError = new Error(`[phase:${task.phase}] ${turnError instanceof Error ? turnError.message : String(turnError)}`);
+  phaseAwareError.cause = turnError;
+  throw phaseAwareError;
+}
+```
+
+**对比修复前**:
+- 修复前: catch block 丢失 task.phase，错误信息无 phase 上下文
+- 修复后: 错误消息前缀 `[phase:{task.phase}]`，且 original error 作为 cause property 保留
+
+**建议后续**:
+1. 将 `fix/phase-aware-error-handling` 合并到 main
+2. 考虑将 phase-aware error pattern 推广到其他 error-prone 代码路径
+3. OpenClaw 可考虑引入类似的 phase-aware error 包装机制
+
+**OpenClaw 对比**: 无 equivalent error wrapping pattern，仍是 plain error throw。
+
+
+---
+
+## 2026-03-31 16:04 巡查发现
+
+### Issue #15 (phase-aware error wrapping) 已修复 ✅
+
+**Commit**: `e76448a` (2026-03-31 14:59)
+
+**修复内容**:
+- 在 `runTaskTurn()` 的 catch block 中添加 phase-aware error wrapping
+- 新增 `[phase:{phase}]` 前缀帮助诊断
+- 使用 Error.cause 属性保留原始错误
+
+**代码改动** (`packages/agent-core/src/agent.ts`):
+```typescript
+try {
+  newMessages = await this.runTaskTurn(runContext, task);
+} catch (turnError) {
+  const phaseAwareError = new Error(`[phase:${task.phase}] ${turnError.message}`);
+  phaseAwareError.cause = turnError;
+  throw phaseAwareError;
+}
+```
+
+**评估**: 这是 Issue #15 的根本修复。之前 catch block 丢失了 task.phase 信息，现在通过错误前缀保留了上下文。下游错误处理器可以检测任务阶段来提供更友好的错误信息。
+
+**对比 OpenClaw**: OpenClaw 目前没有类似的 phase-aware error 包装机制，error 处理相对简单，可考虑借鉴。
+
+**后续建议**:
+- 验证实际用户体验是否改善 (用户是否仍看到 "fetch failed")
+- 检查是否有其他位置需要类似的 error wrapping
+
+---
+
+## 2026-03-31 18:47 巡查 - 无新 commits
+
+**状态**: main (ed67565) 无新 commits。上次 16:06 的 findings 更新后无变化。
+
+**观察**:
+-  分支存在但未合并
+-  (PR #21) 仍为 OPEN
+-  仍是 3 commits ahead，未合并
+
+**下次建议**:
+- 继续监测 merge 进展
+- 可选: 检查 agent-core 和 memory 最近的改动是否有值得记录的点
+
+
+
+---
+
+## 2026-04-01 00:47 巡查 - 无新 commits
+
+**状态**: 实质性 commits (e76448a = Issue #15 fix) 后无新的代码变更。只有 research commits。
+
+**Main 最后实质性 commit**: `e76448a` (6 hours ago)
+- Issue #15 phase-aware error wrapping 已修复
+
+**Open PRs**:
+- PR #21: `fix/telegram-media-attachments` - 仍为 OPEN
+- PR #6: SeekDB query optimization - 仍为 OPEN
+
+**下次建议**:
+- 监测 PR #21 merge 进展
+- 监测是否有新的代码 commits

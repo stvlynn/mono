@@ -503,7 +503,15 @@ export class Agent {
         }
 
         await this.compressSessionIfNeeded(runContext);
-        const newMessages = await this.runTaskTurn(runContext, task);
+        let newMessages: ConversationMessage[];
+        try {
+          newMessages = await this.runTaskTurn(runContext, task);
+        } catch (turnError) {
+          // Phase-aware error wrapping for better diagnostics
+          const phaseAwareError = new Error(`[phase:${task.phase}] ${turnError instanceof Error ? turnError.message : String(turnError)}`);
+          phaseAwareError.cause = turnError;
+          throw phaseAwareError;
+        }
         if (!this.isRunCurrent(runContext.runId)) {
           return { result: this.buildAbortedTaskResult(runContext.taskMessages) };
         }
