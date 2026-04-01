@@ -1,0 +1,47 @@
+{
+  "lastChecked": "2026-03-30T22:19:00+08:00",
+  "commitsReviewed": [
+    "b5de9ef", "2203e75", "ed67565", "bfc8d3a", "df17301", "7a515fb",
+    "9b57af8", "86c14f9", "7ea3987", "05cb57d", "b98c0ab",
+    "ab7f647", "59eb024"
+  ],
+  "commitsLastSession": ["b5de9ef"],
+  "keyBranches": {
+    "main": "ed67565",
+    "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
+    "fix/telegram-media-attachments": "ab7f647 (PR #21 OPEN, needs manual testing)",
+    "codex/review-code-for-hardcoding-and-duplicates": "d3f75fc (26 commits ahead of main, PR #6 OPEN)"
+  },
+  "unmergedBranches": [
+    "feat/tui-json-render-surface (3 commits ahead, TUI JSON-spec generative rendering)",
+    "fix/telegram-media-attachments (PR #21 OPEN)",
+    "codex/review-code-for-hardcoding-and-duplicates (26 commits ahead, -25k lines, AI SDK→xsai)"
+  ],
+  "prsCreated": [
+    {
+      "number": 21,
+      "title": "fix(telegram): handle video/animation/audio/voice/video_note attachments",
+      "state": "OPEN",
+      "branch": "fix/telegram-media-attachments",
+      "fixes": "Issue #16"
+    },
+    {
+      "number": 6,
+      "title": "Optimize SeekDB ancestor traversal queries",
+      "state": "OPEN",
+      "branch": "codex/review-code-for-hardcoding-and-duplicates",
+      "state_detail": "PR is on a large -25k line branch, not yet reviewed/merged"
+    }
+  ],
+  "issuesCreated": [],
+  "activeIssues": [2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "newFindings": 1,
+  "observations": [
+    "No new commits on main (ed67565 = latest)",
+    "feat/tui-json-render-surface: +1864/-227 lines across 70 files, 3 commits ahead of main",
+    "TUI JSON-spec generative rendering: LLM→JSON-spec→@json-render/ink validation pipeline",
+    "PR #6 still OPEN (d3f75fc, 26 commits ahead of main)",
+    "PR #21 still OPEN (video/audio/voice/attachment fix)",
+    "Issue #15 update: intermittent on Telegram side, reproducible in local/container runs"
+  ]
+}
