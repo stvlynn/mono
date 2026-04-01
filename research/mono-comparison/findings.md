@@ -730,6 +730,48 @@ isRecoverableRuntimeError(error, state): boolean
 
 **未推送**: 该分支存在于本地但未 push 到 remote，PR #22 在 GitHub 上不存在。
 
-**待跟进**:
-- 如果测试通过，应 push 并开 PR
-- 验证 Issue #15 是否真正解决
+**本轮更新 (2026-04-01 17:47)**:
+- PR #22 已在 remote，state: OPEN ✓
+- 分支: `fix/phase-aware-error-handling-v2` (afd4211)，领先 main 2 commits
+- 直接解决 Issue #15 root cause
+
+**其他分支状态**:
+- PR #6: 仍 OPEN (codex/review-code-for-hardcoding-and-duplicates, 26 commits ahead)
+- PR #21: MERGED ✓
+- feat/tui-json-render-surface: ce4a8bc, 3 commits ahead, 未合并
+- main 最新: 15bced8 (PR #21 merged)
+
+---
+
+### 本轮新增 (2026-04-02 05:27) - No New Commits; PR #22 Still Waiting
+
+**状态**: 无新 commits，PR #22 仍 OPEN。
+
+**本轮检查结果**:
+- Main 最新: `72549ab` (research commit, 无实质代码变化)
+- 上轮 main: `15bced8` (PR #21 merged)
+- 实质性新代码: `afd4211` (PR #22 的 phase-aware error wrapping)
+- 差距: 仅 1 个 research commit
+
+**PR #22 状态** (fix/phase-aware-error-handling-v2 → Issue #15):
+- State: OPEN ✓
+- URL: https://github.com/stvlynn/mono/pull/22
+- 改动: `agent.ts` +10/-1 行，catch 块中添加 `[phase:${task.phase}]` 前缀
+- 未 push 到 remote，需 Steven 确认后推送
+
+**PR #6 状态** (codex/review-code-for-hardcoding-and-duplicates):
+- State: OPEN ✓
+- 领先 main: 26 commits (-25k lines, AI SDK → xsai 迁移)
+- 最新: d3f75fc (seekdb optimization)
+
+**分支状态总结**:
+| Branch | Latest | Ahead | Status |
+|--------|--------|-------|--------|
+| main | 15bced8 | - | PR #21 merged |
+| fix/phase-aware-error-handling-v2 | afd4211 | +1 | PR #22 OPEN |
+| codex/review-code-for-hardcoding-and-duplicates | d3f75fc | +26 | PR #6 OPEN |
+| feat/tui-json-render-surface | ce4a8bc | +3 | Not merged |
+
+**待处理**:
+- PR #22 等待推送/合并
+- Issue #15 root cause 修复取决于 PR #22 是否合并
