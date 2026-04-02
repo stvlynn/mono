@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-02T21:27:00+08:00",
+  "lastChecked": "2026-04-03T06:47:00+08:00",
   "commitsReviewed": [
     "72549ab",
     "afd4211",
@@ -18,7 +18,8 @@
     "ab7f647",
     "59eb024",
     "1fb81f1",
-    "6354bea"
+    "6354bea",
+    "fb15afb"
   ],
   "commitsLastSession": [
     "6354bea"
@@ -79,5 +80,8 @@
     "PR #6 still OPEN (codex branch, 26 commits ahead)",
     "All packages unchanged (agent-core, tui, prompts, session, tools)"
   ],
-  "notes": "2026-04-02 21:27 - No new commits. PR #22 still waiting (~72h). Deep-dived ai-sdk-runtime.ts streaming parser for reasoning extraction."
+  "notes": [
+    "2026-04-03 02:27 - No new commits. PR #22 still waiting (~92h). Deep-dived im-platform PlatformRegistry pattern - multi-channel architecture.",
+    "2026-04-03 06:47 - No new commits since fb15afb. PR #22 still waiting. Reviewed llm/registry.ts (ModelRegistry, profiles, model resolution), im-platform/registry.ts (PlatformRegistry pattern)."
+  ]
 }
