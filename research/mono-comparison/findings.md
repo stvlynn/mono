@@ -775,3 +775,32 @@ isRecoverableRuntimeError(error, state): boolean
 **待处理**:
 - PR #22 等待推送/合并
 - Issue #15 root cause 修复取决于 PR #22 是否合并
+
+---
+
+### 本轮新增 (2026-04-02 10:07) - No New Commits; PR #22 Still Waiting
+
+**状态**: 无新 commits，PR #22 仍 OPEN。
+
+**本轮检查结果**:
+- 本地分支最新: `1fb81f1` (仅一个本地 research commit)
+- remote main: `15bced8` (PR #21 merged)
+- 无实质代码变化
+
+**各包检查**:
+- `packages/agent-core`: 无变化 (PR #22 修改已在此前记录)
+- `packages/tui`: 无变化
+- `packages/prompts`: 无变化
+- `packages/session`: 无变化
+- `packages/tools`: 无变化
+
+**PR 状态**:
+- PR #22 (fix/phase-aware-error-handling-v2): OPEN, 等待约 96h
+- PR #6 (codex/review-code-for-hardcoding-and-duplicates): OPEN, 26 commits ahead
+- feat/tui-json-render-surface: ce4a8bc, 3 commits ahead, 未合并
+
+**结论**: Mono 仓库本日无新变化，继续监控。
+
+---
+
+### 本轮新增 (2026-04-02 12:07) - No New Commits (12:07 Check)
