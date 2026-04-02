@@ -803,4 +803,48 @@ isRecoverableRuntimeError(error, state): boolean
 
 ---
 
+### 本轮新增 (2026-04-02 17:27) - No New Commits; PR #22 Still Waiting
+
+**状态**: 无新 commits，PR #22 仍 OPEN。
+
+**本轮检查结果**:
+- 本地分支最新: `6354bea` (仅本地 research commit)
+- remote main: `15bced8` (PR #21 merged)
+- 无实质代码变化
+
+**PR 状态**:
+- PR #22 (fix/phase-aware-error-handling-v2): OPEN, 等待约 4+ 天
+- PR #6: OPEN, 26 commits ahead
+- feat/tui-json-render-surface: ce4a8bc, 3 commits ahead, 未合并
+
+**结论**: Mono 仓库本日无变化。
+
+---
+
 ### 本轮新增 (2026-04-02 12:07) - No New Commits (12:07 Check)
+
+---
+### 2026-04-02 18:27 检查 - Claude Code v2026.04.01 发布
+
+**Claude Code 更新** (2026-04-01):
+- `/powerup` — 交互式教程，动画演示新功能
+- `CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE` env var — git pull 失败时保留 marketplace 缓存，离线环境有用
+- 新增 .husky 到保护目录 (acceptEdits mode)
+- **Bug fixes**:
+  - 无限循环：rate-limit options dialog 反复自动打开导致 crash
+  - `--resume` 导致 prompt cache miss（deferred tools/MCP/custom agents）
+  - PostToolUse format-on-save hook 导致 Edit/Write 失败
+  - PreToolUse hooks with JSON stdout + exit 2 未正确阻塞
+  - 多个 UI 问题（滚动、标题栏等）
+  - PowerShell 权限检查加固
+- **性能改进**:
+  - MCP tool schemas JSON.stringify 优化
+  - SSE 大帧处理从 O(n²) 改为 O(n)
+  - SDK 长对话 transcript 写入不再二次方慢
+  - `/resume` 多项目并行加载
+
+**对 OpenClaw 潜在价值**:
+- `CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE` 对离线/网络不稳定环境有用
+- SSE 性能优化可以研究实现
+
+**Mono 仓库状态**: 无新 commits，PR #22 仍 OPEN

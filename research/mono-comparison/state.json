@@ -1,11 +1,28 @@
 {
-  "lastChecked": "2026-04-02T12:07:00+08:00",
+  "lastChecked": "2026-04-02T21:27:00+08:00",
   "commitsReviewed": [
-    "72549ab", "afd4211", "15bced8", "b5de9ef", "2203e75", "ed67565", "bfc8d3a", "df17301", "7a515fb",
-    "9b57af8", "86c14f9", "7ea3987", "05cb57d", "b98c0ab",
-    "ab7f647", "59eb024", "1fb81f1"
+    "72549ab",
+    "afd4211",
+    "15bced8",
+    "b5de9ef",
+    "2203e75",
+    "ed67565",
+    "bfc8d3a",
+    "df17301",
+    "7a515fb",
+    "9b57af8",
+    "86c14f9",
+    "7ea3987",
+    "05cb57d",
+    "b98c0ab",
+    "ab7f647",
+    "59eb024",
+    "1fb81f1",
+    "6354bea"
   ],
-  "commitsLastSession": ["1fb81f1"],
+  "commitsLastSession": [
+    "6354bea"
+  ],
   "keyBranches": {
     "main": "15bced8 (PR #21 merged)",
     "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
@@ -41,13 +58,26 @@
     }
   ],
   "issuesCreated": [],
-  "activeIssues": [2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "activeIssues": [
+    2,
+    5,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
   "newFindings": 0,
   "observations": [
-    "No new commits since last check (1fb81f1 = local latest)",
-    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~3 days",
+    "No new commits since last check (6354bea = local latest)",
+    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~4+ days",
     "feat/tui-json-render-surface: ce4a8bc, 3 commits ahead of main",
     "PR #6 still OPEN (codex branch, 26 commits ahead)",
     "All packages unchanged (agent-core, tui, prompts, session, tools)"
-  ]
+  ],
+  "notes": "2026-04-02 21:27 - No new commits. PR #22 still waiting (~72h). Deep-dived ai-sdk-runtime.ts streaming parser for reasoning extraction."
 }
