@@ -8,7 +8,8 @@
 - [x] ~~Investigate `transcript-repair.ts` for potential OpenClaw session repair adoption~~ (Finding 14)
 - [x] ~~Study `HeartbeatWakeController` coalescing pattern~~ (Finding 13)
 - [x] ~~Study `streamAiSdkText` for potential streaming output adoption~~ (Finding 15)
-- [ ] Study ChannelRegistry pattern for potential OpenClaw multi-channel architecture (Finding 16)
+- [x] Study ChannelRegistry pattern for potential OpenClaw multi-channel architecture (Finding 16)
+- [x] ~~Study Mono's Registry pattern (Finding 17)~~ - DONE: SlashCommandRegistry, PlatformRegistry, FileTemplateRegistry
 
 ## Medium Priority
 - [ ] Compare session management between Mono and OpenClaw

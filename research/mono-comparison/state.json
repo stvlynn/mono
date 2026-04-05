@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-04T08:27:00+08:00",
+  "lastChecked": "2026-04-05T15:47:00+08:00",
   "commitsReviewed": [
     "72549ab",
     "afd4211",
@@ -23,10 +23,12 @@
     "8a8cc66",
     "5d4dc03",
     "84db58a",
-    "ecd282b"
+    "ecd282b",
+    "c2a30ec",
+    "65c2839"
   ],
   "commitsLastSession": [
-    "6354bea"
+    "c2a30ec"
   ],
   "keyBranches": {
     "main": "15bced8 (PR #21 merged)",
@@ -63,31 +65,25 @@
     }
   ],
   "issuesCreated": [],
-  "activeIssues": [
-    2,
-    5,
-    7,
-    8,
-    9,
-    10,
-    11,
-    12,
-    13,
-    14,
-    15
+  "activeIssues": [2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "newFindings": 1,
+  "findings": [
+    {
+      "id": 17,
+      "title": "Mono Registry Pattern Analysis",
+      "description": "Studied three Registry implementations: SlashCommandRegistry (TUI commands), PlatformRegistry (IM platforms), FileTemplateRegistry (prompt templates). All follow similar Map-based pattern.",
+      "tags": ["registry", "architecture", "pattern"]
+    }
   ],
-  "newFindings": 0,
   "observations": [
-    "No new commits since last check (6354bea = local latest)",
-    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~140h/5.8 days",
+    "No new commits since last check (c2a30ec = local latest)",
+    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~230h/9.6 days",
     "feat/tui-json-render-surface: ce4a8bc, 3 commits ahead of main",
     "PR #6 still OPEN (codex branch, 26 commits ahead)",
-    "All packages unchanged (agent-core, tui, prompts, session, tools)",
-    "2026-04-04 08:27 - No new commits. PR #22 still waiting (~140h/5.8 days). No changes."
+    "OpenClaw package version: 2026.3.11 (installed via npm)",
+    "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h/9.6 days). Finding 17: Registry Pattern deep-dive completed."
   ],
   "notes": [
-    "2026-04-03 02:27 - No new commits. PR #22 still waiting (~92h). Deep-dived im-platform PlatformRegistry pattern - multi-channel architecture.",
-    "2026-04-03 06:47 - No new commits since fb15afb. PR #22 still waiting. Reviewed llm/registry.ts (ModelRegistry, profiles, model resolution), im-platform/registry.ts (PlatformRegistry pattern).",
-    "2026-04-04 06:48 - No new commits. PR #22 still waiting (~132h/5.5 days). Reviewed config, shared, cli packages - no changes."
+    "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h). Deep-dived Registry pattern (SlashCommandRegistry, PlatformRegistry, FileTemplateRegistry). Finding 17 recorded."
   ]
 }

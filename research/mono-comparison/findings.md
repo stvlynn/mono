@@ -945,4 +945,44 @@ isRecoverableRuntimeError(error, state): boolean
 
 **结论**: Mono 仓库安静，继续监控。
 
+---
+
+### 本轮新增 (2026-04-05 15:47) - No New Commits; PR #22 Waiting (~230h); Finding 17: Registry Pattern
+
+**状态**: 无新 commits，PR #22 仍 OPEN (等待约 230h/9.6 天)。
+
+**Finding 17: Mono Registry 模式分析**
+
+研究了 Mono 中三个 Registry 实现：
+
+1. **SlashCommandRegistry** (`packages/tui/src/slash/registry.ts`)
+   - 管理 TUI 斜杠命令
+   - 支持 name/alias/全名注册和模糊搜索
+   - 方法: register, registerMany, list, find, search
+
+2. **PlatformRegistry** (`packages/im-platform/src/registry.ts`)
+   - 管理即时通讯平台 (Telegram, Discord 等)
+   - 简单的 Map 存储，register/resolve/list
+   - 方法: register, resolve, list
+
+3. **FileTemplateRegistry** (`packages/prompts/src/registry.ts`)
+   - 管理提示模板文件映射
+   - 使用 TEMPLATE_FILES 常量映射 templateId → 文件路径
+   - 方法: getPath, exists, list
+
+**共同模式**:
+- 都是类，有私有 Map 存储
+- 都有 list() 方法返回所有注册项
+- 都支持注册和查找
+- 简洁高效，适合单例模式
+
+**对比 OpenClaw**: OpenClaw 目前使用 skill 注册表，但缺乏统一的 Registry 抽象。
+
+**PR 状态**:
+- PR #22 (fix/phase-aware-error-handling-v2): OPEN, 等待约 9.6 天
+- PR #6: OPEN, 26 commits ahead
+- feat/tui-json-render-surface: ce4a8bc, 3 commits ahead, 未合并
+
+**结论**: Mono 的 Registry 模式值得借鉴，建议后续在 OpenClaw 中引入统一的 Registry 抽象。
+
 
