@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-06T19:55:00+08:00",
+  "lastChecked": "2026-04-07T03:40:00+08:00",
   "commitsReviewed": [
     "72549ab",
     "afd4211",
@@ -41,7 +41,7 @@
   "unmergedBranches": [
     "feat/tui-json-render-surface (3 commits ahead, TUI JSON-spec generative rendering)",
     "fix/phase-aware-error-handling-v2 (PR #22 OPEN, fixes Issue #15)",
-    "codex/review-code-for-hardcoding-and-duplicates (26 commits ahead, -25k lines, AI SDK\u2192xsai)"
+    "codex/review-code-for-hardcoding-and-duplicates (26 commits ahead, -25k lines, AI SDK→xsai)"
   ],
   "prsCreated": [
     {
@@ -91,18 +91,30 @@
         "architecture",
         "pattern"
       ]
+    },
+    {
+      "id": 18,
+      "title": "Mono vs OpenClaw Skills Architecture Comparison",
+      "description": "Compared skills architecture: Mono has 3-layer (builtin/global/project), OpenClaw has 1-layer global only. Mono more flexible.",
+      "tags": [
+        "skills",
+        "architecture",
+        "comparison"
+      ]
     }
   ],
   "observations": [
     "No new commits since last check (c2a30ec = local latest)",
-    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~230h/9.6 days",
+    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~280h/11.7 days",
     "feat/tui-json-render-surface: ce4a8bc, 3 commits ahead of main",
     "PR #6 still OPEN (codex branch, 26 commits ahead)",
     "OpenClaw package version: 2026.3.11 (installed via npm)",
     "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h/9.6 days). Finding 17: Registry Pattern deep-dive completed.",
     "2026-04-06 06:15 - Still no new commits since c2a30ec. im-platform package mostly stable (last changes in March). PR #22 still waiting ~200h.",
     "2026-04-06 06:15 - No new commits since c2a30ec. Still no movement on PR #22 (~200h). im-platform package stable.",
-    "2026-04-06 19:55 - No new commits. PR #22 still waiting (~260h/10.8 days). Repository quiet for 10+ days."
+    "2026-04-06 19:55 - No new commits. PR #22 still waiting (~260h/10.8 days). Repository quiet for 10+ days.",
+    "2026-04-07 03:20 - No new commits. PR #22 still waiting (~280h/11.7 days). Explored OpenClaw structure (skills in ~/.agents/skills/, no git repo).",
+    "2026-04-07 03:40 - No new commits. PR #22 still waiting (~280h/11.7 days). Finding 18: Mono vs OpenClaw Skills Architecture comparison recorded."
   ],
   "notes": [
     "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h). Deep-dived Registry pattern (SlashCommandRegistry, PlatformRegistry, FileTemplateRegistry). Finding 17 recorded."

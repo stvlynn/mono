@@ -999,18 +999,64 @@ isRecoverableRuntimeError(error, state): boolean
 **todo 更新**: 研究方向保持不变，继续监控 PR #22 和 tui-json-render-surface 分支。
 
 
-### 本轮新增 (2026-04-06 19:55) - No New Commits; PR #22 Waiting (~260h/10.8 days)
+### 本轮新增 (2026-04-07 03:20) - No New Commits; PR #22 Waiting (~280h/11.7 days)
 
-**状态**: 无新 commits，PR #22 仍 OPEN（等待约 260h/10.8 天）。
+**状态**: 无新 commits，PR #22 仍 OPEN（等待约 280h/11.7 天）。
 
 **检查结果**:
-- remote main:  (PR #21 merged)
-- 本地分支最新:  (仅本地 research commit)
+- remote main: 15bced8 (PR #21 merged)
+- 本地分支最新: c2a30ec (local research commit)
 - 无实质代码变化
+- 分支活动: fix/phase-aware-error-handling-v2 仍有本地 research commits
 
-**观察**:
-- Mono 仓库已安静超过 10 天
-- im-platform, tools 等包均无变化
-- PR #22 仍未被 review/merge
+**OpenClaw 探索**:
+- OpenClaw 代码位于 ~/.openclaw/
+- Skills 位于 ~/.agents/skills/ (10个skill: agent-browser, dogfood, electron, find-skills, skill-creator, slack, ui-ux-pro-max 等)
+- 无 git 仓库（可能是 npm 安装）
+- 探索了 OpenClaw vs Mono Skills Architecture 差异
 
-**结论**: 继续监控。
+**结论**: 继续监控 PR #22 和仓库活动。
+
+---
+
+### 本轮新增 (2026-04-07 03:40) - Finding 18: Mono vs OpenClaw Skills Architecture Comparison
+
+**背景**: 对比了 Mono 和 OpenClaw 的 skills 架构实现。
+
+**Mono Skills 架构** (`packages/agent-core/src/skills.ts`):
+- **3层 skill 来源**: builtin → global → project
+  - builtin: agent-core 内置
+  - global: `~/.mono/skills/` 
+  - project: `.mono/skills/`
+- **Skill 定义**: 解析 YAML frontmatter，提取 name, description
+- **加载函数**: 
+  - `loadBuiltinSkills()`: 加载内置 skills
+  - `loadGlobalSkills(cwd)`: 从全局目录加载
+  - `loadProjectSkills(cwd)`: 从项目目录加载
+  - `loadAvailableSkills(cwd)`: 合并三层，去重，排序
+- **匹配机制**: prompt 中包含 skill name 或 `$skill-name` 则激活
+- **渲染**: XML 风格 `<Skill name="x" origin="x" path="x">...</Skill>`
+
+**OpenClaw Skills 架构**:
+- **位置**: 固定目录 `~/.agents/skills/` (全局)
+- **Skill 定义**: 每个 skill 目录下的 SKILL.md
+- **触发方式**: skill 名称出现在用户消息中，动态加载
+- **元数据**: 包含 name, description 在 SKILL.md 内部
+
+**关键差异**:
+| 特性 | Mono | OpenClaw |
+|------|-----|---------|
+| Skill 来源层数 | 3层 (builtin/global/project) | 1层 (global only) |
+| 配置方式 | 代码定义 | 目录结构 |
+| 加载时机 | 任务轮次加载 | 启动时扫描 |
+| 动态激活 | 基于 prompt 匹配 | 消息触发 |
+| 去重机制 | normalizeSkillToken 后 Map 合并 | 无 (名字唯一) |
+
+**潜在改进**: OpenClaw 可以考虑：
+1. 引入 project-level skills (工作区本地 skills)
+2. skill conflict resolution (同名处理)
+3. frontmatter metadata 支持
+
+**PR 状态**: 无变化，PR #22 仍 OPEN (等待约 280h/11.7 天)。
+
+**结论**: Mono 的分层 skill 架构更灵活。
