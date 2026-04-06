@@ -986,3 +986,15 @@ isRecoverableRuntimeError(error, state): boolean
 **结论**: Mono 的 Registry 模式值得借鉴，建议后续在 OpenClaw 中引入统一的 Registry 抽象。
 
 
+---
+### 本轮新增 (2026-04-06 06:15) - No New Commits; PR #22 Waiting (~200h)
+
+**状态**: 无新 commits（上次 c2a30ec 是 4 月 4 日）。PR #22 仍 OPEN 等待约 200h/8.3 天。
+
+**观察**:
+- im-platform 包自 3 月 24 日后无新 commits（最后: 2203e75 视频/音频附件处理）
+- tools 包也无新 commits
+- 各 package 代码基本稳定
+
+**todo 更新**: 研究方向保持不变，继续监控 PR #22 和 tui-json-render-surface 分支。
+
