@@ -998,3 +998,19 @@ isRecoverableRuntimeError(error, state): boolean
 
 **todo 更新**: 研究方向保持不变，继续监控 PR #22 和 tui-json-render-surface 分支。
 
+
+### 本轮新增 (2026-04-06 19:55) - No New Commits; PR #22 Waiting (~260h/10.8 days)
+
+**状态**: 无新 commits，PR #22 仍 OPEN（等待约 260h/10.8 天）。
+
+**检查结果**:
+- remote main:  (PR #21 merged)
+- 本地分支最新:  (仅本地 research commit)
+- 无实质代码变化
+
+**观察**:
+- Mono 仓库已安静超过 10 天
+- im-platform, tools 等包均无变化
+- PR #22 仍未被 review/merge
+
+**结论**: 继续监控。
