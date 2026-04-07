@@ -1060,3 +1060,48 @@ isRecoverableRuntimeError(error, state): boolean
 **PR 状态**: 无变化，PR #22 仍 OPEN (等待约 280h/11.7 天)。
 
 **结论**: Mono 的分层 skill 架构更灵活。
+
+---
+
+### 本轮新增 (2026-04-07 12:00) - Finding 19: Session Management Architecture Comparison
+
+**背景**: 检查 Mono 的 SessionManager 实现，对比 OpenClaw。
+
+**Mono Session 架构** (`packages/session/src/session-manager.ts`, 493行):
+
+- **SessionManager 类**: 核心会话管理
+  - `sessionId`: 自动生成或指定
+  - `filePath`: JSONL 格式存储 (`{cwd}/{sessionId}.jsonl`)
+  - `headId`: 支持分支头（类似 git）
+  
+- **存储格式**: JSONL (one JSON object per line)
+  - 元数据 entry → 消息 → memory references → task states → compressions
+  - 每个 entry 有 `id`, `timestamp`, `entryType`, `payload`
+  
+- **核心方法**:
+  - `loadMessages(branchHeadId?)`: 从指定分支头加载对话
+  - `appendMessage(message)`: 追加单条消息
+  - `appendBranch(name?)`: 创建新分支（类似 git branch）
+  - `appendTaskState/appendTaskSummary`: 任务状态持久化
+  - `appendSessionCompression`: 压缩后存储
+  
+- **分支支持**: 类似的 git 的分支概念，支持一个 session 多个分支头
+- **SeekDb 集成**: `SeekDbSessionMirror` 支持会话镜像到 SeekDB
+
+**OpenClaw Session**:
+- SQLite 数据库存储 (`sessions.db`)
+- 需要进一步查看实现细节
+
+**关键差异**:
+| 特性 | Mono | OpenClaw |
+|------|-----|---------|
+| 存储格式 | JSONL (文本行) | SQLite |
+| 分支支持 | ✅ 有 (headId) | 不明 |
+| 压缩策略 | SessionCompressionResult | 不明 |
+| SeekDB 集成 | ✅ SessionMirror | 不明 |
+
+**观察**: Mono 的 JSONL + 分支设计更适合版本化会话历史，OpenClaw 的 SQLite 可能更简单但缺乏分支能力。
+
+**PR 状态**: PR #22 仍 OPEN (等待约 300h/12.5 天)。
+
+**结论**: 记录为 Finding 19。

@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-07T07:20:00+08:00",
+  "lastChecked": "2026-04-07T12:40:00+08:00",
   "commitsReviewed": [
     "72549ab",
     "afd4211",
@@ -27,7 +27,8 @@
     "c2a30ec",
     "65c2839",
     "f13a016",
-    "5f48b15"
+    "5f48b15",
+    "eac26b4"
   ],
   "commitsLastSession": [
     "c2a30ec"
@@ -80,7 +81,7 @@
     14,
     15
   ],
-  "newFindings": 1,
+  "newFindings": 2,
   "findings": [
     {
       "id": 17,
@@ -95,9 +96,19 @@
     {
       "id": 18,
       "title": "Mono vs OpenClaw Skills Architecture Comparison",
-      "description": "Compared skills architecture: Mono has 3-layer (builtin/global/project), OpenClaw has 1-layer global only. Mono more flexible.",
+      "description": "Mono has 3-layer (builtin/global/project), OpenClaw has 1-layer global only. Mono more flexible with YAML frontmatter + block scalar.",
       "tags": [
         "skills",
+        "architecture",
+        "comparison"
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Mono vs OpenClaw Session Management Comparison",
+      "description": "Mono uses JSONL with branch support (headId), OpenClaw uses SQLite. Mono's git-like branch model more sophisticated.",
+      "tags": [
+        "session",
         "architecture",
         "comparison"
       ]
@@ -114,9 +125,13 @@
     "2026-04-06 06:15 - No new commits since c2a30ec. Still no movement on PR #22 (~200h). im-platform package stable.",
     "2026-04-06 19:55 - No new commits. PR #22 still waiting (~260h/10.8 days). Repository quiet for 10+ days.",
     "2026-04-07 03:20 - No new commits. PR #22 still waiting (~280h/11.7 days). Explored OpenClaw structure (skills in ~/.agents/skills/, no git repo).",
-    "2026-04-07 03:40 - No new commits. PR #22 still waiting (~280h/11.7 days). Finding 18: Mono vs OpenClaw Skills Architecture comparison recorded."
+    "2026-04-07 03:40 - No new commits. PR #22 still waiting (~280h/11.7 days). Finding 18: Mono vs OpenClaw Skills Architecture comparison recorded.",
+    "2026-04-07 12:00 - No new commits. PR #22 still waiting (~300h/12.5 days). Finding 19: Session Management comparison (Mono JSONL+branch vs OpenClaw SQLite)."
   ],
   "notes": [
     "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h). Deep-dived Registry pattern (SlashCommandRegistry, PlatformRegistry, FileTemplateRegistry). Finding 17 recorded."
-  ]
+  ],
+  "monoState": {
+    "pr22WaitingHours": 350
+  }
 }
