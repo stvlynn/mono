@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-07T12:40:00+08:00",
+  "lastChecked": "2026-04-07T15:47:00+08:00",
   "commitsReviewed": [
     "72549ab",
     "afd4211",
@@ -126,12 +126,16 @@
     "2026-04-06 19:55 - No new commits. PR #22 still waiting (~260h/10.8 days). Repository quiet for 10+ days.",
     "2026-04-07 03:20 - No new commits. PR #22 still waiting (~280h/11.7 days). Explored OpenClaw structure (skills in ~/.agents/skills/, no git repo).",
     "2026-04-07 03:40 - No new commits. PR #22 still waiting (~280h/11.7 days). Finding 18: Mono vs OpenClaw Skills Architecture comparison recorded.",
-    "2026-04-07 12:00 - No new commits. PR #22 still waiting (~300h/12.5 days). Finding 19: Session Management comparison (Mono JSONL+branch vs OpenClaw SQLite)."
+    "2026-04-07 12:00 - No new commits. PR #22 still waiting (~300h/12.5 days). Finding 19: Session Management comparison (Mono JSONL+branch vs OpenClaw SQLite).",
+    "2026-04-07 15:47 - No new commits. PR #22 still waiting (~360h/15 days). Checked OpenClaw skills: 8 skills in ~/.agents/skills/ (agent-browser, amap, dogfood, electron, find-skills, skill-creator, slack, ui-ux-pro-max). OpenClaw skills use single-layer global only, no project-level or builtin layers."
   ],
   "notes": [
     "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h). Deep-dived Registry pattern (SlashCommandRegistry, PlatformRegistry, FileTemplateRegistry). Finding 17 recorded."
   ],
   "monoState": {
-    "pr22WaitingHours": 350
+    "pr22WaitingHours": 360,
+    "lastCommit": "cdfb441",
+    "mainHead": "15bced8",
+    "aheadBy": 0
   }
 }
