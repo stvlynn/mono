@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-07T15:47:00+08:00",
+  "lastChecked": "2026-04-07T13:07:00+08:00",
   "commitsReviewed": [
     "72549ab",
     "afd4211",
@@ -28,15 +28,17 @@
     "65c2839",
     "f13a016",
     "5f48b15",
-    "eac26b4"
+    "eac26b4",
+    "cdfb441",
+    "4d76ab6"
   ],
   "commitsLastSession": [
-    "c2a30ec"
+    "cdfb441"
   ],
   "keyBranches": {
     "main": "15bced8 (PR #21 merged)",
     "feat/tui-json-render-surface": "ce4a8bc (3 commits ahead of main, not merged)",
-    "fix/phase-aware-error-handling-v2": "1fb81f1 (PR #22 OPEN, fixes Issue #15)",
+    "fix/phase-aware-error-handling-v2": "4d76ab6 (PR #22 OPEN, fixes Issue #15)",
     "codex/review-code-for-hardcoding-and-duplicates": "d3f75fc (26 commits ahead of main, PR #6 OPEN)"
   },
   "unmergedBranches": [
@@ -87,36 +89,24 @@
       "id": 17,
       "title": "Mono Registry Pattern Analysis",
       "description": "Studied three Registry implementations: SlashCommandRegistry (TUI commands), PlatformRegistry (IM platforms), FileTemplateRegistry (prompt templates). All follow similar Map-based pattern.",
-      "tags": [
-        "registry",
-        "architecture",
-        "pattern"
-      ]
+      "tags": ["registry", "architecture", "pattern"]
     },
     {
       "id": 18,
       "title": "Mono vs OpenClaw Skills Architecture Comparison",
       "description": "Mono has 3-layer (builtin/global/project), OpenClaw has 1-layer global only. Mono more flexible with YAML frontmatter + block scalar.",
-      "tags": [
-        "skills",
-        "architecture",
-        "comparison"
-      ]
+      "tags": ["skills", "architecture", "comparison"]
     },
     {
       "id": 19,
       "title": "Mono vs OpenClaw Session Management Comparison",
       "description": "Mono uses JSONL with branch support (headId), OpenClaw uses SQLite. Mono's git-like branch model more sophisticated.",
-      "tags": [
-        "session",
-        "architecture",
-        "comparison"
-      ]
+      "tags": ["session", "architecture", "comparison"]
     }
   ],
   "observations": [
-    "No new commits since last check (c2a30ec = local latest)",
-    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~280h/11.7 days",
+    "No new commits since last check (cdfb441 = local latest)",
+    "PR #22 (phase-aware error wrapping) still OPEN, waiting ~360h/15 days",
     "feat/tui-json-render-surface: ce4a8bc, 3 commits ahead of main",
     "PR #6 still OPEN (codex branch, 26 commits ahead)",
     "OpenClaw package version: 2026.3.11 (installed via npm)",
@@ -127,14 +117,15 @@
     "2026-04-07 03:20 - No new commits. PR #22 still waiting (~280h/11.7 days). Explored OpenClaw structure (skills in ~/.agents/skills/, no git repo).",
     "2026-04-07 03:40 - No new commits. PR #22 still waiting (~280h/11.7 days). Finding 18: Mono vs OpenClaw Skills Architecture comparison recorded.",
     "2026-04-07 12:00 - No new commits. PR #22 still waiting (~300h/12.5 days). Finding 19: Session Management comparison (Mono JSONL+branch vs OpenClaw SQLite).",
-    "2026-04-07 15:47 - No new commits. PR #22 still waiting (~360h/15 days). Checked OpenClaw skills: 8 skills in ~/.agents/skills/ (agent-browser, amap, dogfood, electron, find-skills, skill-creator, slack, ui-ux-pro-max). OpenClaw skills use single-layer global only, no project-level or builtin layers."
+    "2026-04-07 15:47 - No new commits. PR #22 still waiting (~360h/15 days). Checked OpenClaw skills: 10 skills in ~/.agents/skills/ (agent-browser, blog-post, brainstorming, deep-research, find-skills, ngrok-preview, playwright-bot-bypass, research, slidev, writing-clearly-and-concisely).",
+    "2026-04-07 13:07 - No new commits. PR #22 still waiting (~360h/15 days). Routine check: OpenClaw skills count = 10, version = 2026.3.11."
   ],
   "notes": [
     "2026-04-05 15:47 - No new commits. PR #22 still waiting (~230h). Deep-dived Registry pattern (SlashCommandRegistry, PlatformRegistry, FileTemplateRegistry). Finding 17 recorded."
   ],
   "monoState": {
     "pr22WaitingHours": 360,
-    "lastCommit": "cdfb441",
+    "lastCommit": "4d76ab6",
     "mainHead": "15bced8",
     "aheadBy": 0
   }
