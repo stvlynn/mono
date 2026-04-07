@@ -1120,3 +1120,78 @@ isRecoverableRuntimeError(error, state): boolean
 **PR 状态**: PR #22 仍 OPEN (等待约 300h/12.5 天)。
 
 **结论**: 记录为 Finding 19。
+
+---
+
+### 本轮新增 (2026-04-07 22:47) - Claude Code (Codex) Skill Installer
+
+**状态**: 无 mono 新 commits，PR #22 仍 OPEN (等待约 480h/20 天)。
+
+**新发现**: Codex 有 skill-installer skill：
+
+- **位置**: `~/.codex/skills/.system/skill-installer/`
+- **功能**: 从 GitHub 安装 skills（支持 curated / experimental 列表或自定义 repo）
+- **脚本**: 
+  - `list-skills.py`: 列出可用 skills（含已安装标记）
+  - `install-skill-from-github.py`: 从指定 repo 安装
+- **安装目标**: `$CODEX_HOME/skills/<skill-name>` (~/.codex/skills/)
+- **安装方式**: download 或 git sparse checkout
+- **特殊位置**: `.system` 目录的 skills 预安装，不可手动安装
+
+**对比 OpenClaw**:
+- OpenClaw 的 skill 安装是手动的（skill 目录复制）
+- 没有自动化的 skill registry / installer
+- skill-creator 存在但 skill-installer 不存在
+
+**发现**: Codex 的 skill-installer 提供了 skill 分发和安装的自动化机制，OpenClaw 目前缺少类似功能。
+
+**结论**: 记录为 Finding 20。
+
+
+---
+
+### 本轮新增 (2026-04-07 23:07) - TUI JSON Render Surface
+
+**无新 commits**，本轮深度分析 `feat/tui-json-render-surface` 分支。
+
+**TUI JSON Render Surface 架构** (1867 行新增):
+
+1. **@json-render/core + ink 库依赖**:
+   - 使用 `@json-render/core` (^0.15.0) 声明式 UI 框架
+   - `@json-render/ink` 提供 Ink/Terminal 组件定义
+   - 类似 React Virtual DOM 的声明式规范，但针对终端渲染优化
+
+2. **Spec 流式编译** (`tui-render-runtime.ts`):
+   - `createSpecStreamCompiler()`: 流式编译 LLM 输出为 Spec 对象
+   - `coerceValidSpec()`: 多层验证 (object → root/elements → autoFix → validateSpec → catalog validate → hasMinimumTuiSurface)
+   - `streamTuiSpec()`: 异步流式渲染，实时 yield valid spec
+
+3. **状态绑定机制**:
+   - `$state`: 引用 pane 状态路径，如 `/history/items`, `/query/status`
+   - `$cond`: 条件渲染，`{ "$state": "/query/running", "$then": "info", "$else": "success" }`
+   - `$item`: 循环变量引用
+   - `repeat`: 列表渲染，`{ statePath: "/history/items", key: "id" }`
+
+4. **组件目录** (`tui-render-registry.tsx`):
+   - 标准组件: Text, Box, Markdown, Card, List, StatusLine, Table, Callout, Timeline 等
+   - 交互组件: TextInput, ConfirmInput, Select, MultiSelect, Tabs
+   - 自定义 actions: pane_submit, pane_select, request_shell_focus 等
+
+5. **确定性兜底**:
+   - `createDeterministicTuiSpec()`: 基础 pane spec 作为 fallback
+   - LLM 输出无效时被忽略，始终有确定性 UI 可看
+
+**OpenClaw 可借鉴点**:
+- 流式 Spec 验证比一次性 JSON parse 更安全
+- 多层验证 (structure → catalog → surface) 逐步降级
+- 状态绑定避免硬编码，UI 可响应运行时状态
+- 确定性兜底保证 LLM 输出再差也有可用 UI
+
+**相关文件**:
+- `packages/tui/src/tui-render-spec.ts` (215 行): Spec 类型定义
+- `packages/tui/src/tui-render-runtime.ts` (131 行): 流式编译运行时
+- `packages/tui/src/tui-render-registry.tsx` (88 行): 组件目录
+- `packages/tui/src/tui-render-prompt.ts` (24 行): LLM prompt 构建
+- `packages/tui/src/tui-render-spec.j2` (22 行): Jinja2 prompt 模板
+- `packages/tui/src/json-render-tui.tsx` (174 行): 渲染入口
+- `packages/tui/src/presentation.ts` (177 行): 请求格式定义
