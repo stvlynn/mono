@@ -1150,7 +1150,51 @@ isRecoverableRuntimeError(error, state): boolean
 
 ---
 
-### 本轮新增 (2026-04-07 23:07) - TUI JSON Render Surface
+### 本轮新增 (2026-04-08 00:26) - Autonomy Topic-Level Suppression
+
+**状态**: 无新 commits，PR #22 仍 OPEN (等待约 480h/20 天)。
+
+**新发现**: 深度分析 7a515fb commit，新增 AutonomyTopicStat 机制防止重复后台任务：
+
+**核心机制**:
+- `AutonomyTopicStat`: 追踪每个自主探索主题的活跃度
+  - `key`: 主题归一化 key
+  - `summary`: 主题摘要（≤160 字符）
+  - `repetitionCount`: 重复次数
+  - `boredomScore`: 厌烦度（0 ~ 1.4）
+  - `lastTouchedAt`: 上次活跃时间
+  - `lastIntentKind`: curiosity_probe | investigate_gap
+  - `lastOutcome`: novel | repeated | suppressed | blocked
+
+**Boredom 评分规则**:
+| 事件 | boredomDelta |
+|------|---------------|
+| 任务完成且可见 | -0.28 ↓ |
+| 重复内容 | +0.48 ↑ |
+| 被忽略/抑制 | +0.56 ↑ |
+| 阻塞/失败 | +0.34 ↑ |
+| 每额外一次重复 | +0.04 |
+
+**抑制逻辑**:
+- `AUTONOMY_TOPIC_SUPPRESSION_THRESHOLD`: 0.9
+- `AUTONOMY_TOPIC_MAX_BOREDOM`: 1.4
+- `AUTONOMY_TOPIC_DECAY_MS`: 6 小时
+- 当 `boredomScore >= 0.9` 且 `ageFactor < 1` 时，抑制该主题
+
+**STOPWORDS 过滤**（中英双语）:
+```
+the, and, for, with, that, this, what, why, how, does, should...
+如何, 为什么, 什么, 问题, 探索, 调查, 解决...
+```
+
+**OpenClaw 可借鉴点**:
+- 类似的 topic-level suppression 可减少 heartbeat 冗余
+- boredom score 机制防止后台任务反复追问同类问题
+- 可结合 OpenClaw 的 curiosity-log.json 实现类似功能
+
+**结论**: 记录为 Finding 21。
+
+---
 
 **无新 commits**，本轮深度分析 `feat/tui-json-render-surface` 分支。
 
