@@ -1239,3 +1239,45 @@ the, and, for, with, that, this, what, why, how, does, should...
 - `packages/tui/src/tui-render-spec.j2` (22 行): Jinja2 prompt 模板
 - `packages/tui/src/json-render-tui.tsx` (174 行): 渲染入口
 - `packages/tui/src/presentation.ts` (177 行): 请求格式定义
+
+---
+
+### Finding 22: Session parentId 链式结构 + 分支支持 (2026-04-08 12:26)
+
+**研究对象**: `packages/session/src/session-manager.ts` (15327 行)
+
+**Mono Session 架构**:
+
+1. **parentId 链式链接**:
+   - 每条 `SessionEntry` 包含 `parentId` 字段指向前一条目
+   - `syncHeadToLatest()` 返回最新条目的 id，构建链式结构
+   - 支持分支：传入 `branchHeadId` 初始化，可回溯任意分支点
+   - `readJsonLines()` 读取后可遍历 parentId 链重建对话树
+
+2. **SessionPointer 结构**:
+   ```typescript
+   interface SessionPointer {
+     sessionId: string;
+     branchHeadId?: string;
+     filePath: string;
+   }
+   ```
+   - `branchHeadId` 可选，支持分支会话管理
+
+3. **分支初始化**:
+   - 构造函数接受 `branchHeadId` 参数
+   - `initialize()` 时验证 branchHead 是否存在于 entries 中
+   - 不存在则抛出 Error，支持从任意点分叉
+
+4. **与 OpenClaw 对比**:
+   - OpenClaw: 单向链表，无 parentId，只记录当前 head
+   - Mono: 双向可回溯（通过 parentId 链），支持分支
+   - OpenClaw 无法从历史任意点重建对话上下文
+   - Mono 可在任何分支点继续会话
+
+**相关文件**:
+- `packages/session/src/session-manager.ts`: SessionManager 主类
+- `packages/session/src/transcript-repair.ts`: parentId 修复机制
+- `packages/shared/src/types.ts`: SessionPointer, SessionEntry 类型定义
+
+**结论**: Finding 22, 记录为 Session 架构重要差异。

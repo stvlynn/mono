@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-04-08T09:46:00+08:00",
+  "lastChecked": "2026-04-08T12:26:00+08:00",
   "monoState": {
     "lastCommit": "15bced8",
     "pr22WaitingHours": 480,
@@ -43,7 +43,7 @@
     "packages/seekdb-adapter/src/execution-memory.ts",
     "packages/prompts/src/templates/",
     "packages/tui/src/",
-    "feat/tui-json-render-surface: tui-render-spec.ts + runtime + registry + prompt (\u672c\u8f6e\u65b0\u589e)",
+    "feat/tui-json-render-surface: tui-render-spec.ts + runtime + registry + prompt (本轮新增)",
     "packages/agent-core/src/heartbeat-wake.ts",
     "~/.codex/skills/.system/",
     "packages/im-platform/src/types.ts",
@@ -71,7 +71,8 @@
     "packages/config/src/resolver.ts",
     "packages/pi-tui/src/tui.ts",
     "docs/architecture/system-overview.md",
-    "packages/config/src/defaults.ts"
+    "packages/config/src/defaults.ts",
+    "packages/session/src/session-manager.ts (parentId chain)"
   ],
   "branchesAhead": {
     "origin/codex/apply-docs-framework-to-project": 15,
@@ -80,7 +81,7 @@
   },
   "openIssues": 16,
   "newFindings": [
-    "Session \u5b58\u50a8: Mono \u7528 parentId \u94fe\u5f0f + \u5206\u652f\u652f\u6301\uff0cOpenClaw \u53ea\u6709\u5355\u5411 session",
+    "Session 存储: Mono 用 parentId 链式 + 分支支持，OpenClaw 只有单向 session",
     "Web Config UI (packages/web-config): React + TypeScript + Vite + Tailwind + shadcn/ui browser-based config management with API backend",
     "Tool output truncation: 8192 chars (vs OpenClaw 1200)",
     "Loop detection: detectLoop function with tool signature + assistant text",
@@ -98,9 +99,9 @@
     "AgentEventCoordinator: unified event pipeline for memory/toast/tool/status",
     "Web-config HTTP server: native Node.js, hash-guarded atomic write, reload signal",
     "SeekDB adapter: execution-memory + session-mirror + MySQL backend",
-    "Skills layering ADR: builtin \u2192 global \u2192 project precedence (0007)",
+    "Skills layering ADR: builtin → global → project precedence (0007)",
     "Memory-v2 hybrid ADR: local-first with OpenViking retrieval (0006)",
-    "SeekDB Python Embedded Runner: Node.js \u2194 Python IPC bridge via stdin/stdout JSON protocol",
+    "SeekDB Python Embedded Runner: Node.js ↔ Python IPC bridge via stdin/stdout JSON protocol",
     "ImPlatform types: ImPlatformConfig, PlatformMessage, PlatformCapabilities interfaces (1549 line types.ts)",
     "Shared types: TaskInput with TaskInputPlatformMetadata for Telegram attachments",
     "Autonomy Runtime: 1113 lines with HeartbeatDecision, AutonomyIntent, LearningState, topic-level suppression",
@@ -108,11 +109,12 @@
     "Agent.ts: 105934 lines (main agent orchestrator)",
     "AI SDK Runtime: 20568 bytes with unified streamText for anthropic/openai-compatible/openai-responses/gemini",
     "Tool Batch Scheduler: 7166 bytes with parallel_readonly + conflictKey + needsConfirmation",
-    "Claude Code (Codex): skills/.system/ includes skill-creator (18664 bytes SKILL.md) + skill-installer, symlink \u590d\u7528\u5916\u90e8\u6280\u80fd, prefix_rule \u5141\u8bb8 openclaw/gateway",
+    "Claude Code (Codex): skills/.system/ includes skill-creator (18664 bytes SKILL.md) + skill-installer, symlink 复用外部技能, prefix_rule 允许 openclaw/gateway",
     "System Overview Docs: 16 architecture docs covering config, event-model, image-input, memory-system, skills-system, structured-memory-v2, openviking-integration, seekdb-integration, task-runtime, tool-execution, etc.",
-    "TUI JSON Render Surface (feat/tui-json-render-surface): LLM \u9a71\u52a8\u7684\u58f0\u660e\u5f0f UI\uff0c\u4f7f\u7528 @json-render/core \u5e93\uff0cSpec \u6d41\u5f0f\u7f16\u8bd1\u9a8c\u8bc1\uff0cCard/Markdown/StatusLine \u7b49\u7ec4\u4ef6\u76ee\u5f55",
-    "Codex skill-installer: \u4ece GitHub \u5b89\u88c5 skills \u7684\u81ea\u52a8\u5316\u673a\u5236\uff0cOpenClaw \u7f3a\u5c11\u6b64\u529f\u80fd",
-    "TUI JSON Render Surface \u67b6\u6784: @json-render/core (^0.15.0) \u58f0\u660e\u5f0f UI\uff0c\u6d41\u5f0f Spec \u7f16\u8bd1 (createSpecStreamCompiler)\uff0c\u591a\u5c42\u9a8c\u8bc1 (structure \u2192 catalog \u2192 surface)\uff0c\u72b6\u6001\u7ed1\u5b9a ($state/$cond/$item/repeat)\uff0c\u786e\u5b9a\u6027\u515c\u5e95 (createDeterministicTuiSpec)\uff0c1867 \u884c\u65b0\u589e",
-    "Autonomy Topic-Level Suppression (Finding 21): boredom score 0-1.4, suppression @ 0.9+, 6h decay, STOPWORDS filter"
+    "TUI JSON Render Surface (feat/tui-json-render-surface): LLM 驱动的声明式 UI，使用 @json-render/core 库，Spec 流式编译验证，Card/Markdown/StatusLine 等组件目录",
+    "Codex skill-installer: 从 GitHub 安装 skills 的自动化机制，OpenClaw 缺少此功能",
+    "TUI JSON Render Surface 架构: @json-render/core (^0.15.0) 声明式 UI，流式 Spec 编译 (createSpecStreamCompiler)，多层验证 (structure → catalog → surface)，状态绑定 ($state/$cond/$item/repeat)，确定性兜底 (createDeterministicTuiSpec)，1867 行新增",
+    "Autonomy Topic-Level Suppression (Finding 21): boredom score 0-1.4, suppression @ 0.9+, 6h decay, STOPWORDS filter",
+    "Session parentId 链式结构 + 分支支持 (Finding 22)"
   ]
 }
